@@ -9,15 +9,23 @@ import {
 } from 'react'
 import { applyDrawTool, useCadStore } from '../core/store'
 import { applyOrtho, applyPolarTracking, findBestSnap } from '../core/snap'
+import { rectFromPoints, selectEntitiesInRect, selectionModeFor } from '../core/selection'
 import { getEntityAnchorPoints, isPointNearEntity } from '../core/geometry'
-import type { CadEntity, ToolMode } from '../core/types'
+import type { DimensionEntity, SnapMode, ToolMode } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
+import { HatchDefs } from './HatchDefs'
+import { renderDimension, renderEntity, splinePath } from './renderers'
 
 type Camera = { x: number; y: number; zoom: number }
 
 const screenToWorld = (point: Vec2, camera: Camera): Vec2 => ({
   x: (point.x - camera.x) / camera.zoom,
   y: (point.y - camera.y) / camera.zoom,
+})
+
+const worldToScreen = (point: Vec2, camera: Camera): Vec2 => ({
+  x: point.x * camera.zoom + camera.x,
+  y: point.y * camera.zoom + camera.y,
 })
 
 const PROMPTS: Record<ToolMode, string[]> = {
@@ -31,25 +39,66 @@ const PROMPTS: Record<ToolMode, string[]> = {
   polygon: ['Specify center of polygon:', 'Specify radius:'],
   spline: ['Specify first point:', 'Specify next point (Enter to finish):'],
   text: ['Specify text insertion point:'],
-  hatch: ['Select closed boundary:'],
+  hatch: ['Pick an internal point of a closed area:'],
   dimension: ['Specify first extension line origin:', 'Specify second extension line origin:'],
   insert: ['Specify insertion point:'],
 }
 
-const promptFor = (tool: ToolMode, placed: number): string => {
-  const steps = PROMPTS[tool] ?? ['Ready']
-  return steps[Math.min(placed, steps.length - 1)]
+const DIM_PROMPTS: Record<string, string[]> = {
+  linear: ['Specify first extension line origin:', 'Specify second extension line origin:', 'Specify dimension line location:'],
+  aligned: ['Specify first extension line origin:', 'Specify second extension line origin:', 'Specify dimension line location:'],
+  radial: ['Select a circle or arc:', 'Specify dimension line location:'],
+  diameter: ['Select a circle or arc:', 'Specify dimension line location:'],
+  angular: ['Specify vertex:', 'Specify first side:', 'Specify second side:', 'Specify dimension arc location:'],
 }
 
-const arcPath = (center: Vec2, radius: number, startAngle: number, endAngle: number): string => {
-  const sx = center.x + Math.cos(startAngle) * radius
-  const sy = center.y + Math.sin(startAngle) * radius
-  const ex = center.x + Math.cos(endAngle) * radius
-  const ey = center.y + Math.sin(endAngle) * radius
-  let sweep = endAngle - startAngle
-  while (sweep < 0) sweep += Math.PI * 2
-  const large = sweep > Math.PI ? 1 : 0
-  return `M ${sx} ${sy} A ${radius} ${radius} 0 ${large} 1 ${ex} ${ey}`
+/** AutoCAD draws a distinct glyph per snap type; this keeps the marker readable at a glance. */
+const SnapGlyph = ({ mode, at }: { mode: SnapMode; at: Vec2 }) => {
+  const size = 7
+  const stroke = '#00f5d4'
+  const props = { stroke, strokeWidth: 1.6, fill: 'none' }
+  switch (mode) {
+    case 'endpoint':
+      return <rect x={at.x - size} y={at.y - size} width={size * 2} height={size * 2} {...props} />
+    case 'midpoint':
+      return <polygon points={`${at.x},${at.y - size} ${at.x - size},${at.y + size} ${at.x + size},${at.y + size}`} {...props} />
+    case 'center':
+      return <circle cx={at.x} cy={at.y} r={size} {...props} />
+    case 'quadrant':
+      return <polygon points={`${at.x},${at.y - size} ${at.x + size},${at.y} ${at.x},${at.y + size} ${at.x - size},${at.y}`} {...props} />
+    case 'intersection':
+      return (
+        <g {...props}>
+          <line x1={at.x - size} y1={at.y - size} x2={at.x + size} y2={at.y + size} />
+          <line x1={at.x + size} y1={at.y - size} x2={at.x - size} y2={at.y + size} />
+        </g>
+      )
+    case 'perpendicular':
+      return (
+        <g {...props}>
+          <line x1={at.x - size} y1={at.y + size} x2={at.x + size} y2={at.y + size} />
+          <line x1={at.x - size} y1={at.y - size} x2={at.x - size} y2={at.y + size} />
+          <line x1={at.x - size} y1={at.y} x2={at.x} y2={at.y} />
+        </g>
+      )
+    case 'tangent':
+      return (
+        <g {...props}>
+          <circle cx={at.x} cy={at.y + 1} r={size - 1} />
+          <line x1={at.x - size} y1={at.y - size} x2={at.x + size} y2={at.y - size} />
+        </g>
+      )
+    case 'node':
+      return (
+        <g {...props}>
+          <circle cx={at.x} cy={at.y} r={size} />
+          <line x1={at.x - size} y1={at.y} x2={at.x + size} y2={at.y} />
+          <line x1={at.x} y1={at.y - size} x2={at.x} y2={at.y + size} />
+        </g>
+      )
+    default:
+      return <rect x={at.x - size} y={at.y - size} width={size * 2} height={size * 2} {...props} strokeDasharray="3 2" />
+  }
 }
 
 const polygonPoints = (center: Vec2, radius: number, sides: number): Vec2[] =>
@@ -58,101 +107,14 @@ const polygonPoints = (center: Vec2, radius: number, sides: number): Vec2[] =>
     return { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius }
   })
 
-const entityToSvg = (entity: CadEntity, selected: boolean, color: string, strokeDasharray?: string) => {
-  const stroke = selected ? '#ffd166' : color
-  const common = {
-    stroke,
-    strokeWidth: selected ? 2 : 1,
-    fill: 'none',
-    strokeDasharray,
-    vectorEffect: 'non-scaling-stroke' as const,
-  }
-  switch (entity.type) {
-    case 'line':
-      return <line key={entity.id} x1={entity.start.x} y1={entity.start.y} x2={entity.end.x} y2={entity.end.y} {...common} />
-    case 'circle':
-      return <circle key={entity.id} cx={entity.center.x} cy={entity.center.y} r={entity.radius} {...common} />
-    case 'arc':
-      return <path key={entity.id} d={arcPath(entity.center, entity.radius, entity.startAngle, entity.endAngle)} {...common} />
-    case 'ellipse':
-      return (
-        <ellipse
-          key={entity.id}
-          cx={entity.center.x}
-          cy={entity.center.y}
-          rx={entity.rx}
-          ry={entity.ry}
-          transform={`rotate(${(entity.rotation * 180) / Math.PI} ${entity.center.x} ${entity.center.y})`}
-          {...common}
-        />
-      )
-    case 'polyline':
-      return entity.closed ? (
-        <polygon key={entity.id} points={entity.points.map((point) => `${point.x},${point.y}`).join(' ')} {...common} />
-      ) : (
-        <polyline key={entity.id} points={entity.points.map((point) => `${point.x},${point.y}`).join(' ')} {...common} />
-      )
-    case 'spline':
-      return (
-        <polyline
-          key={entity.id}
-          points={entity.controlPoints.map((point) => `${point.x},${point.y}`).join(' ')}
-          {...common}
-        />
-      )
-    case 'hatch':
-      return (
-        <polygon
-          key={entity.id}
-          points={entity.boundary.map((point) => `${point.x},${point.y}`).join(' ')}
-          stroke={stroke}
-          strokeWidth={1}
-          vectorEffect="non-scaling-stroke"
-          fill="rgba(136,192,255,0.18)"
-        />
-      )
-    case 'text':
-      return (
-        <text key={entity.id} x={entity.position.x} y={entity.position.y} fill="#dbeafe" fontSize={entity.height}>
-          {entity.value}
-        </text>
-      )
-    case 'dimension': {
-      const label = Math.hypot(entity.p2.x - entity.p1.x, entity.p2.y - entity.p1.y).toFixed(2)
-      return (
-        <g key={entity.id}>
-          <line
-            x1={entity.p1.x}
-            y1={entity.p1.y}
-            x2={entity.p2.x}
-            y2={entity.p2.y}
-            stroke="#f9c74f"
-            strokeWidth={1}
-            vectorEffect="non-scaling-stroke"
-          />
-          <text
-            x={(entity.p1.x + entity.p2.x) / 2}
-            y={(entity.p1.y + entity.p2.y) / 2 - 4}
-            fill="#f9c74f"
-            fontSize={10}
-            textAnchor="middle"
-          >
-            {label}
-          </text>
-        </g>
-      )
-    }
-    case 'insert':
-      return (
-        <g
-          key={entity.id}
-          transform={`translate(${entity.position.x}, ${entity.position.y}) rotate(${entity.rotation}) scale(${entity.scale})`}
-        >
-          <rect x={-5} y={-5} width={10} height={10} stroke="#e5e7eb" strokeWidth={1} fill="none" vectorEffect="non-scaling-stroke" />
-          <line x1={-5} y1={-5} x2={5} y2={5} stroke="#e5e7eb" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-        </g>
-      )
-  }
+const arcPreviewPath = (center: Vec2, radius: number, startAngle: number, endAngle: number): string => {
+  const sx = center.x + Math.cos(startAngle) * radius
+  const sy = center.y + Math.sin(startAngle) * radius
+  const ex = center.x + Math.cos(endAngle) * radius
+  const ey = center.y + Math.sin(endAngle) * radius
+  let sweep = endAngle - startAngle
+  while (sweep < 0) sweep += Math.PI * 2
+  return `M ${sx} ${sy} A ${radius} ${radius} 0 ${sweep > Math.PI ? 1 : 0} 1 ${ex} ${ey}`
 }
 
 export function CanvasViewport() {
@@ -161,13 +123,17 @@ export function CanvasViewport() {
   const activeTool = useCadStore((state) => state.activeTool)
   const camera = useCadStore((state) => state.camera)
   const setCamera = useCadStore((state) => state.setCamera)
-  const setSelection = useCadStore((state) => state.setSelection)
+  const applySelection = useCadStore((state) => state.applySelection)
+  const selectAll = useCadStore((state) => state.selectAll)
+  const undo = useCadStore((state) => state.undo)
+  const redo = useCadStore((state) => state.redo)
   const setStatusMessage = useCadStore((state) => state.setStatusMessage)
   const snapModes = useCadStore((state) => state.snapModes)
   const osnapEnabled = useCadStore((state) => state.osnapEnabled)
   const polarEnabled = useCadStore((state) => state.polarEnabled)
   const draftPoints = useCadStore((state) => state.draftPoints)
   const polygonSides = useCadStore((state) => state.polygonSides)
+  const dimensionType = useCadStore((state) => state.dimensionType)
   const finishDraft = useCadStore((state) => state.finishDraft)
   const closeDraft = useCadStore((state) => state.closeDraft)
   const cancelDraft = useCadStore((state) => state.cancelDraft)
@@ -177,10 +143,13 @@ export function CanvasViewport() {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [cursorScreen, setCursorScreen] = useState<Vec2 | null>(null)
   const [cursorWorld, setCursorWorld] = useState<Vec2 | null>(null)
-  const [snapMode, setSnapMode] = useState<string | null>(null)
+  const [activeSnap, setActiveSnap] = useState<SnapMode | null>(null)
+  const [trackingLabel, setTrackingLabel] = useState<string | null>(null)
   const [orthoHeld, setOrthoHeld] = useState(false)
   const [panning, setPanning] = useState(false)
   const [lastMouse, setLastMouse] = useState<Vec2 | null>(null)
+  const [boxStart, setBoxStart] = useState<Vec2 | null>(null)
+  const [boxEnd, setBoxEnd] = useState<Vec2 | null>(null)
   const [size, setSize] = useState({ width: 1000, height: 700 })
 
   const visibleEntities = useMemo(
@@ -205,7 +174,29 @@ export function CanvasViewport() {
       if (event.key === 'Shift') setOrthoHeld(true)
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
-      if (event.key === 'Escape') cancelDraft()
+
+      if (event.ctrlKey || event.metaKey) {
+        const key = event.key.toLowerCase()
+        if (key === 'a') {
+          event.preventDefault()
+          selectAll()
+        }
+        if (key === 'z') {
+          event.preventDefault()
+          if (event.shiftKey) redo()
+          else undo()
+        }
+        if (key === 'y') {
+          event.preventDefault()
+          redo()
+        }
+        return
+      }
+
+      if (event.key === 'Escape') {
+        cancelDraft()
+        applySelection([], 'replace')
+      }
       if (event.key === 'Enter') finishDraft()
       if (event.key.toLowerCase() === 'c' && draftPoints.length >= 2) closeDraft()
       if (event.key === 'Delete') deleteSelection()
@@ -219,30 +210,32 @@ export function CanvasViewport() {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
     }
-  }, [cancelDraft, closeDraft, deleteSelection, draftPoints.length, finishDraft])
+  }, [applySelection, cancelDraft, closeDraft, deleteSelection, draftPoints.length, finishDraft, redo, selectAll, undo])
 
-  const resolvePoint = (screenPoint: Vec2): { point: Vec2; mode: string | null } => {
+  const resolvePoint = (screenPoint: Vec2): { point: Vec2; snap: SnapMode | null; tracking: string | null } => {
     const raw = screenToWorld(screenPoint, camera)
+    const basePoint = draftPoints.at(-1)
+
     if (osnapEnabled) {
-      const snap = findBestSnap(raw, visibleEntities, snapModes, 12 / camera.zoom)
+      const snap = findBestSnap(raw, visibleEntities, snapModes, 12 / camera.zoom, basePoint)
       if (snap) {
-        return { point: snap.point, mode: snap.mode }
+        return { point: snap.point, snap: snap.mode, tracking: null }
       }
     }
-    const base = draftPoints.at(-1)
-    if (!base) {
-      return { point: raw, mode: null }
+    if (!basePoint) {
+      return { point: raw, snap: null, tracking: null }
     }
     if (orthoHeld) {
-      return { point: applyOrtho(base, raw), mode: 'ortho' }
+      return { point: applyOrtho(basePoint, raw), snap: null, tracking: 'ortho' }
     }
     if (polarEnabled) {
-      const tracked = applyPolarTracking(base, raw, 45)
+      const tracked = applyPolarTracking(basePoint, raw, 45)
       if (tracked.snapped) {
-        return { point: tracked.point, mode: 'polar' }
+        const angle = (Math.atan2(tracked.point.y - basePoint.y, tracked.point.x - basePoint.x) * 180) / Math.PI
+        return { point: tracked.point, snap: null, tracking: `polar ${((angle + 360) % 360).toFixed(0)}°` }
       }
     }
-    return { point: raw, mode: null }
+    return { point: raw, snap: null, tracking: null }
   }
 
   const localPoint = (event: MouseEvent): Vec2 => {
@@ -258,43 +251,65 @@ export function CanvasViewport() {
       return
     }
     if (event.button !== 0) return
-    const { point } = resolvePoint(localPoint(event))
+    const local = localPoint(event)
     if (activeTool === 'select') {
-      const hit = [...visibleEntities].reverse().find((entity) => isPointNearEntity(point, entity, 8 / camera.zoom))
-      if (hit) {
-        setSelection(event.ctrlKey || event.shiftKey ? [...selectedIds, hit.id] : [hit.id])
-        setStatusMessage(`Selected ${hit.type}`)
-      } else {
-        setSelection([])
-      }
+      setBoxStart(local)
+      setBoxEnd(local)
       return
     }
-    applyDrawTool(point)
+    applyDrawTool(resolvePoint(local).point)
   }
 
   const handleMouseMove = (event: MouseEvent<SVGSVGElement>) => {
     const local = localPoint(event)
     setCursorScreen(local)
+    if (boxStart) setBoxEnd(local)
     if (panning && lastMouse) {
       setCamera({ x: camera.x + (event.clientX - lastMouse.x), y: camera.y + (event.clientY - lastMouse.y) })
       setLastMouse({ x: event.clientX, y: event.clientY })
       return
     }
-    const { point, mode } = resolvePoint(local)
+    const { point, snap, tracking } = resolvePoint(local)
     setCursorWorld(point)
-    setSnapMode(mode)
+    setActiveSnap(snap)
+    setTrackingLabel(tracking)
   }
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (event: MouseEvent<SVGSVGElement>) => {
     setPanning(false)
     setLastMouse(null)
+
+    if (activeTool === 'select' && boxStart && boxEnd) {
+      const modifier = event.shiftKey ? 'add' : event.ctrlKey ? 'remove' : 'replace'
+      const dragged = Math.hypot(boxEnd.x - boxStart.x, boxEnd.y - boxStart.y)
+
+      if (dragged < 4) {
+        const { point } = resolvePoint(boxStart)
+        const hit = [...visibleEntities].reverse().find((entity) => isPointNearEntity(point, entity, 8 / camera.zoom))
+        applySelection(hit ? [hit.id] : [], hit ? modifier : 'replace')
+        setStatusMessage(hit ? `Selected ${hit.type}` : 'Nothing selected')
+      } else {
+        const start = screenToWorld(boxStart, camera)
+        const end = screenToWorld(boxEnd, camera)
+        const mode = selectionModeFor(start, end)
+        const ids = selectEntitiesInRect(visibleEntities, rectFromPoints(start, end), mode)
+        applySelection(ids, modifier)
+        setStatusMessage(`${mode === 'window' ? 'Window' : 'Crossing'} selected ${ids.length} object(s)`)
+      }
+    }
+
+    setBoxStart(null)
+    setBoxEnd(null)
   }
 
   const handleMouseLeave = () => {
     setPanning(false)
     setLastMouse(null)
+    setBoxStart(null)
+    setBoxEnd(null)
     setCursorScreen(null)
     setCursorWorld(null)
+    setActiveSnap(null)
   }
 
   const handleWheel = (event: WheelEvent<SVGSVGElement>) => {
@@ -374,7 +389,6 @@ export function CanvasViewport() {
 
     switch (activeTool) {
       case 'line':
-      case 'dimension':
         return <line x1={last.x} y1={last.y} x2={cursorWorld.x} y2={cursorWorld.y} {...style} />
       case 'rect':
         return (
@@ -404,9 +418,7 @@ export function CanvasViewport() {
           />
         )
       case 'polygon':
-        return (
-          <polygon points={polygonPoints(first, radius, polygonSides).map((p) => `${p.x},${p.y}`).join(' ')} {...style} />
-        )
+        return <polygon points={polygonPoints(first, radius, polygonSides).map((p) => `${p.x},${p.y}`).join(' ')} {...style} />
       case 'arc': {
         if (draftPoints.length === 1) {
           return (
@@ -420,17 +432,55 @@ export function CanvasViewport() {
         const arcRadius = Math.hypot(start.x - first.x, start.y - first.y)
         const startAngle = Math.atan2(start.y - first.y, start.x - first.x)
         const endAngle = Math.atan2(cursorWorld.y - first.y, cursorWorld.x - first.x)
-        return <path d={arcPath(first, arcRadius, startAngle, endAngle)} {...style} />
+        return <path d={arcPreviewPath(first, arcRadius, startAngle, endAngle)} {...style} />
       }
       case 'polyline':
+        return <polyline points={[...draftPoints, cursorWorld].map((p) => `${p.x},${p.y}`).join(' ')} {...style} />
       case 'spline':
-        return (
-          <polyline points={[...draftPoints, cursorWorld].map((p) => `${p.x},${p.y}`).join(' ')} {...style} />
-        )
+        return <path d={splinePath([...draftPoints, cursorWorld])} {...style} />
+      case 'dimension': {
+        const points = [...draftPoints, cursorWorld]
+        if (dimensionType === 'angular') {
+          if (points.length < 4) {
+            return (
+              <polyline
+                points={[points[1] ?? points[0], points[0], points[2] ?? cursorWorld]
+                  .map((p) => `${p.x},${p.y}`)
+                  .join(' ')}
+                {...style}
+              />
+            )
+          }
+          const dimension: DimensionEntity = {
+            id: 'preview',
+            type: 'dimension',
+            layerId: '',
+            dimType: 'angular',
+            p1: points[0],
+            p2: points[1],
+            p3: points[2],
+            placement: cursorWorld,
+          }
+          return renderDimension(dimension, doc.dimStyle, '#f59e0b', 'preview', true)
+        }
+        if (draftPoints.length < 2) {
+          return <line x1={first.x} y1={first.y} x2={cursorWorld.x} y2={cursorWorld.y} {...style} />
+        }
+        const dimension: DimensionEntity = {
+          id: 'preview',
+          type: 'dimension',
+          layerId: '',
+          dimType: dimensionType,
+          p1: draftPoints[0],
+          p2: draftPoints[1],
+          placement: cursorWorld,
+        }
+        return renderDimension(dimension, doc.dimStyle, '#f59e0b', 'preview', true)
+      }
       default:
         return null
     }
-  }, [activeTool, cursorWorld, draftPoints, polygonSides])
+  }, [activeTool, cursorWorld, dimensionType, doc.dimStyle, draftPoints, polygonSides])
 
   const dynamicInput = useMemo(() => {
     if (!cursorWorld || draftPoints.length === 0) return null
@@ -451,17 +501,17 @@ export function CanvasViewport() {
 
   const grips = useMemo(() => {
     if (selectedIds.length === 0) return []
-    const size = 4 / camera.zoom
+    const gripSize = 4 / camera.zoom
     return visibleEntities
       .filter((entity) => selectedIds.includes(entity.id))
       .flatMap((entity) =>
         getEntityAnchorPoints(entity).map((point, index) => (
           <rect
             key={`${entity.id}-grip-${index}`}
-            x={point.x - size / 2}
-            y={point.y - size / 2}
-            width={size}
-            height={size}
+            x={point.x - gripSize / 2}
+            y={point.y - gripSize / 2}
+            width={gripSize}
+            height={gripSize}
             fill="#38bdf8"
             stroke="#0b1220"
             strokeWidth={0.5}
@@ -471,7 +521,32 @@ export function CanvasViewport() {
       )
   }, [camera.zoom, selectedIds, visibleEntities])
 
-  const prompt = promptFor(activeTool, draftPoints.length)
+  const prompt =
+    activeTool === 'dimension'
+      ? (DIM_PROMPTS[dimensionType] ?? PROMPTS.dimension)[
+          Math.min(draftPoints.length, (DIM_PROMPTS[dimensionType] ?? PROMPTS.dimension).length - 1)
+        ]
+      : PROMPTS[activeTool][Math.min(draftPoints.length, PROMPTS[activeTool].length - 1)]
+
+  const snapScreen = cursorWorld ? worldToScreen(cursorWorld, camera) : null
+
+  const selectionBox = useMemo(() => {
+    if (!boxStart || !boxEnd) return null
+    if (Math.hypot(boxEnd.x - boxStart.x, boxEnd.y - boxStart.y) < 4) return null
+    const isWindow = boxEnd.x >= boxStart.x
+    return (
+      <rect
+        x={Math.min(boxStart.x, boxEnd.x)}
+        y={Math.min(boxStart.y, boxEnd.y)}
+        width={Math.abs(boxEnd.x - boxStart.x)}
+        height={Math.abs(boxEnd.y - boxStart.y)}
+        fill={isWindow ? 'rgba(59,130,246,0.14)' : 'rgba(34,197,94,0.14)'}
+        stroke={isWindow ? '#3b82f6' : '#22c55e'}
+        strokeWidth={1}
+        strokeDasharray={isWindow ? undefined : '6 4'}
+      />
+    )
+  }, [boxEnd, boxStart])
 
   return (
     <div className="viewport-shell" ref={frameRef}>
@@ -489,6 +564,7 @@ export function CanvasViewport() {
           finishDraft()
         }}
       >
+        <HatchDefs />
         <rect x={0} y={0} width={width} height={height} fill="#0d1524" />
 
         <g transform={`translate(${camera.x}, ${camera.y}) scale(${camera.zoom})`}>
@@ -500,45 +576,48 @@ export function CanvasViewport() {
             const layer = doc.layers.find((candidate) => candidate.id === entity.layerId)
             const linetypeId = entity.linetypeId ?? layer?.linetypeId
             const linetype = doc.linetypes.find((candidate) => candidate.id === linetypeId)
-            const dash = linetype?.pattern.length ? linetype.pattern.join(' ') : undefined
-            return entityToSvg(entity, selectedIds.includes(entity.id), entity.color ?? layer?.color ?? '#7cc6ff', dash)
+            return renderEntity(entity, {
+              selected: selectedIds.includes(entity.id),
+              color: entity.color ?? layer?.color ?? '#7cc6ff',
+              dash: linetype?.pattern.length ? linetype.pattern.join(' ') : undefined,
+              dimStyle: doc.dimStyle,
+            })
           })}
 
           {grips}
           {preview}
         </g>
 
-        {cursorScreen && (
+        {selectionBox}
+
+        {cursorScreen && snapScreen && (
           <g pointerEvents="none">
-            <line x1={0} y1={cursorScreen.y} x2={width} y2={cursorScreen.y} stroke="rgba(226,232,240,0.35)" strokeWidth={1} />
-            <line x1={cursorScreen.x} y1={0} x2={cursorScreen.x} y2={height} stroke="rgba(226,232,240,0.35)" strokeWidth={1} />
+            <line x1={0} y1={snapScreen.y} x2={width} y2={snapScreen.y} stroke="rgba(226,232,240,0.35)" strokeWidth={1} />
+            <line x1={snapScreen.x} y1={0} x2={snapScreen.x} y2={height} stroke="rgba(226,232,240,0.35)" strokeWidth={1} />
             <rect
-              x={cursorScreen.x - 5}
-              y={cursorScreen.y - 5}
+              x={snapScreen.x - 5}
+              y={snapScreen.y - 5}
               width={10}
               height={10}
               fill="none"
               stroke="rgba(226,232,240,0.6)"
               strokeWidth={1}
             />
-            {snapMode && (
+            {activeSnap && (
               <>
-                <rect
-                  x={cursorScreen.x - 8}
-                  y={cursorScreen.y - 8}
-                  width={16}
-                  height={16}
-                  fill="none"
-                  stroke="#00f5d4"
-                  strokeWidth={1.5}
-                />
-                <text x={cursorScreen.x + 14} y={cursorScreen.y - 12} fill="#00f5d4" fontSize={11}>
-                  {snapMode}
+                <SnapGlyph mode={activeSnap} at={snapScreen} />
+                <text x={snapScreen.x + 14} y={snapScreen.y - 12} fill="#00f5d4" fontSize={11}>
+                  {activeSnap}
                 </text>
               </>
             )}
+            {!activeSnap && trackingLabel && (
+              <text x={snapScreen.x + 14} y={snapScreen.y - 12} fill="#a5b4fc" fontSize={11}>
+                {trackingLabel}
+              </text>
+            )}
             {dynamicInput && (
-              <text x={cursorScreen.x + 14} y={cursorScreen.y + 20} fill="#fbbf24" fontSize={12}>
+              <text x={snapScreen.x + 14} y={snapScreen.y + 20} fill="#fbbf24" fontSize={12}>
                 {dynamicInput}
               </text>
             )}

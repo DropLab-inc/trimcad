@@ -256,19 +256,95 @@ export const offsetCircle = (circle: CircleEntity, distanceValue: number): Circl
   radius: Math.max(EPS, circle.radius + distanceValue),
 })
 
+export const angularSweep = (vertex: Vec2, first: Vec2, second: Vec2): number => {
+  const a1 = angleBetween(vertex, first)
+  const a2 = angleBetween(vertex, second)
+  let sweep = a2 - a1
+  while (sweep <= -Math.PI) sweep += Math.PI * 2
+  while (sweep > Math.PI) sweep -= Math.PI * 2
+  return sweep
+}
+
+/**
+ * `p1`/`p2` are the extension line origins for linear and aligned dimensions, the centre and a
+ * point on the curve for radial and diameter dimensions, and the vertex plus first ray for
+ * angular dimensions (where `p3` is the second ray).
+ */
 export const makeDimensionLabel = (dimension: DimensionEntity, precision: number, suffix: string): string => {
   if (dimension.valueOverride) {
     return dimension.valueOverride
   }
-  let value = 0
-  if (dimension.dimType === 'angular' && dimension.p3) {
-    const a1 = angleBetween(dimension.p2, dimension.p1)
-    const a2 = angleBetween(dimension.p2, dimension.p3)
-    value = Math.abs(((a2 - a1) * 180) / Math.PI)
-  } else {
-    value = distance(dimension.p1, dimension.p2)
+
+  switch (dimension.dimType) {
+    case 'angular': {
+      if (!dimension.p3) return ''
+      const degrees = Math.abs((angularSweep(dimension.p1, dimension.p2, dimension.p3) * 180) / Math.PI)
+      return `${degrees.toFixed(precision)}\u00b0`
+    }
+    case 'radial':
+      return `R${distance(dimension.p1, dimension.p2).toFixed(precision)}${suffix}`
+    case 'diameter':
+      return `\u00d8${(distance(dimension.p1, dimension.p2) * 2).toFixed(precision)}${suffix}`
+    case 'linear': {
+      const dx = Math.abs(dimension.p2.x - dimension.p1.x)
+      const dy = Math.abs(dimension.p2.y - dimension.p1.y)
+      return `${(dx >= dy ? dx : dy).toFixed(precision)}${suffix}`
+    }
+    default:
+      return `${distance(dimension.p1, dimension.p2).toFixed(precision)}${suffix}`
   }
-  return `${value.toFixed(precision)}${suffix}`
+}
+
+export const polygonArea = (points: Vec2[]): number => {
+  let area = 0
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    area += (points[j].x + points[i].x) * (points[j].y - points[i].y)
+  }
+  return Math.abs(area / 2)
+}
+
+export const circleToPolygon = (center: Vec2, radius: number, segments = 64): Vec2[] =>
+  Array.from({ length: segments }, (_, index) => polar(center, radius, (index / segments) * Math.PI * 2))
+
+/**
+ * Finds the smallest closed region containing the picked point, so hatching fills the area you
+ * clicked rather than an arbitrary shape elsewhere in the drawing.
+ */
+export const findHatchBoundary = (entities: CadEntity[], pickPoint: Vec2): Vec2[] | null => {
+  let best: { points: Vec2[]; area: number } | null = null
+
+  const offer = (points: Vec2[]) => {
+    if (points.length < 3) return
+    if (!isPointInPolygon(pickPoint, points)) return
+    const area = polygonArea(points)
+    if (area <= 0) return
+    if (!best || area < best.area) {
+      best = { points, area }
+    }
+  }
+
+  for (const entity of entities) {
+    if (entity.type === 'polyline' && entity.closed) {
+      offer(entity.points)
+    }
+    if (entity.type === 'circle') {
+      offer(circleToPolygon(entity.center, entity.radius))
+    }
+    if (entity.type === 'ellipse') {
+      offer(
+        Array.from({ length: 64 }, (_, index) => {
+          const angle = (index / 64) * Math.PI * 2
+          const local = { x: Math.cos(angle) * entity.rx, y: Math.sin(angle) * entity.ry }
+          return {
+            x: entity.center.x + local.x * Math.cos(entity.rotation) - local.y * Math.sin(entity.rotation),
+            y: entity.center.y + local.x * Math.sin(entity.rotation) + local.y * Math.cos(entity.rotation),
+          }
+        }),
+      )
+    }
+  }
+
+  return best ? (best as { points: Vec2[] }).points : null
 }
 
 export const insertBoundingPoints = (insert: InsertEntity): Vec2[] => {
@@ -319,7 +395,7 @@ export const approxEntityCenter = (entity: CadEntity): Vec2 => {
   return { x: sum.x / points.length, y: sum.y / points.length }
 }
 
-export const circleTangentPoints = (circle: CircleEntity, fromPoint: Vec2): Vec2[] => {
+export const circleTangentPoints = (circle: { center: Vec2; radius: number }, fromPoint: Vec2): Vec2[] => {
   const v = sub(fromPoint, circle.center)
   const d = length(v)
   if (d <= circle.radius + EPS) {

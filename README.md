@@ -41,6 +41,42 @@ The viewport follows AutoCAD conventions.
 | Middle mouse drag | Pan |
 | Mouse wheel | Zoom at the cursor |
 | Hold `Shift` | Ortho: constrain to horizontal/vertical |
+| `Ctrl`+`A` | Select everything on visible, unlocked layers |
+| `Ctrl`+`Z` / `Ctrl`+`Y` | Undo / redo |
+
+### Selecting objects
+
+With the Select tool, click an object to pick it, or drag a box across the drawing:
+
+| Drag direction | Box | Selects |
+| --- | --- | --- |
+| Left to right | Solid blue | Only objects **completely inside** the box (window) |
+| Right to left | Dashed green | Objects **inside or touching** the box (crossing) |
+
+Hold `Shift` while picking to add to the selection and `Ctrl` to remove from it. Picking any
+member of a group selects the whole group. `Esc` clears the selection.
+
+### Object snap
+
+The right-hand Object Snap panel toggles each running snap individually. Endpoint, midpoint,
+centre, quadrant, intersection, perpendicular, tangent and node are implemented, each with its
+own marker glyph. When several snaps are in range the more specific one wins, so an endpoint is
+preferred over a point that merely lies on the curve. Perpendicular and tangent are measured
+from the point you are drawing from, so they only appear once a command is in progress.
+
+### Dimensions
+
+Pick the dimension type in the ribbon first. Linear and aligned dimensions take three clicks
+(the two extension line origins, then the dimension line location). Radius and diameter take two
+(the circle or arc, then the label location). Angular takes four (vertex, both sides, then the
+arc location). Dimensions are drawn with extension lines, arrowheads and a text label formatted
+using the drawing's dimension style.
+
+### Hatching
+
+Choose a pattern in the ribbon, then click inside any closed area. The smallest closed region
+containing the point you clicked is used as the boundary, so nested shapes hatch the way you
+would expect.
 
 While a command is running you get a full-screen crosshair, a live preview of the actual
 shape (a circle previews as a circle, not just its radius), a dynamic input readout with

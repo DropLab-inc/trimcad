@@ -2,9 +2,17 @@ import { create } from 'zustand'
 import { createCircle, createLine, createPolygon, createRect } from './commands'
 import { loadAutosave, saveAutosave } from './autosave'
 import { DocumentController, makeDefaultDocument } from './document'
-import { uid } from './geometry'
+import { findHatchBoundary, isPointNearEntity, uid } from './geometry'
+import { applySelectionModifier, expandSelectionToGroups, type SelectionModifier } from './selection'
 import type { Vec2 } from './math/vec2'
-import type { CadEntity, DrawingDocument, SnapMode, ToolMode } from './types'
+import type {
+  CadEntity,
+  DimensionType,
+  DrawingDocument,
+  HatchPattern,
+  SnapMode,
+  ToolMode,
+} from './types'
 
 const controller = new DocumentController(makeDefaultDocument())
 
@@ -14,7 +22,16 @@ type CameraState = {
   zoom: number
 }
 
-const defaultSnapModes: SnapMode[] = ['endpoint', 'midpoint', 'center', 'nearest']
+const defaultSnapModes: SnapMode[] = [
+  'endpoint',
+  'midpoint',
+  'center',
+  'quadrant',
+  'intersection',
+  'perpendicular',
+  'tangent',
+  'node',
+]
 
 type CadState = {
   doc: DrawingDocument
@@ -29,7 +46,12 @@ type CadState = {
   osnapEnabled: boolean
   polarEnabled: boolean
   polygonSides: number
+  dimensionType: DimensionType
+  hatchPattern: HatchPattern
   setPolygonSides: (sides: number) => void
+  setDimensionType: (dimType: DimensionType) => void
+  setHatchPattern: (pattern: HatchPattern) => void
+  toggleSnapMode: (mode: SnapMode) => void
   finishDraft: () => void
   closeDraft: () => void
   cancelDraft: () => void
@@ -41,6 +63,8 @@ type CadState = {
   toggleOsnap: () => void
   togglePolar: () => void
   setSelection: (ids: string[]) => void
+  applySelection: (ids: string[], modifier: SelectionModifier) => void
+  selectAll: () => void
   clearDraft: () => void
   addDraftPoint: (point: Vec2) => void
   executeCommand: (line: string) => void
@@ -73,7 +97,17 @@ export const useCadStore = create<CadState>((set, get) => ({
   osnapEnabled: true,
   polarEnabled: true,
   polygonSides: 6,
+  dimensionType: 'linear',
+  hatchPattern: 'ansi31',
   setPolygonSides: (polygonSides) => set({ polygonSides: Math.max(3, Math.round(polygonSides)) }),
+  setDimensionType: (dimensionType) => set({ dimensionType, draftPoints: [], activeTool: 'dimension' }),
+  setHatchPattern: (hatchPattern) => set({ hatchPattern }),
+  toggleSnapMode: (mode) =>
+    set((state) => ({
+      snapModes: state.snapModes.includes(mode)
+        ? state.snapModes.filter((candidate) => candidate !== mode)
+        : [...state.snapModes, mode],
+    })),
   finishDraft: () => {
     const state = get()
     const { activeTool, draftPoints } = state
@@ -104,6 +138,23 @@ export const useCadStore = create<CadState>((set, get) => ({
   setSelection: (ids) => {
     controller.select(ids)
     set({ selectedIds: controller.getSelection() })
+  },
+  applySelection: (ids, modifier) => {
+    const state = get()
+    const expanded = expandSelectionToGroups(ids, state.doc)
+    const next = applySelectionModifier(state.selectedIds, expanded, modifier)
+    controller.select(next)
+    set({ selectedIds: controller.getSelection() })
+  },
+  selectAll: () => {
+    const selectable = get()
+      .doc.entities.filter((entity) => {
+        const layer = get().doc.layers.find((candidate) => candidate.id === entity.layerId)
+        return layer?.visible !== false && layer?.locked !== true
+      })
+      .map((entity) => entity.id)
+    controller.select(selectable)
+    set({ selectedIds: controller.getSelection(), statusMessage: `Selected ${selectable.length} objects` })
   },
   clearDraft: () => set({ draftPoints: [] }),
   addDraftPoint: (point) => set((state) => ({ draftPoints: [...state.draftPoints, point] })),
@@ -265,16 +316,92 @@ export const applyDrawTool = (point: Vec2) => {
   }
 
   if (activeTool === 'hatch') {
-    const polyline = state.doc.entities.find((entity) => entity.type === 'polyline' && entity.closed && entity.points.length > 2)
-    if (!polyline || polyline.type !== 'polyline') {
-      state.setStatusMessage('Draw a closed polyline before hatch.')
+    const boundary = findHatchBoundary(state.doc.entities, point)
+    if (!boundary) {
+      state.setStatusMessage('No closed boundary found at that point.')
       return
     }
-    addEntity({ id: uid(), type: 'hatch', layerId: currentLayerId, boundary: polyline.points })
+    addEntity({
+      id: uid(),
+      type: 'hatch',
+      layerId: currentLayerId,
+      boundary,
+      pattern: state.hatchPattern,
+      scale: 1,
+    })
+    state.setStatusMessage('Hatch created')
     return
   }
 
   if (activeTool === 'dimension') {
-    finishTwoPoint((a, b) => ({ id: uid(), type: 'dimension', layerId: currentLayerId, dimType: 'linear', p1: a, p2: b }))
+    applyDimensionTool(state, point, currentLayerId)
   }
+}
+
+const applyDimensionTool = (
+  state: ReturnType<typeof useCadStore.getState>,
+  point: Vec2,
+  layerId: string,
+) => {
+  const { dimensionType, draftPoints, addDraftPoint, addEntity, clearDraft } = state
+
+  if (dimensionType === 'radial' || dimensionType === 'diameter') {
+    if (draftPoints.length === 0) {
+      const tolerance = 8 / state.camera.zoom
+      const target = [...state.doc.entities]
+        .reverse()
+        .find((entity) => (entity.type === 'circle' || entity.type === 'arc') && isPointNearEntity(point, entity, tolerance))
+      if (!target || (target.type !== 'circle' && target.type !== 'arc')) {
+        state.setStatusMessage('Select a circle or arc.')
+        return
+      }
+      useCadStore.setState({ draftPoints: [target.center, point] })
+      return
+    }
+    addEntity({
+      id: uid(),
+      type: 'dimension',
+      layerId,
+      dimType: dimensionType,
+      p1: draftPoints[0],
+      p2: draftPoints[1],
+      placement: point,
+    })
+    clearDraft()
+    return
+  }
+
+  if (dimensionType === 'angular') {
+    if (draftPoints.length < 3) {
+      addDraftPoint(point)
+      return
+    }
+    addEntity({
+      id: uid(),
+      type: 'dimension',
+      layerId,
+      dimType: 'angular',
+      p1: draftPoints[0],
+      p2: draftPoints[1],
+      p3: draftPoints[2],
+      placement: point,
+    })
+    clearDraft()
+    return
+  }
+
+  if (draftPoints.length < 2) {
+    addDraftPoint(point)
+    return
+  }
+  addEntity({
+    id: uid(),
+    type: 'dimension',
+    layerId,
+    dimType: dimensionType,
+    p1: draftPoints[0],
+    p2: draftPoints[1],
+    placement: point,
+  })
+  clearDraft()
 }

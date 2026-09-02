@@ -4,6 +4,7 @@ import { CanvasViewport } from './ui/CanvasViewport'
 import { CommandLine } from './ui/CommandLine'
 import { LayerPanel } from './ui/LayerPanel'
 import { PropertiesPanel } from './ui/PropertiesPanel'
+import { SnapPanel } from './ui/SnapPanel'
 import { StatusBar } from './ui/StatusBar'
 import { Toolbar } from './ui/Toolbar'
 
@@ -25,6 +26,7 @@ function App() {
         <CanvasViewport />
         <aside className="rightbar">
           <LayerPanel />
+          <SnapPanel />
           <PropertiesPanel />
         </aside>
       </main>

@@ -170,6 +170,28 @@ body,
   outline: none;
 }
 
+.ribbon-field select {
+  background: #0b1220;
+  border: none;
+  color: #dbeafe;
+  font-size: 0.66rem;
+  padding: 0.2rem 0;
+}
+
+.snap-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.1rem 0.5rem;
+}
+
+.snap-list label {
+  text-transform: capitalize;
+  margin-top: 0.2rem;
+}
+
 .rightbar {
   border-left: 1px solid #23324a;
   background: #111c32;

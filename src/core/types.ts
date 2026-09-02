@@ -73,9 +73,13 @@ export type SplineEntity = BaseEntity & {
   controlPoints: Vec2[]
 }
 
+export type HatchPattern = 'solid' | 'ansi31' | 'ansi37' | 'dots'
+
 export type HatchEntity = BaseEntity & {
   type: 'hatch'
   boundary: Vec2[]
+  pattern: HatchPattern
+  scale: number
 }
 
 export type TextEntity = BaseEntity & {
@@ -93,6 +97,8 @@ export type DimensionEntity = BaseEntity & {
   p1: Vec2
   p2: Vec2
   p3?: Vec2
+  /** Where the dimension line sits, picked as the final click. */
+  placement?: Vec2
   valueOverride?: string
 }
 
