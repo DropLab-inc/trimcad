@@ -173,3 +173,7 @@ export type ToolMode =
   | 'trim'
   | 'extend'
   | 'mirror'
+  | 'move'
+  | 'copy'
+  | 'rotate'
+  | 'scale'

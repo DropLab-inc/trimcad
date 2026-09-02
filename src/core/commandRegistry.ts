@@ -1,0 +1,114 @@
+import type { ToolMode } from './types'
+
+/**
+ * The single table of everything the user can type at the command line.
+ *
+ * The command line, the ribbon and the autocomplete list all read from here, so a command is only
+ * ever described once. Aliases follow AutoCAD's defaults (L, C, REC, TR, ...) so muscle memory
+ * carries over.
+ */
+
+export type CommandCategory = 'Draw' | 'Modify' | 'Annotate' | 'Edit' | 'View' | 'File'
+
+export type CommandDef = {
+  /** Canonical name, always upper case. This is what gets echoed and what Enter repeats. */
+  name: string
+  aliases: string[]
+  category: CommandCategory
+  summary: string
+  /** Commands that hand control to a tool collecting points on the canvas. */
+  tool?: ToolMode
+}
+
+export const COMMANDS: CommandDef[] = [
+  // Draw
+  { name: 'LINE', aliases: ['L'], category: 'Draw', summary: 'Straight segment', tool: 'line' },
+  { name: 'PLINE', aliases: ['PL'], category: 'Draw', summary: 'Connected polyline', tool: 'polyline' },
+  { name: 'RECTANG', aliases: ['REC'], category: 'Draw', summary: 'Rectangle from two corners', tool: 'rect' },
+  { name: 'CIRCLE', aliases: ['C'], category: 'Draw', summary: 'Circle by centre and radius', tool: 'circle' },
+  { name: 'ARC', aliases: ['A'], category: 'Draw', summary: 'Arc by centre, start and end', tool: 'arc' },
+  { name: 'ELLIPSE', aliases: ['EL'], category: 'Draw', summary: 'Ellipse by centre and axes', tool: 'ellipse' },
+  { name: 'POLYGON', aliases: ['POL'], category: 'Draw', summary: 'Regular polygon', tool: 'polygon' },
+  { name: 'SPLINE', aliases: ['SPL'], category: 'Draw', summary: 'Smooth curve through points', tool: 'spline' },
+  { name: 'HATCH', aliases: ['H'], category: 'Draw', summary: 'Fill an enclosed area', tool: 'hatch' },
+
+  // Annotate
+  { name: 'TEXT', aliases: ['DT'], category: 'Annotate', summary: 'Single line of text', tool: 'text' },
+  { name: 'DIM', aliases: ['D'], category: 'Annotate', summary: 'Dimension, current type', tool: 'dimension' },
+  { name: 'DIMLINEAR', aliases: ['DLI'], category: 'Annotate', summary: 'Horizontal or vertical dimension' },
+  { name: 'DIMALIGNED', aliases: ['DAL'], category: 'Annotate', summary: 'Dimension parallel to the edge' },
+  { name: 'DIMRADIUS', aliases: ['DRA'], category: 'Annotate', summary: 'Radius dimension' },
+  { name: 'DIMDIAMETER', aliases: ['DDI'], category: 'Annotate', summary: 'Diameter dimension' },
+  { name: 'DIMANGULAR', aliases: ['DAN'], category: 'Annotate', summary: 'Angular dimension' },
+
+  // Modify
+  { name: 'MOVE', aliases: ['M'], category: 'Modify', summary: 'Move objects by a displacement', tool: 'move' },
+  { name: 'COPY', aliases: ['CO', 'CP'], category: 'Modify', summary: 'Copy objects by a displacement', tool: 'copy' },
+  { name: 'ROTATE', aliases: ['RO'], category: 'Modify', summary: 'Rotate about a base point', tool: 'rotate' },
+  { name: 'SCALE', aliases: ['SC'], category: 'Modify', summary: 'Scale about a base point', tool: 'scale' },
+  { name: 'MIRROR', aliases: ['MI'], category: 'Modify', summary: 'Reflect across an axis', tool: 'mirror' },
+  { name: 'OFFSET', aliases: ['O'], category: 'Modify', summary: 'Parallel copy at a distance', tool: 'offset' },
+  { name: 'TRIM', aliases: ['TR'], category: 'Modify', summary: 'Cut objects back to an edge', tool: 'trim' },
+  { name: 'EXTEND', aliases: ['EX'], category: 'Modify', summary: 'Lengthen objects to an edge', tool: 'extend' },
+  { name: 'ERASE', aliases: ['E'], category: 'Modify', summary: 'Delete the selection' },
+  { name: 'JOIN', aliases: ['J'], category: 'Modify', summary: 'Join selected lines into a polyline' },
+  { name: 'GROUP', aliases: ['G'], category: 'Modify', summary: 'Group the selection' },
+  { name: 'EXPLODE', aliases: ['X'], category: 'Modify', summary: 'Ungroup the selection' },
+  { name: 'INSERT', aliases: ['I'], category: 'Modify', summary: 'Place a block', tool: 'insert' },
+
+  // Edit
+  { name: 'SELECT', aliases: ['SE'], category: 'Edit', summary: 'Return to the selection tool', tool: 'select' },
+  { name: 'ALL', aliases: [], category: 'Edit', summary: 'Select every unlocked object' },
+  { name: 'UNDO', aliases: ['U'], category: 'Edit', summary: 'Undo the last change' },
+  { name: 'REDO', aliases: ['RE'], category: 'Edit', summary: 'Redo the last undone change' },
+
+  // View
+  { name: 'ZOOM', aliases: ['Z'], category: 'View', summary: 'Zoom to the drawing extents' },
+  { name: 'OSNAP', aliases: ['OS'], category: 'View', summary: 'Toggle object snap' },
+  { name: 'ORTHO', aliases: ['OR'], category: 'View', summary: 'Toggle orthogonal tracking' },
+  { name: 'POLAR', aliases: ['PO'], category: 'View', summary: 'Toggle polar tracking' },
+  { name: 'HELP', aliases: ['?'], category: 'View', summary: 'List every command' },
+
+  // File
+  { name: 'DXFOUT', aliases: [], category: 'File', summary: 'Export the drawing as DXF' },
+  { name: 'DXFIN', aliases: [], category: 'File', summary: 'Import a DXF file' },
+  { name: 'PLOT', aliases: ['PRINT'], category: 'File', summary: 'Print to PDF, scaled to fit' },
+  { name: 'PLOT1', aliases: [], category: 'File', summary: 'Print to PDF at 1:1' },
+]
+
+const BY_TOKEN = new Map<string, CommandDef>()
+for (const command of COMMANDS) {
+  BY_TOKEN.set(command.name, command)
+  for (const alias of command.aliases) BY_TOKEN.set(alias, command)
+}
+
+/** Looks up a command by its canonical name or any alias. Input is case insensitive. */
+export const resolveCommand = (input: string): CommandDef | null =>
+  BY_TOKEN.get(input.trim().toUpperCase()) ?? null
+
+/**
+ * Autocomplete candidates for partially typed text, ordered the way AutoCAD orders them: an exact
+ * alias first, then names beginning with the text, then commands whose aliases begin with it.
+ */
+export const matchCommands = (prefix: string): CommandDef[] => {
+  const text = prefix.trim().toUpperCase()
+  if (!text) return []
+
+  const exact = BY_TOKEN.get(text) ?? null
+  const byName: CommandDef[] = []
+  const byAlias: CommandDef[] = []
+
+  for (const command of COMMANDS) {
+    if (command === exact) continue
+    if (command.name.startsWith(text)) byName.push(command)
+    else if (command.aliases.some((alias) => alias.startsWith(text))) byAlias.push(command)
+  }
+
+  byName.sort((a, b) => a.name.localeCompare(b.name))
+  byAlias.sort((a, b) => a.name.localeCompare(b.name))
+  return [...(exact ? [exact] : []), ...byName, ...byAlias]
+}
+
+/** The shortest token that reaches a command, used for the hints shown on ribbon buttons. */
+export const shortestAlias = (command: CommandDef): string =>
+  [command.name, ...command.aliases].reduce((best, token) => (token.length < best.length ? token : best))

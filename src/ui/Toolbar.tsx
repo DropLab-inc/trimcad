@@ -33,9 +33,21 @@ const dimensionTypes: Array<{ value: DimensionType; label: string }> = [
 const hatchPatterns: HatchPattern[] = ['ansi31', 'ansi37', 'dots', 'solid']
 
 const modifyTools: Array<{ tool: ToolMode; label: string; hint: string }> = [
+  { tool: 'move', label: 'Move', hint: 'Select objects, pick a base point, then pick where it goes' },
+  { tool: 'copy', label: 'Copy', hint: 'Select objects, pick a base point, then pick where the copy goes' },
+  { tool: 'rotate', label: 'Rotate', hint: 'Select objects, pick a base point, then type or pick an angle' },
+  { tool: 'scale', label: 'Scale', hint: 'Select objects, pick a base point, then type a factor' },
   { tool: 'offset', label: 'Offset', hint: 'Pick an object, then pick the side to offset toward' },
-  { tool: 'trim', label: 'Trim', hint: 'Click the part of an object to cut away' },
-  { tool: 'extend', label: 'Extend', hint: 'Click the end of an object to lengthen it' },
+  {
+    tool: 'trim',
+    label: 'Trim',
+    hint: 'Click the part to cut away, drag a fence across many, or hold Shift to extend',
+  },
+  {
+    tool: 'extend',
+    label: 'Extend',
+    hint: 'Click the end to lengthen, drag a fence across many, or hold Shift to trim',
+  },
   { tool: 'mirror', label: 'Mirror', hint: 'Select objects first, then pick the mirror line' },
 ]
 
@@ -52,6 +64,12 @@ export function Toolbar() {
   const setOffsetDistance = useCadStore((state) => state.setOffsetDistance)
   const mirrorKeepSource = useCadStore((state) => state.mirrorKeepSource)
   const toggleMirrorKeepSource = useCadStore((state) => state.toggleMirrorKeepSource)
+  const edgeIds = useCadStore((state) => state.edgeIds)
+  const pickingEdges = useCadStore((state) => state.pickingEdges)
+  const beginEdgeSelection = useCadStore((state) => state.beginEdgeSelection)
+  const useAllEdges = useCadStore((state) => state.useAllEdges)
+
+  const editingEdges = activeTool === 'trim' || activeTool === 'extend'
 
   return (
     <div className="toolbar-ribbon">
@@ -121,6 +139,18 @@ export function Toolbar() {
             Keep source
             <input type="checkbox" checked={mirrorKeepSource} onChange={toggleMirrorKeepSource} />
           </label>
+          {editingEdges && (
+            <label className="ribbon-field" title="Which objects act as cutting or boundary edges">
+              Edges
+              <button
+                type="button"
+                className="ribbon-btn"
+                onClick={() => (edgeIds === null ? beginEdgeSelection() : useAllEdges())}
+              >
+                {pickingEdges ? 'Picking…' : edgeIds === null ? 'All objects' : `${edgeIds.length} chosen`}
+              </button>
+            </label>
+          )}
         </div>
       </section>
 

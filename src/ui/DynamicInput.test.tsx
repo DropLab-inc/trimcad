@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createCircle, createLine } from '../core/commands'
 import { useCadStore } from '../core/store'
+import type { Vec2 } from '../core/math/vec2'
 import type { CadEntity } from '../core/types'
 import { CanvasViewport } from './CanvasViewport'
 
@@ -179,6 +180,18 @@ describe('modify tools in the viewport', () => {
     expect(useCadStore.getState().modifyTargetId).toBeNull()
   })
 
+  /** TRIM and EXTEND commit on release, because a drag is a fence rather than a pick. */
+  const pick = (svg: SVGSVGElement, x: number, y: number, options: { shiftKey?: boolean } = {}) => {
+    fireEvent.mouseDown(svg, { clientX: x, clientY: y, button: 0, ...options })
+    fireEvent.mouseUp(svg, { clientX: x, clientY: y, button: 0, ...options })
+  }
+
+  const drag = (svg: SVGSVGElement, from: Vec2, to: Vec2, options: { shiftKey?: boolean } = {}) => {
+    fireEvent.mouseDown(svg, { clientX: from.x, clientY: from.y, button: 0, ...options })
+    fireEvent.mouseMove(svg, { clientX: to.x, clientY: to.y, ...options })
+    fireEvent.mouseUp(svg, { clientX: to.x, clientY: to.y, button: 0, ...options })
+  }
+
   it('trims the clicked part of a line away', () => {
     const target = createLine(layerId(), { x: 0, y: 100 }, { x: 400, y: 100 })
     const cutter = createLine(layerId(), { x: 200, y: 0 }, { x: 200, y: 200 })
@@ -186,7 +199,7 @@ describe('modify tools in the viewport', () => {
     useCadStore.getState().setTool('trim')
 
     const { container } = render(<CanvasViewport />)
-    fireEvent.mouseDown(container.querySelector('svg')!, { clientX: 320, clientY: 100, button: 0 })
+    pick(container.querySelector('svg')!, 320, 100)
 
     const lines = useCadStore.getState().doc.entities.filter((entity) => entity.id === target.id)
     expect(lines).toHaveLength(1)
@@ -200,10 +213,149 @@ describe('modify tools in the viewport', () => {
     useCadStore.getState().setTool('extend')
 
     const { container } = render(<CanvasViewport />)
-    fireEvent.mouseDown(container.querySelector('svg')!, { clientX: 98, clientY: 100, button: 0 })
+    pick(container.querySelector('svg')!, 98, 100)
 
     const updated = useCadStore.getState().doc.entities.find((entity) => entity.id === target.id)!
     expect(updated.type === 'line' && updated.end.x).toBeCloseTo(300, 6)
+  })
+
+  it('extends instead of trimming while Shift is held', () => {
+    const target = createLine(layerId(), { x: 0, y: 100 }, { x: 100, y: 100 })
+    const boundary = createLine(layerId(), { x: 300, y: 0 }, { x: 300, y: 200 })
+    seed([target, boundary])
+    useCadStore.getState().setTool('trim')
+
+    const { container } = render(<CanvasViewport />)
+    pick(container.querySelector('svg')!, 98, 100, { shiftKey: true })
+
+    const updated = useCadStore.getState().doc.entities.find((entity) => entity.id === target.id)!
+    expect(updated.type === 'line' && updated.end.x).toBeCloseTo(300, 6)
+  })
+
+  it('trims every object a dragged fence crosses', () => {
+    const rungs = [120, 160, 200].map((y) => createLine(layerId(), { x: 0, y }, { x: 400, y }))
+    const cutter = createLine(layerId(), { x: 100, y: 0 }, { x: 100, y: 400 })
+    seed([...rungs, cutter])
+    useCadStore.getState().setTool('trim')
+
+    const { container } = render(<CanvasViewport />)
+    // A vertical swipe at x=50 crosses all three rungs on the short side of the cutter.
+    drag(container.querySelector('svg')!, { x: 50, y: 100 }, { x: 50, y: 220 })
+
+    for (const rung of rungs) {
+      const piece = useCadStore.getState().doc.entities.find((entity) => entity.id === rung.id)!
+      expect(piece.type === 'line' && piece.start.x).toBeCloseTo(100, 6)
+      expect(piece.type === 'line' && piece.end.x).toBeCloseTo(400, 6)
+    }
+  })
+
+  it('can trim the same line a second time', () => {
+    const target = createLine(layerId(), { x: 0, y: 100 }, { x: 400, y: 100 })
+    const left = createLine(layerId(), { x: 100, y: 0 }, { x: 100, y: 200 })
+    const right = createLine(layerId(), { x: 300, y: 0 }, { x: 300, y: 200 })
+    seed([target, left, right])
+    useCadStore.getState().setTool('trim')
+
+    const { container } = render(<CanvasViewport />)
+    const svg = container.querySelector('svg')!
+
+    pick(svg, 350, 100)
+    expect(useCadStore.getState().doc.entities.filter((entity) => entity.type === 'line')).toHaveLength(4)
+
+    // The middle piece now runs edge to edge, and picking it should clear it away.
+    pick(svg, 200, 100)
+
+    const horizontals = useCadStore
+      .getState()
+      .doc.entities.filter((entity) => entity.type === 'line' && entity.start.y === 100)
+    expect(horizontals).toHaveLength(1)
+    expect(horizontals[0].type === 'line' && horizontals[0].end.x).toBeCloseTo(100, 6)
+  })
+
+  it('shades the doomed piece in red as the crosshair passes over it', () => {
+    const target = createLine(layerId(), { x: 0, y: 100 }, { x: 400, y: 100 })
+    const cutter = createLine(layerId(), { x: 200, y: 0 }, { x: 200, y: 200 })
+    seed([target, cutter])
+    useCadStore.getState().setTool('trim')
+
+    const { container } = render(<CanvasViewport />)
+    fireEvent.mouseMove(container.querySelector('svg')!, { clientX: 320, clientY: 100 })
+
+    const ghost = container.querySelector('line[stroke="#f87171"]')!
+    expect(ghost).toBeTruthy()
+    expect(ghost.getAttribute('x1')).toBe('200')
+    expect(ghost.getAttribute('x2')).toBe('400')
+  })
+
+  it('shows the extend preview in green while Shift is held', () => {
+    const target = createLine(layerId(), { x: 0, y: 100 }, { x: 100, y: 100 })
+    const boundary = createLine(layerId(), { x: 300, y: 0 }, { x: 300, y: 200 })
+    seed([target, boundary])
+    useCadStore.getState().setTool('trim')
+
+    const { container } = render(<CanvasViewport />)
+    fireEvent.keyDown(window, { key: 'Shift' })
+    fireEvent.mouseMove(container.querySelector('svg')!, { clientX: 98, clientY: 100 })
+
+    const ghost = container.querySelector('line[stroke="#4ade80"]')!
+    expect(ghost).toBeTruthy()
+    // Only the new material is drawn, running from the old end out to the boundary.
+    expect(ghost.getAttribute('x1')).toBe('100')
+    expect(ghost.getAttribute('x2')).toBe('300')
+    fireEvent.keyUp(window, { key: 'Shift' })
+  })
+
+  it('shows no preview when the object does not meet an edge', () => {
+    seed([createLine(layerId(), { x: 0, y: 100 }, { x: 400, y: 100 })])
+    useCadStore.getState().setTool('trim')
+
+    const { container } = render(<CanvasViewport />)
+    fireEvent.mouseMove(container.querySelector('svg')!, { clientX: 320, clientY: 100 })
+
+    expect(container.querySelector('line[stroke="#f87171"]')).toBeNull()
+  })
+
+  it('draws the fence while it is being dragged', () => {
+    seed([createLine(layerId(), { x: 0, y: 100 }, { x: 400, y: 100 })])
+    useCadStore.getState().setTool('trim')
+
+    const { container } = render(<CanvasViewport />)
+    const svg = container.querySelector('svg')!
+    fireEvent.mouseDown(svg, { clientX: 50, clientY: 50, button: 0 })
+    fireEvent.mouseMove(svg, { clientX: 50, clientY: 250 })
+
+    const fence = container.querySelector('line[stroke-dasharray="7 4"]')!
+    expect(fence).toBeTruthy()
+    expect(fence.getAttribute('y2')).toBe('250')
+  })
+
+  it('tells the user what the command wants next', () => {
+    seed()
+    useCadStore.getState().setTool('trim')
+    render(<CanvasViewport />)
+
+    expect(
+      screen.getByText('Select object to trim or shift-select to extend or [cuTting edges/Fence/Undo]:'),
+    ).toBeInTheDocument()
+  })
+
+  it('only trims against the chosen cutting edges', () => {
+    const target = createLine(layerId(), { x: 0, y: 100 }, { x: 400, y: 100 })
+    const near = createLine(layerId(), { x: 100, y: 0 }, { x: 100, y: 200 })
+    const far = createLine(layerId(), { x: 300, y: 0 }, { x: 300, y: 200 })
+    seed([target, near, far])
+    useCadStore.getState().setTool('trim')
+    useCadStore.getState().beginEdgeSelection()
+    useCadStore.getState().setSelection([far.id])
+    useCadStore.getState().finishEdgeSelection()
+
+    const { container } = render(<CanvasViewport />)
+    pick(container.querySelector('svg')!, 200, 100)
+
+    // With only the far edge cutting, the piece removed runs from the start to x=300.
+    const piece = useCadStore.getState().doc.entities.find((entity) => entity.id === target.id)!
+    expect(piece.type === 'line' && piece.start.x).toBeCloseTo(300, 6)
+    expect(piece.type === 'line' && piece.end.x).toBeCloseTo(400, 6)
   })
 
   it('mirrors the selection about the picked axis and keeps the original', () => {

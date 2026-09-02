@@ -19,10 +19,20 @@
 - `src/core/boundary.test.ts` (regions formed by crossing geometry, checked by area)
 - `src/core/dimension.test.ts` (labels, dimension line geometry, multi-click workflow)
 - `src/core/store.test.ts` (end-to-end draw pipeline for each tool)
-- `src/core/modify.test.ts` (offset sides and parallelism, trim pieces, extend targets, mirror)
+- `src/core/modify.test.ts` (offset sides and parallelism, trim pieces, extend targets, mirror,
+  trim and extend previews, fence crossings, re-trimming a piece that already rests on its edges)
 - `src/core/dynamicInput.test.ts` (tracked fields, typed overrides, coordinate parsing)
+- `src/core/commandRegistry.test.ts` (alias lookup, autocomplete ordering, no duplicate tokens)
+- `src/core/prompts.test.ts` (prompt per step, bracketed options, keyword matching)
+- `src/core/commandSession.test.ts` (typing commands, repeat, coordinates and direct distance
+  entry, the transform commands, options winning over same-named commands)
 - `src/ui/CanvasViewport.test.tsx` (snap marker position, window/crossing drag selection)
-- `src/ui/DynamicInput.test.tsx` (typing into dynamic fields and the modify tools end to end)
+- `src/ui/DynamicInput.test.tsx` (typing into dynamic fields, and the modify tools end to end
+  including trim previews, Shift swapping to extend, fence drags and chosen cutting edges)
+
+The command registry test asserts that no two commands claim the same token. That check is the
+reason aliases can be added confidently: a clash fails the suite rather than silently shadowing
+an existing command.
 
 `CanvasViewport.test.tsx` renders the real viewport in jsdom and drives it with mouse events.
 Because jsdom reports a zero-origin bounding box, client coordinates map straight to viewport

@@ -26,23 +26,45 @@ npm run dev
 
 Open the URL shown by Vite (typically `http://localhost:5173`).
 
-## Drafting controls
+## Working at the command line
 
-The viewport follows AutoCAD conventions.
+The command line drives the application, as it does in AutoCAD. You never have to click into it
+first: start typing anywhere over the drawing and the keystrokes land there, with a suggestion
+list that narrows as you type.
+
+| Input | Action |
+| --- | --- |
+| Type a command | `LINE`, or its alias `L`. Case does not matter |
+| `Enter` or `Space` | Accept the command, or finish the one that is running |
+| `Enter` at an idle prompt | Repeat the last command |
+| `Tab` | Complete to the highlighted suggestion |
+| `↑` / `↓` | Move through the suggestions, or recall earlier entries |
+| `Esc` | Cancel the running command |
+
+The prompt tells you what the command wants next and lists its options in brackets, for example
+`Select object to trim or shift-select to extend or [cuTting edges/Fence/Undo]:`. Typing an
+option's letters picks it, and those letters win over any command of the same name: `C` closes a
+polyline mid-command but starts CIRCLE at an idle prompt.
+
+Everything that scrolls past is kept in the history panel above the input.
+
+## Drafting controls
 
 | Input | Action |
 | --- | --- |
 | Left click | Place the next point of the active command |
 | Right click | Finish the current command |
-| `Enter` | Finish an open polyline or spline |
-| `C` | Close the current polyline |
 | `Esc` | Cancel the current command |
 | `Delete` | Erase the current selection |
 | Middle mouse drag | Pan |
 | Mouse wheel | Zoom at the cursor |
 | Hold `Shift` | Ortho: constrain to horizontal/vertical |
+| `F3` / `F8` / `F10` | Toggle object snap, ortho and polar tracking |
 | `Ctrl`+`A` | Select everything on visible, unlocked layers |
 | `Ctrl`+`Z` / `Ctrl`+`Y` | Undo / redo |
+
+The status bar along the bottom shows the crosshair coordinates and carries the OSNAP, ORTHO and
+POLAR toggles, which stay lit while they are on.
 
 ### Selecting objects
 
@@ -74,20 +96,45 @@ You can also type coordinates into the command line:
 | `50,30` | Absolute point |
 | `@50,30` | Relative to the last point |
 | `@250<30` | 250 units at 30 degrees from the last point |
+| `250` | Direct distance entry: 250 units the way the crosshair points |
 
 ### Modifying objects
 
 | Tool | How it works |
 | --- | --- |
+| Move | Select objects, pick a base point, then pick where it goes |
+| Copy | As Move, but the originals stay put |
+| Rotate | Select objects, pick a base point, then type an angle or pick a direction |
+| Scale | Select objects, pick a base point, then type a factor |
 | Offset | Set a distance in the ribbon, click the object, then click the side to offset toward |
-| Trim | Click the part of an object you want removed; everything visible acts as a cutting edge |
-| Extend | Click the end you want lengthened; it stops at the nearest object in that direction |
+| Trim | Click the part you want removed |
+| Extend | Click the end you want lengthened |
 | Mirror | Select objects first, then pick the two points of the mirror line |
 
 Offset produces a true parallel outline, so offsetting a rectangle inwards gives a smaller
-rectangle rather than a diagonally shifted one. Trimming a full circle leaves an arc covering
-everything except the piece you picked. "Keep source" in the ribbon controls whether Mirror
-leaves the originals in place.
+rectangle rather than a diagonally shifted one. "Keep source" in the ribbon controls whether
+Mirror leaves the originals in place.
+
+### Trim and extend
+
+Trim and extend are the same command with the roles reversed, so **holding Shift swaps between
+them** and the prompt updates to say so. Both start in AutoCAD's quick mode, where every visible
+object acts as an edge.
+
+As the crosshair passes over an object the piece that a click would remove is shaded in red
+dashes, and the length an extend would gain is shown in green, so you can see the result before
+committing to it.
+
+- **Pick** an object to trim or extend it.
+- **Drag a fence** across the drawing to do the whole run in one stroke and one undo step; every
+  object the fence crosses is treated as its own pick.
+- **`T` (or `B` for extend)** narrows the edges to a chosen set: select them, then press `Enter`.
+  The ribbon shows whether all objects or a chosen few are acting as edges.
+- **`U`** undoes the last edit without leaving the command.
+
+Trimming a full circle leaves an arc covering everything except the piece you picked. A piece
+whose ends already rest on edges, which is what you are left with after a first trim, has nothing
+left to cut, so picking it erases it.
 
 ### Object snap
 
@@ -124,16 +171,19 @@ Polar tracking only engages when the cursor is within a few degrees of a trackin
 so the cursor does not jump while you move it. Object snaps show a marker and a label at
 the snapped point.
 
-## Command aliases
+## Commands
 
-- `L`/`LINE`, `C`/`CIRCLE`, `PL`/`POLYLINE`, `REC`/`RECT`
-- `A`/`ARC`, `EL`/`ELLIPSE`, `PG`/`POLYGON`, `SP`/`SPLINE`
-- `H`/`HATCH`, `D`/`DIM`, `I`/`INSERT`
-- `O`/`OFFSET`, `TR`/`TRIM`, `EX`/`EXTEND`, `MI`/`MIRROR`
-- `M`/`MOVE`, `RO`/`ROTATE`, `SC`/`SCALE`
-- `F`/`FILLET`, `J`/`JOIN`, `BR`/`BREAK`, `AR`/`ARRAY`
-- `G`/`GROUP`, `B`/`BLOCK`, `X`/`EXPLODE`
-- `DXFIN`, `DXFOUT`, `PRINT`, `UNDO`, `REDO`, `DEL`
+Every command lives in one table, `src/core/commandRegistry.ts`, which also feeds the
+autocomplete list. Type `HELP` to print the whole table into the history panel.
+
+| Group | Commands |
+| --- | --- |
+| Draw | `LINE`/`L`, `PLINE`/`PL`, `RECTANG`/`REC`, `CIRCLE`/`C`, `ARC`/`A`, `ELLIPSE`/`EL`, `POLYGON`/`POL`, `SPLINE`/`SPL`, `HATCH`/`H` |
+| Annotate | `TEXT`/`DT`, `DIM`/`D`, `DIMLINEAR`/`DLI`, `DIMALIGNED`/`DAL`, `DIMRADIUS`/`DRA`, `DIMDIAMETER`/`DDI`, `DIMANGULAR`/`DAN` |
+| Modify | `MOVE`/`M`, `COPY`/`CO`, `ROTATE`/`RO`, `SCALE`/`SC`, `MIRROR`/`MI`, `OFFSET`/`O`, `TRIM`/`TR`, `EXTEND`/`EX`, `ERASE`/`E`, `JOIN`/`J`, `GROUP`/`G`, `EXPLODE`/`X`, `INSERT`/`I` |
+| Edit | `SELECT`/`SE`, `ALL`, `UNDO`/`U`, `REDO`/`RE` |
+| View | `ZOOM`/`Z`, `OSNAP`/`OS`, `ORTHO`/`OR`, `POLAR`/`PO`, `HELP` |
+| File | `DXFIN`, `DXFOUT`, `PLOT`/`PRINT`, `PLOT1` |
 
 ## Self-tests
 

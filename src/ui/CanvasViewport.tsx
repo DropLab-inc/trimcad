@@ -7,7 +7,8 @@ import {
   type ReactElement,
   type WheelEvent,
 } from 'react'
-import { applyDrawTool, useCadStore } from '../core/store'
+import { applyDrawTool, currentPrompt, previewTrimExtend, useCadStore } from '../core/store'
+import { formatPrompt, matchKeyword } from '../core/prompts'
 import { applyOrtho, applyPolarTracking, findBestSnap } from '../core/snap'
 import { rectFromPoints, selectEntitiesInRect, selectionModeFor } from '../core/selection'
 import {
@@ -18,8 +19,9 @@ import {
 } from '../core/dynamicInput'
 import { getEntityAnchorPoints, isPointNearEntity, mirrorEntity } from '../core/geometry'
 import { offsetEntity } from '../core/modify'
-import type { DimensionEntity, SnapMode, ToolMode } from '../core/types'
+import type { DimensionEntity, SnapMode } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
+import { COMMAND_INPUT_ID } from './CommandLine'
 import { HatchDefs } from './HatchDefs'
 import { renderDimension, renderEntity, splinePath } from './renderers'
 
@@ -40,33 +42,8 @@ const worldToScreen = (point: Vec2, camera: Camera): Vec2 => ({
   y: point.y * camera.zoom + camera.y,
 })
 
-const PROMPTS: Record<ToolMode, string[]> = {
-  select: ['Select objects:'],
-  line: ['Specify first point:', 'Specify next point:'],
-  polyline: ['Specify start point:', 'Specify next point (Enter to finish, C to close):'],
-  rect: ['Specify first corner:', 'Specify opposite corner:'],
-  circle: ['Specify center point:', 'Specify radius:'],
-  arc: ['Specify center point:', 'Specify start point:', 'Specify end point:'],
-  ellipse: ['Specify center point:', 'Specify axis endpoint:'],
-  polygon: ['Specify center of polygon:', 'Specify radius:'],
-  spline: ['Specify first point:', 'Specify next point (Enter to finish):'],
-  text: ['Specify text insertion point:'],
-  hatch: ['Pick an internal point of a closed area:'],
-  dimension: ['Specify first extension line origin:', 'Specify second extension line origin:'],
-  insert: ['Specify insertion point:'],
-  offset: ['Select object to offset:'],
-  trim: ['Select the part of an object to trim away:'],
-  extend: ['Select the end of an object to extend:'],
-  mirror: ['Specify first point of mirror line:', 'Specify second point of mirror line:'],
-}
-
-const DIM_PROMPTS: Record<string, string[]> = {
-  linear: ['Specify first extension line origin:', 'Specify second extension line origin:', 'Specify dimension line location:'],
-  aligned: ['Specify first extension line origin:', 'Specify second extension line origin:', 'Specify dimension line location:'],
-  radial: ['Select a circle or arc:', 'Specify dimension line location:'],
-  diameter: ['Select a circle or arc:', 'Specify dimension line location:'],
-  angular: ['Specify vertex:', 'Specify first side:', 'Specify second side:', 'Specify dimension arc location:'],
-}
+/** Below this drag distance a press-and-release counts as a pick rather than a fence. */
+const FENCE_THRESHOLD = 5
 
 /** AutoCAD draws a distinct glyph per snap type; this keeps the marker readable at a glance. */
 const SnapGlyph = ({ mode, at }: { mode: SnapMode; at: Vec2 }) => {
@@ -152,10 +129,18 @@ export function CanvasViewport() {
   const dimensionType = useCadStore((state) => state.dimensionType)
   const modifyTargetId = useCadStore((state) => state.modifyTargetId)
   const offsetDistance = useCadStore((state) => state.offsetDistance)
+  const edgeIds = useCadStore((state) => state.edgeIds)
+  const pickingEdges = useCadStore((state) => state.pickingEdges)
+  const finishEdgeSelection = useCadStore((state) => state.finishEdgeSelection)
+  const applyFence = useCadStore((state) => state.applyFence)
+  const applyKeyword = useCadStore((state) => state.applyKeyword)
   const finishDraft = useCadStore((state) => state.finishDraft)
-  const closeDraft = useCadStore((state) => state.closeDraft)
   const cancelDraft = useCadStore((state) => state.cancelDraft)
   const deleteSelection = useCadStore((state) => state.deleteSelection)
+  const setCommandInput = useCadStore((state) => state.setCommandInput)
+  const repeatLastCommand = useCadStore((state) => state.repeatLastCommand)
+  const publishCursorWorld = useCadStore((state) => state.setCursorWorld)
+  const orthoEnabled = useCadStore((state) => state.orthoEnabled)
 
   const frameRef = useRef<HTMLDivElement | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
@@ -168,8 +153,16 @@ export function CanvasViewport() {
   const [lastMouse, setLastMouse] = useState<Vec2 | null>(null)
   const [boxStart, setBoxStart] = useState<Vec2 | null>(null)
   const [boxEnd, setBoxEnd] = useState<Vec2 | null>(null)
+  const [fenceStart, setFenceStart] = useState<Vec2 | null>(null)
+  const [fenceEnd, setFenceEnd] = useState<Vec2 | null>(null)
+  const [hoverId, setHoverId] = useState<string | null>(null)
   const [typedState, setTypedState] = useState<TypedState>({ step: '', values: NO_VALUES, field: 0 })
   const [size, setSize] = useState({ width: 1000, height: 700 })
+
+  /** TRIM and EXTEND are the same command with the roles reversed; Shift flips which one you get. */
+  const editingEdges = activeTool === 'trim' || activeTool === 'extend'
+  const swapped = editingEdges && orthoHeld
+  const promptText = useCadStore((state) => formatPrompt(currentPrompt(state, swapped)))
 
   const visibleEntities = useMemo(
     () => doc.entities.filter((entity) => doc.layers.find((layer) => layer.id === entity.layerId)?.visible !== false),
@@ -263,17 +256,47 @@ export function CanvasViewport() {
         applySelection([], 'replace')
         return
       }
-      if (event.key === 'Enter') {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        if (pickingEdges) {
+          finishEdgeSelection()
+          return
+        }
         if (commandPoint && hasTypedValue(dynamicFields)) {
           applyDrawTool(commandPoint)
           clearTyped()
           return
         }
-        finishDraft()
+        // Enter and Space end the running command, or repeat the last one when idle.
+        if (draftPoints.length > 0) finishDraft()
+        else repeatLastCommand()
         return
       }
-      if (event.key.toLowerCase() === 'c' && draftPoints.length >= 2) closeDraft()
-      if (event.key === 'Delete') deleteSelection()
+
+      // A single letter that names one of the current prompt's options picks it, so `F` starts a
+      // fence during TRIM without having to click into the command line first.
+      if (/^[a-zA-Z]$/.test(event.key)) {
+        const store = useCadStore.getState()
+        const keyword = matchKeyword(event.key, currentPrompt(store, swapped).keywords)
+        if (keyword) {
+          event.preventDefault()
+          applyKeyword(keyword)
+          return
+        }
+      }
+
+      if (event.key === 'Delete') {
+        deleteSelection()
+        return
+      }
+
+      // Anything else printable belongs to the command line, so typing anywhere starts a command
+      // without having to click into the input first.
+      if (event.key.length === 1 && !event.altKey) {
+        event.preventDefault()
+        setCommandInput(useCadStore.getState().commandInput + event.key)
+        document.getElementById(COMMAND_INPUT_ID)?.focus()
+      }
     }
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key === 'Shift') setOrthoHeld(false)
@@ -285,18 +308,23 @@ export function CanvasViewport() {
       window.removeEventListener('keyup', onKeyUp)
     }
   }, [
+    applyKeyword,
     applySelection,
     cancelDraft,
-    closeDraft,
     commandPoint,
     deleteSelection,
     draftPoints.length,
     dynamicFields,
     fieldIndex,
     finishDraft,
+    finishEdgeSelection,
+    pickingEdges,
     redo,
+    repeatLastCommand,
     selectAll,
+    setCommandInput,
     stepKey,
+    swapped,
     typedValues,
     undo,
   ])
@@ -314,7 +342,8 @@ export function CanvasViewport() {
     if (!basePoint) {
       return { point: raw, snap: null, tracking: null }
     }
-    if (orthoHeld) {
+    // Shift forces ortho on temporarily; the status bar toggle latches it on.
+    if (orthoHeld || orthoEnabled) {
       return { point: applyOrtho(basePoint, raw), snap: null, tracking: 'ortho' }
     }
     if (polarEnabled) {
@@ -341,9 +370,15 @@ export function CanvasViewport() {
     }
     if (event.button !== 0) return
     const local = localPoint(event)
-    if (activeTool === 'select') {
+    if (activeTool === 'select' || pickingEdges) {
       setBoxStart(local)
       setBoxEnd(local)
+      return
+    }
+    // A press during TRIM or EXTEND may still turn into a fence, so commit nothing until mouse up.
+    if (editingEdges) {
+      setFenceStart(local)
+      setFenceEnd(local)
       return
     }
     applyDrawTool(resolvePoint(local).point)
@@ -353,6 +388,7 @@ export function CanvasViewport() {
     const local = localPoint(event)
     setCursorScreen(local)
     if (boxStart) setBoxEnd(local)
+    if (fenceStart) setFenceEnd(local)
     if (panning && lastMouse) {
       setCamera({ x: camera.x + (event.clientX - lastMouse.x), y: camera.y + (event.clientY - lastMouse.y) })
       setLastMouse({ x: event.clientX, y: event.clientY })
@@ -362,13 +398,38 @@ export function CanvasViewport() {
     setCursorWorld(point)
     setActiveSnap(snap)
     setTrackingLabel(tracking)
+
+    // Rollover highlight: show which object a click would pick before committing to it.
+    if (activeTool === 'select' || pickingEdges) {
+      const hit = [...visibleEntities].reverse().find((entity) => isPointNearEntity(point, entity, 8 / camera.zoom))
+      setHoverId(hit?.id ?? null)
+    } else if (hoverId) {
+      setHoverId(null)
+    }
   }
+
+  // The store needs the crosshair position so a typed distance knows which way to go.
+  useEffect(() => {
+    publishCursorWorld(cursorWorld)
+  }, [cursorWorld, publishCursorWorld])
 
   const handleMouseUp = (event: MouseEvent<SVGSVGElement>) => {
     setPanning(false)
     setLastMouse(null)
 
-    if (activeTool === 'select' && boxStart && boxEnd) {
+    if (fenceStart && fenceEnd) {
+      const dragged = Math.hypot(fenceEnd.x - fenceStart.x, fenceEnd.y - fenceStart.y)
+      if (dragged < FENCE_THRESHOLD) {
+        applyDrawTool(resolvePoint(fenceStart).point, { swapped: event.shiftKey })
+      } else {
+        applyFence(screenToWorld(fenceStart, camera), screenToWorld(fenceEnd, camera), event.shiftKey)
+      }
+      setFenceStart(null)
+      setFenceEnd(null)
+      return
+    }
+
+    if ((activeTool === 'select' || pickingEdges) && boxStart && boxEnd) {
       const modifier = event.shiftKey ? 'add' : event.ctrlKey ? 'remove' : 'replace'
       const dragged = Math.hypot(boxEnd.x - boxStart.x, boxEnd.y - boxStart.y)
 
@@ -396,6 +457,9 @@ export function CanvasViewport() {
     setLastMouse(null)
     setBoxStart(null)
     setBoxEnd(null)
+    setFenceStart(null)
+    setFenceEnd(null)
+    setHoverId(null)
     setCursorScreen(null)
     setCursorWorld(null)
     setActiveSnap(null)
@@ -462,6 +526,44 @@ export function CanvasViewport() {
     }
     return lines
   }, [camera, width, height])
+
+  /**
+   * Shading the piece under the crosshair is what makes trimming feel safe: you can see the exact
+   * length that would vanish, or the stub that would be gained, before committing to the click.
+   */
+  const trimExtendPreview = useMemo(() => {
+    if (!editingEdges || pickingEdges || !cursorWorld) return null
+    const result = previewTrimExtend(useCadStore.getState(), cursorWorld, swapped)
+    if (!result) return null
+    return (
+      <g opacity={0.95}>
+        {renderEntity(result.ghost, {
+          selected: false,
+          color: result.extending ? '#4ade80' : '#f87171',
+          dash: result.extending ? undefined : '5 4',
+          width: 3,
+          dimStyle: doc.dimStyle,
+        })}
+      </g>
+    )
+    // `doc` and `edgeIds` are read through getState, so they stay in the dependency list.
+  }, [cursorWorld, doc, edgeIds, editingEdges, pickingEdges, swapped])
+
+  const fenceLine = useMemo(() => {
+    if (!fenceStart || !fenceEnd) return null
+    if (Math.hypot(fenceEnd.x - fenceStart.x, fenceEnd.y - fenceStart.y) < FENCE_THRESHOLD) return null
+    return (
+      <line
+        x1={fenceStart.x}
+        y1={fenceStart.y}
+        x2={fenceEnd.x}
+        y2={fenceEnd.y}
+        stroke={swapped === (activeTool === 'trim') ? '#4ade80' : '#f87171'}
+        strokeWidth={1.5}
+        strokeDasharray="7 4"
+      />
+    )
+  }, [activeTool, fenceEnd, fenceStart, swapped])
 
   const modifyPreview = useMemo(() => {
     if (!cursorWorld) return null
@@ -628,13 +730,6 @@ export function CanvasViewport() {
       )
   }, [camera.zoom, selectedIds, visibleEntities])
 
-  const prompt =
-    activeTool === 'dimension'
-      ? (DIM_PROMPTS[dimensionType] ?? PROMPTS.dimension)[
-          Math.min(draftPoints.length, (DIM_PROMPTS[dimensionType] ?? PROMPTS.dimension).length - 1)
-        ]
-      : PROMPTS[activeTool][Math.min(draftPoints.length, PROMPTS[activeTool].length - 1)]
-
   const snapScreen = cursorWorld ? worldToScreen(cursorWorld, camera) : null
 
   const selectionBox = useMemo(() => {
@@ -683,20 +778,24 @@ export function CanvasViewport() {
             const layer = doc.layers.find((candidate) => candidate.id === entity.layerId)
             const linetypeId = entity.linetypeId ?? layer?.linetypeId
             const linetype = doc.linetypes.find((candidate) => candidate.id === linetypeId)
+            const selected = selectedIds.includes(entity.id)
             return renderEntity(entity, {
-              selected: selectedIds.includes(entity.id),
+              selected,
               color: entity.color ?? layer?.color ?? '#7cc6ff',
               dash: linetype?.pattern.length ? linetype.pattern.join(' ') : undefined,
+              width: !selected && entity.id === hoverId ? 2.5 : undefined,
               dimStyle: doc.dimStyle,
             })
           })}
 
           {grips}
+          {trimExtendPreview}
           {modifyPreview}
           {preview}
         </g>
 
         {selectionBox}
+        {fenceLine}
 
         {cursorScreen && snapScreen && (
           <g pointerEvents="none">
@@ -760,7 +859,7 @@ export function CanvasViewport() {
       </svg>
 
       <div className="viewport-status">
-        <span className="prompt">{prompt}</span>
+        <span className="prompt">{promptText}</span>
         {cursorWorld && (
           <span className="coords">
             X {cursorWorld.x.toFixed(2)} Y {cursorWorld.y.toFixed(2)}

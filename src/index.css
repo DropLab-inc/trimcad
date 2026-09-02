@@ -261,30 +261,117 @@ body,
 }
 
 .command-line {
-  display: grid;
-  grid-template-columns: auto 1fr auto auto;
-  gap: 0.5rem;
-  align-items: center;
-  padding: 0.55rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.45rem 0.75rem 0.55rem;
   border-top: 1px solid #23324a;
   background: #091224;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.command-history {
+  height: 5.4rem;
+  overflow-y: auto;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: #8fa3c0;
+  padding-right: 0.4rem;
+}
+
+.command-history-line.input {
+  color: #e2e8f0;
+}
+
+.command-history-line.prompt {
+  color: #a5b4fc;
+}
+
+.command-history-line.error {
+  color: #f87171;
+}
+
+.command-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.command-prompt {
+  color: #a5b4fc;
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.command-input-wrap {
+  position: relative;
+  flex: 1;
 }
 
 .command-line input {
   width: 100%;
-  border-radius: 0.35rem;
+  border-radius: 0.3rem;
   border: 1px solid #334155;
   background: #020617;
   color: #e2e8f0;
-  padding: 0.4rem 0.45rem;
+  padding: 0.35rem 0.45rem;
+  font-family: inherit;
+  font-size: 0.8rem;
 }
 
-.command-line button {
+/* The suggestion list opens upward so it never covers the drawing. */
+.command-suggestions {
+  position: absolute;
+  bottom: calc(100% + 0.3rem);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0.2rem;
+  list-style: none;
+  background: #0b1426;
   border: 1px solid #334155;
-  background: #1e293b;
-  color: #e2e8f0;
   border-radius: 0.35rem;
-  padding: 0.35rem 0.6rem;
+  box-shadow: 0 -8px 24px rgba(2, 6, 23, 0.75);
+  max-height: 14rem;
+  overflow-y: auto;
+  z-index: 20;
+}
+
+.command-suggestions button {
+  display: grid;
+  grid-template-columns: 8rem 3rem 1fr;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: #cbd5f5;
+  padding: 0.25rem 0.4rem;
+  border-radius: 0.25rem;
+  font-family: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.command-suggestions button.active {
+  background: #1d4ed8;
+  color: #f8fafc;
+}
+
+.suggestion-alias {
+  color: #fbbf24;
+}
+
+.suggestion-summary {
+  color: #7f93b1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-suggestions button.active .suggestion-alias,
+.command-suggestions button.active .suggestion-summary {
+  color: #dbeafe;
 }
 
 .cad-hint {
@@ -296,19 +383,45 @@ body,
 .statusbar {
   display: flex;
   gap: 0.8rem;
-  flex-wrap: wrap;
   align-items: center;
-  padding: 0.4rem 0.75rem;
+  padding: 0.35rem 0.75rem;
   border-top: 1px solid #23324a;
   background: #020617;
   color: #a5b4fc;
-  font-size: 0.76rem;
+  font-size: 0.74rem;
 }
 
-.statusbar button {
+.statusbar-spacer {
+  flex: 1;
+}
+
+.statusbar-coords {
+  font-family: ui-monospace, Consolas, monospace;
+  color: #cbd5f5;
+  min-width: 9rem;
+}
+
+.statusbar-message {
+  color: #7f93b1;
+}
+
+.statusbar-facts {
+  color: #64748b;
+}
+
+.statusbar-toggle {
   border: 1px solid #334155;
   background: #0f172a;
-  color: #a5b4fc;
-  border-radius: 0.3rem;
-  padding: 0.2rem 0.45rem;
+  color: #64748b;
+  border-radius: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.statusbar-toggle.on {
+  background: #1d4ed8;
+  border-color: #3b82f6;
+  color: #f8fafc;
 }

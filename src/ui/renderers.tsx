@@ -219,13 +219,13 @@ export const renderDimension = (
 
 export const renderEntity = (
   entity: CadEntity,
-  options: { selected: boolean; color: string; dash?: string; dimStyle: DimStyle },
+  options: { selected: boolean; color: string; dash?: string; dimStyle: DimStyle; width?: number },
 ): ReactElement | null => {
-  const { selected, color, dash, dimStyle } = options
+  const { selected, color, dash, dimStyle, width } = options
   const stroke = selected ? '#ffd166' : color
   const common = {
     stroke,
-    strokeWidth: selected ? 2 : 1,
+    strokeWidth: width ?? (selected ? 2 : 1),
     fill: 'none',
     strokeDasharray: dash,
     vectorEffect: 'non-scaling-stroke' as const,

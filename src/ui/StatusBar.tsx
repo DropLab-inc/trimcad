@@ -1,34 +1,75 @@
+import { useEffect } from 'react'
 import { useCadStore } from '../core/store'
+
+/** The drafting toggles AutoCAD puts on function keys. */
+const TOGGLE_KEYS: Record<string, 'osnap' | 'ortho' | 'polar'> = {
+  F3: 'osnap',
+  F8: 'ortho',
+  F10: 'polar',
+}
 
 export function StatusBar() {
   const doc = useCadStore((state) => state.doc)
   const selectedIds = useCadStore((state) => state.selectedIds)
   const camera = useCadStore((state) => state.camera)
+  const cursorWorld = useCadStore((state) => state.cursorWorld)
+  const statusMessage = useCadStore((state) => state.statusMessage)
   const osnapEnabled = useCadStore((state) => state.osnapEnabled)
   const polarEnabled = useCadStore((state) => state.polarEnabled)
+  const orthoEnabled = useCadStore((state) => state.orthoEnabled)
   const toggleOsnap = useCadStore((state) => state.toggleOsnap)
   const togglePolar = useCadStore((state) => state.togglePolar)
-  const undo = useCadStore((state) => state.undo)
-  const redo = useCadStore((state) => state.redo)
+  const toggleOrtho = useCadStore((state) => state.toggleOrtho)
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const toggle = TOGGLE_KEYS[event.key]
+      if (!toggle) return
+      event.preventDefault()
+      if (toggle === 'osnap') toggleOsnap()
+      if (toggle === 'ortho') toggleOrtho()
+      if (toggle === 'polar') togglePolar()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [toggleOrtho, toggleOsnap, togglePolar])
 
   return (
     <footer className="statusbar">
-      <span>Entities: {doc.entities.length}</span>
-      <span>Selected: {selectedIds.length}</span>
-      <span>Units: {doc.units}</span>
-      <span>Zoom: {camera.zoom.toFixed(2)}x</span>
-      <button type="button" onClick={toggleOsnap}>
-        OSNAP: {osnapEnabled ? 'ON' : 'OFF'}
+      <span className="statusbar-coords">
+        {cursorWorld ? `${cursorWorld.x.toFixed(2)}, ${cursorWorld.y.toFixed(2)}` : '—, —'}
+      </span>
+      <span className="statusbar-message">{statusMessage}</span>
+      <span className="statusbar-spacer" />
+
+      <button
+        type="button"
+        className={`statusbar-toggle ${orthoEnabled ? 'on' : ''}`}
+        onClick={toggleOrtho}
+        title="Orthogonal tracking (F8)"
+      >
+        ORTHO
       </button>
-      <button type="button" onClick={togglePolar}>
-        POLAR: {polarEnabled ? 'ON' : 'OFF'}
+      <button
+        type="button"
+        className={`statusbar-toggle ${polarEnabled ? 'on' : ''}`}
+        onClick={togglePolar}
+        title="Polar tracking (F10)"
+      >
+        POLAR
       </button>
-      <button type="button" onClick={undo}>
-        UNDO
+      <button
+        type="button"
+        className={`statusbar-toggle ${osnapEnabled ? 'on' : ''}`}
+        onClick={toggleOsnap}
+        title="Object snap (F3)"
+      >
+        OSNAP
       </button>
-      <button type="button" onClick={redo}>
-        REDO
-      </button>
+
+      <span className="statusbar-facts">
+        {doc.entities.length} objects · {selectedIds.length} selected · {camera.zoom.toFixed(2)}× · {doc.units}
+      </span>
     </footer>
   )
 }

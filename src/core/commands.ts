@@ -1,4 +1,4 @@
-import { uid, angleBetween, approxEntityCenter, offsetCircle, offsetLine } from './geometry'
+import { uid, angleBetween, offsetCircle, offsetLine } from './geometry'
 import { add, mul, sub, type Vec2 } from './math/vec2'
 import type { CadEntity, CircleEntity, DrawingDocument, LineEntity } from './types'
 
@@ -71,6 +71,7 @@ export const moveEntities = (entities: CadEntity[], ids: string[], delta: Vec2):
           p1: add(entity.p1, delta),
           p2: add(entity.p2, delta),
           p3: entity.p3 ? add(entity.p3, delta) : undefined,
+          placement: entity.placement ? add(entity.placement, delta) : undefined,
         }
       case 'insert':
         return { ...entity, position: add(entity.position, delta) }
@@ -80,14 +81,52 @@ export const moveEntities = (entities: CadEntity[], ids: string[], delta: Vec2):
   })
 }
 
+/**
+ * Rotates every defining point about `origin`. Curves also carry their own orientation, so an arc
+ * has its sweep turned and an ellipse its axis, rather than being carried around unchanged.
+ */
 export const rotateEntities = (entities: CadEntity[], ids: string[], origin: Vec2, angleDeg: number): CadEntity[] => {
   const angle = (angleDeg * Math.PI) / 180
   const idSet = new Set(ids)
+  const spin = (point: Vec2): Vec2 => add(origin, rotate(sub(point, origin), angle))
+
   return entities.map((entity) => {
     if (!idSet.has(entity.id)) return entity
-    const center = approxEntityCenter(entity)
-    const p = add(origin, rotate(sub(center, origin), angle))
-    return moveEntities([entity], [entity.id], sub(p, center))[0]
+    switch (entity.type) {
+      case 'line':
+        return { ...entity, start: spin(entity.start), end: spin(entity.end) }
+      case 'circle':
+        return { ...entity, center: spin(entity.center) }
+      case 'arc':
+        return {
+          ...entity,
+          center: spin(entity.center),
+          startAngle: entity.startAngle + angle,
+          endAngle: entity.endAngle + angle,
+        }
+      case 'ellipse':
+        return { ...entity, center: spin(entity.center), rotation: entity.rotation + angle }
+      case 'polyline':
+        return { ...entity, points: entity.points.map(spin) }
+      case 'spline':
+        return { ...entity, controlPoints: entity.controlPoints.map(spin) }
+      case 'hatch':
+        return { ...entity, boundary: entity.boundary.map(spin) }
+      case 'text':
+        return { ...entity, position: spin(entity.position) }
+      case 'dimension':
+        return {
+          ...entity,
+          p1: spin(entity.p1),
+          p2: spin(entity.p2),
+          p3: entity.p3 ? spin(entity.p3) : undefined,
+          placement: entity.placement ? spin(entity.placement) : undefined,
+        }
+      case 'insert':
+        return { ...entity, position: spin(entity.position), rotation: entity.rotation + angle }
+      default:
+        return entity
+    }
   })
 }
 
@@ -123,6 +162,7 @@ export const scaleEntities = (entities: CadEntity[], ids: string[], origin: Vec2
           p1: add(origin, mul(sub(entity.p1, origin), factor)),
           p2: add(origin, mul(sub(entity.p2, origin), factor)),
           p3: entity.p3 ? add(origin, mul(sub(entity.p3, origin), factor)) : undefined,
+          placement: entity.placement ? add(origin, mul(sub(entity.placement, origin), factor)) : undefined,
         }
       case 'insert':
         return { ...entity, position: add(origin, mul(sub(entity.position, origin), factor)), scale: entity.scale * factor }
@@ -160,7 +200,13 @@ export const mirrorEntities = (entities: CadEntity[], ids: string[], a: Vec2, b:
       case 'text':
         return { ...entity, position: mirror(entity.position) }
       case 'dimension':
-        return { ...entity, p1: mirror(entity.p1), p2: mirror(entity.p2), p3: entity.p3 ? mirror(entity.p3) : undefined }
+        return {
+          ...entity,
+          p1: mirror(entity.p1),
+          p2: mirror(entity.p2),
+          p3: entity.p3 ? mirror(entity.p3) : undefined,
+          placement: entity.placement ? mirror(entity.placement) : undefined,
+        }
       case 'insert':
         return { ...entity, position: mirror(entity.position) }
       default:

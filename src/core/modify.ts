@@ -236,10 +236,37 @@ const bracket = (sorted: number[], value: number): [number, number] | null => {
 const pointAt = (origin: Vec2, direction: Vec2, t: number): Vec2 => add(origin, mul(direction, t))
 
 /**
- * Removes the piece of `entity` containing `pickPoint`, cut at every point where `cutters` cross
- * it. Returns the surviving pieces, or null when nothing crosses the entity there.
+ * Preview pieces are rebuilt on every mouse move, so they carry a stable id derived from the
+ * entity they came from. Without it React would remount the preview on each frame.
  */
-export const trimEntity = (entity: CadEntity, cutters: CadEntity[], pickPoint: Vec2): CadEntity[] | null => {
+const previewId = (id: string, kind: 'trim' | 'extend'): string => `${id}::${kind}-preview`
+
+/**
+ * True when an edge meets the object at one of its ends rather than across the middle.
+ *
+ * This is what happens to a piece that has already been trimmed: its ends now sit exactly on the
+ * edges that produced it. There is nothing left to cut, so picking it erases it outright, which
+ * is how AutoCAD treats a segment bounded by an edge at one end and free at the other.
+ */
+const meetsAtAnEnd = (crossings: number[], from: number, to: number): boolean =>
+  crossings.some((value) => Math.abs(value - from) <= TOUCH || Math.abs(value - to) <= TOUCH)
+
+export type TrimResult = {
+  /** The piece the pick point sits on: what a click would delete. */
+  removed: CadEntity
+  /** What survives, ready to replace the original entity. */
+  remaining: CadEntity[]
+}
+
+/**
+ * Works out what trimming `entity` at `pickPoint` would do. The entity is cut wherever `cutters`
+ * cross it and the piece under the pick point is the one that goes, which is why clicking the
+ * middle of a line crossed twice leaves the two outer stubs behind.
+ *
+ * Returns null when nothing crosses the entity, matching AutoCAD's refusal to trim an object
+ * that does not meet an edge.
+ */
+export const trimResult = (entity: CadEntity, cutters: CadEntity[], pickPoint: Vec2): TrimResult | null => {
   const others = cutters.filter((cutter) => cutter.id !== entity.id)
 
   if (entity.type === 'line') {
@@ -247,26 +274,38 @@ export const trimEntity = (entity: CadEntity, cutters: CadEntity[], pickPoint: V
     const lengthSquared = dot(direction, direction)
     if (lengthSquared < EPS) return null
 
-    const cuts = crossingParameters(entity.start, direction, others).filter((t) => t > TOUCH && t < 1 - TOUCH)
-    if (cuts.length === 0) return null
+    const crossings = crossingParameters(entity.start, direction, others)
+    const cuts = crossings.filter((t) => t > TOUCH && t < 1 - TOUCH)
+    if (cuts.length === 0) {
+      if (!meetsAtAnEnd(crossings, 0, 1)) return null
+      return { removed: { ...entity, id: previewId(entity.id, 'trim') }, remaining: [] }
+    }
 
     const bounds = [0, ...cuts, 1].sort((a, b) => a - b)
     const pick = dot(sub(pickPoint, entity.start), direction) / lengthSquared
-    const removed = bracket(bounds, Math.max(0, Math.min(1, pick)))
-    if (!removed) return null
+    const span = bracket(bounds, Math.max(0, Math.min(1, pick)))
+    if (!span) return null
 
-    const pieces: CadEntity[] = []
+    const remaining: CadEntity[] = []
     for (let i = 0; i < bounds.length - 1; i += 1) {
-      if (bounds[i] === removed[0] && bounds[i + 1] === removed[1]) continue
+      if (bounds[i] === span[0] && bounds[i + 1] === span[1]) continue
       if (bounds[i + 1] - bounds[i] < TOUCH) continue
-      pieces.push({
+      remaining.push({
         ...entity,
-        id: pieces.length === 0 ? entity.id : uid(),
+        id: remaining.length === 0 ? entity.id : uid(),
         start: pointAt(entity.start, direction, bounds[i]),
         end: pointAt(entity.start, direction, bounds[i + 1]),
       })
     }
-    return pieces
+    return {
+      removed: {
+        ...entity,
+        id: previewId(entity.id, 'trim'),
+        start: pointAt(entity.start, direction, span[0]),
+        end: pointAt(entity.start, direction, span[1]),
+      },
+      remaining,
+    }
   }
 
   if (entity.type === 'circle' || entity.type === 'arc') {
@@ -275,66 +314,78 @@ export const trimEntity = (entity: CadEntity, cutters: CadEntity[], pickPoint: V
     if (angles.length === 0) return null
 
     const start = entity.type === 'arc' ? entity.startAngle : 0
-    const span = entity.type === 'arc' ? arcSweep(entity) : Math.PI * 2
-    const offsets = angles
-      .map((angle) => normalizeAngle(angle - start))
-      .filter((offset) => offset > TOUCH && offset < span - TOUCH)
-    if (offsets.length === 0) return null
+    const total = entity.type === 'arc' ? arcSweep(entity) : Math.PI * 2
+    const crossings = angles.map((angle) => normalizeAngle(angle - start))
+    const offsets = crossings.filter((offset) => offset > TOUCH && offset < total - TOUCH)
 
-    const bounds = [0, ...offsets, span].sort((a, b) => a - b)
+    const arcPiece = (id: string, from: number, to: number): ArcEntity => ({
+      id,
+      type: 'arc',
+      layerId: entity.layerId,
+      color: entity.color,
+      linetypeId: entity.linetypeId,
+      lineweight: entity.lineweight,
+      center: entity.center,
+      radius: entity.radius,
+      startAngle: normalizeAngle(start + from),
+      endAngle: normalizeAngle(start + to),
+    })
+
+    if (offsets.length === 0) {
+      // A circle has no ends, so with nothing crossing it there is nothing to trim.
+      if (entity.type === 'circle') return null
+      if (!meetsAtAnEnd(crossings, 0, total) && !meetsAtAnEnd(crossings, Math.PI * 2, total)) return null
+      return { removed: arcPiece(previewId(entity.id, 'trim'), 0, total), remaining: [] }
+    }
+
+    const bounds = [0, ...offsets, total].sort((a, b) => a - b)
     const pick = normalizeAngle(Math.atan2(pickPoint.y - circle.center.y, pickPoint.x - circle.center.x) - start)
-    const removed = bracket(bounds, pick)
-    if (!removed) return null
+    const span = bracket(bounds, pick)
+    if (!span) return null
+
+    const removed = arcPiece(previewId(entity.id, 'trim'), span[0], span[1])
 
     if (entity.type === 'circle') {
       // A full circle leaves exactly one arc: everything except the piece picked.
-      const arc: ArcEntity = {
-        id: entity.id,
-        type: 'arc',
-        layerId: entity.layerId,
-        color: entity.color,
-        linetypeId: entity.linetypeId,
-        lineweight: entity.lineweight,
-        center: entity.center,
-        radius: entity.radius,
-        startAngle: normalizeAngle(start + removed[1]),
-        endAngle: normalizeAngle(start + removed[0]),
-      }
-      return [arc]
+      return { removed, remaining: [arcPiece(entity.id, span[1], span[0])] }
     }
 
-    const pieces: CadEntity[] = []
+    const remaining: CadEntity[] = []
     for (let i = 0; i < bounds.length - 1; i += 1) {
-      if (bounds[i] === removed[0] && bounds[i + 1] === removed[1]) continue
+      if (bounds[i] === span[0] && bounds[i + 1] === span[1]) continue
       if (bounds[i + 1] - bounds[i] < TOUCH) continue
-      pieces.push({
-        ...entity,
-        id: pieces.length === 0 ? entity.id : uid(),
-        startAngle: normalizeAngle(start + bounds[i]),
-        endAngle: normalizeAngle(start + bounds[i + 1]),
-      })
+      remaining.push(arcPiece(remaining.length === 0 ? entity.id : uid(), bounds[i], bounds[i + 1]))
     }
-    return pieces
+    return { removed, remaining }
   }
 
   if (entity.type === 'polyline') {
     const points = entity.closed ? [...entity.points, entity.points[0]] : entity.points
+    const last = points.length - 1
+    const crossings: number[] = []
     const cuts: number[] = []
-    for (let i = 0; i < points.length - 1; i += 1) {
+    for (let i = 0; i < last; i += 1) {
       const direction = sub(points[i + 1], points[i])
       for (const t of crossingParameters(points[i], direction, others)) {
-        if (t > TOUCH && t < 1 - TOUCH) cuts.push(i + t)
+        if (t < -TOUCH || t > 1 + TOUCH) continue
+        // Measuring against the whole polyline lets a cut land on a vertex shared by two segments.
+        const along = i + t
+        crossings.push(along)
+        if (along > TOUCH && along < last - TOUCH) cuts.push(along)
       }
     }
-    if (cuts.length === 0) return null
+    if (cuts.length === 0) {
+      if (!meetsAtAnEnd(crossings, 0, last)) return null
+      return { removed: { ...entity, id: previewId(entity.id, 'trim'), closed: false }, remaining: [] }
+    }
 
-    const bounds = [0, ...cuts, points.length - 1].sort((a, b) => a - b)
+    const bounds = [0, ...cuts, last].sort((a, b) => a - b)
     const pickIndex = closestSegmentIndex(points, false, pickPoint)
     const direction = sub(points[pickIndex + 1], points[pickIndex])
     const denominator = dot(direction, direction)
     const local = denominator < EPS ? 0 : dot(sub(pickPoint, points[pickIndex]), direction) / denominator
-    const removed = bracket(bounds, pickIndex + Math.max(0, Math.min(1, local)))
-    if (!removed) return null
+    const span = bracket(bounds, pickIndex + Math.max(0, Math.min(1, local)))
+    if (!span) return null
 
     const sample = (parameter: number): Vec2 => {
       const index = Math.min(points.length - 2, Math.floor(parameter))
@@ -349,23 +400,33 @@ export const trimEntity = (entity: CadEntity, cutters: CadEntity[], pickPoint: V
       return result
     }
 
-    const pieces: CadEntity[] = []
+    const remaining: CadEntity[] = []
     for (let i = 0; i < bounds.length - 1; i += 1) {
-      if (bounds[i] === removed[0] && bounds[i + 1] === removed[1]) continue
+      if (bounds[i] === span[0] && bounds[i + 1] === span[1]) continue
       if (bounds[i + 1] - bounds[i] < TOUCH) continue
       const piece: PolylineEntity = {
         ...entity,
-        id: pieces.length === 0 ? entity.id : uid(),
+        id: remaining.length === 0 ? entity.id : uid(),
         closed: false,
         points: between(bounds[i], bounds[i + 1]),
       }
-      pieces.push(piece)
+      remaining.push(piece)
     }
-    return pieces
+    return {
+      removed: { ...entity, id: previewId(entity.id, 'trim'), closed: false, points: between(span[0], span[1]) },
+      remaining,
+    }
   }
 
   return null
 }
+
+/**
+ * Removes the piece of `entity` containing `pickPoint`, cut at every point where `cutters` cross
+ * it. Returns the surviving pieces, or null when nothing crosses the entity there.
+ */
+export const trimEntity = (entity: CadEntity, cutters: CadEntity[], pickPoint: Vec2): CadEntity[] | null =>
+  trimResult(entity, cutters, pickPoint)?.remaining ?? null
 
 /* ------------------------------------------------------------------ extend */
 
@@ -375,11 +436,19 @@ const nearestForwardParameter = (origin: Vec2, direction: Vec2, others: CadEntit
   return Math.min(...candidates)
 }
 
+export type ExtendResult = {
+  /** The entity with the picked end pushed out to the boundary. */
+  entity: CadEntity
+  /** Only the new material, so a hover preview can show what would be gained. */
+  added: CadEntity
+}
+
 /**
- * Lengthens the end of `entity` nearest `pickPoint` until it meets the closest boundary,
- * returning null when nothing lies ahead of that end.
+ * Works out what extending `entity` at `pickPoint` would do. The end nearest the pick is the one
+ * that grows, and it stops at the first boundary it meets, so picking near one end of a line and
+ * then the other extends each way independently.
  */
-export const extendEntity = (entity: CadEntity, boundaries: CadEntity[], pickPoint: Vec2): CadEntity | null => {
+export const extendResult = (entity: CadEntity, boundaries: CadEntity[], pickPoint: Vec2): ExtendResult | null => {
   const others = boundaries.filter((boundary) => boundary.id !== entity.id)
 
   if (entity.type === 'line') {
@@ -389,7 +458,10 @@ export const extendEntity = (entity: CadEntity, boundaries: CadEntity[], pickPoi
     const t = nearestForwardParameter(origin, direction, others)
     if (t === null) return null
     const target = add(origin, mul(direction, t))
-    return extendEnd ? { ...entity, end: target } : { ...entity, start: target }
+    return {
+      entity: extendEnd ? { ...entity, end: target } : { ...entity, start: target },
+      added: { ...entity, id: previewId(entity.id, 'extend'), start: origin, end: target },
+    }
   }
 
   if (entity.type === 'polyline' && !entity.closed && entity.points.length >= 2) {
@@ -403,30 +475,108 @@ export const extendEntity = (entity: CadEntity, boundaries: CadEntity[], pickPoi
     const points = [...entity.points]
     if (extendEnd) points[points.length - 1] = target
     else points[0] = target
-    return { ...entity, points }
+    return {
+      entity: { ...entity, points },
+      added: {
+        id: previewId(entity.id, 'extend'),
+        type: 'line',
+        layerId: entity.layerId,
+        color: entity.color,
+        linetypeId: entity.linetypeId,
+        lineweight: entity.lineweight,
+        start: origin,
+        end: target,
+      },
+    }
   }
 
   if (entity.type === 'arc') {
     // Extending means going beyond the current sweep, so the whole circle is considered.
     const fullCircle = { center: entity.center, radius: entity.radius }
     const sweep = arcSweep(entity)
-    const angles = crossingAngles(fullCircle, others).map((angle) => normalizeAngle(angle - entity.startAngle))
+    const angles = crossingAngles(fullCircle, others)
+      .map((angle) => normalizeAngle(angle - entity.startAngle))
+      .filter((angle) => angle > sweep + TOUCH)
+    if (angles.length === 0) return null
+
     const pick = normalizeAngle(
       Math.atan2(pickPoint.y - entity.center.y, pickPoint.x - entity.center.x) - entity.startAngle,
     )
     const extendEnd = pick > sweep / 2 && pick <= sweep
 
+    const arcPiece = (id: string, from: number, to: number): ArcEntity => ({
+      id,
+      type: 'arc',
+      layerId: entity.layerId,
+      color: entity.color,
+      linetypeId: entity.linetypeId,
+      lineweight: entity.lineweight,
+      center: entity.center,
+      radius: entity.radius,
+      startAngle: normalizeAngle(entity.startAngle + from),
+      endAngle: normalizeAngle(entity.startAngle + to),
+    })
+
     if (extendEnd) {
-      const ahead = angles.filter((angle) => angle > sweep + TOUCH)
-      if (ahead.length === 0) return null
-      return { ...entity, endAngle: normalizeAngle(entity.startAngle + Math.min(...ahead)) }
+      const stop = Math.min(...angles)
+      return {
+        entity: { ...entity, endAngle: normalizeAngle(entity.startAngle + stop) },
+        added: arcPiece(previewId(entity.id, 'extend'), sweep, stop),
+      }
     }
 
     // Going backwards from the start means the largest offset short of a full turn.
-    const behind = angles.filter((angle) => angle > sweep + TOUCH)
-    if (behind.length === 0) return null
-    return { ...entity, startAngle: normalizeAngle(entity.startAngle + Math.max(...behind)) }
+    const stop = Math.max(...angles)
+    return {
+      entity: { ...entity, startAngle: normalizeAngle(entity.startAngle + stop) },
+      added: arcPiece(previewId(entity.id, 'extend'), stop, Math.PI * 2),
+    }
   }
 
   return null
+}
+
+/**
+ * Lengthens the end of `entity` nearest `pickPoint` until it meets the closest boundary,
+ * returning null when nothing lies ahead of that end.
+ */
+export const extendEntity = (entity: CadEntity, boundaries: CadEntity[], pickPoint: Vec2): CadEntity | null =>
+  extendResult(entity, boundaries, pickPoint)?.entity ?? null
+
+/* ------------------------------------------------------------------- fence */
+
+export type FenceHit = {
+  entity: CadEntity
+  /** Where the fence crossed, which is the point the trim or extend is picked at. */
+  point: Vec2
+}
+
+/**
+ * Every place a fence line crosses the given entities, ordered along the fence.
+ *
+ * Dragging a fence is how AutoCAD trims a run of objects in one stroke: each crossing becomes a
+ * pick, so a single swipe through a ladder of lines cuts all of them.
+ */
+export const fenceHits = (entities: CadEntity[], from: Vec2, to: Vec2): FenceHit[] => {
+  const direction = sub(to, from)
+  if (dot(direction, direction) < EPS) return []
+
+  const hits: (FenceHit & { at: number })[] = []
+  const record = (entity: CadEntity, t: number) => {
+    if (t < -TOUCH || t > 1 + TOUCH) return
+    hits.push({ entity, point: add(from, mul(direction, t)), at: t })
+  }
+
+  for (const entity of entities) {
+    for (const segment of entitySegments(entity)) {
+      const t = segmentParameters(from, direction, segment)
+      if (t !== null) record(entity, t)
+    }
+    const circle = entityCircle(entity)
+    if (circle) {
+      for (const t of circleParameters(from, direction, circle)) record(entity, t)
+    }
+  }
+
+  return hits.sort((a, b) => a.at - b.at).map(({ entity, point }) => ({ entity, point }))
 }

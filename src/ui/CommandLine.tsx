@@ -1,233 +1,168 @@
-import { useState } from 'react'
-import {
-  breakLine,
-  createFillet,
-  joinEntities,
-  mirrorEntities,
-  moveEntities,
-  offsetEntities,
-  polarArray,
-  rectangularArray,
-  rotateEntities,
-  scaleEntities,
-} from '../core/commands'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { matchCommands, type CommandDef } from '../core/commandRegistry'
 import { exportDocumentToDxf, importDocumentFromDxf } from '../core/dxf'
 import { exportPdf } from '../core/print'
-import { useCadStore } from '../core/store'
+import { currentPrompt, useCadStore } from '../core/store'
+import { formatPrompt } from '../core/prompts'
+
+/** The canvas focuses the input by id so any keystroke can start a command. */
+export const COMMAND_INPUT_ID = 'cad-command-input'
+
+/** Commands that need the DOM directly, so they stay with the component that owns the file input. */
+const FILE_COMMANDS = new Set(['DXFIN', 'DXFOUT', 'PLOT', 'PLOT1', 'PRINT'])
 
 export function CommandLine() {
-  const [value, setValue] = useState('')
   const [fileInput, setFileInput] = useState<HTMLInputElement | null>(null)
+  const [highlight, setHighlight] = useState(0)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+
   const doc = useCadStore((state) => state.doc)
-  const selectedIds = useCadStore((state) => state.selectedIds)
+  const value = useCadStore((state) => state.commandInput)
+  const setValue = useCadStore((state) => state.setCommandInput)
+  const history = useCadStore((state) => state.history)
   const executeCommand = useCadStore((state) => state.executeCommand)
   const updateDocument = useCadStore((state) => state.updateDocument)
-  const undo = useCadStore((state) => state.undo)
-  const redo = useCadStore((state) => state.redo)
-  const deleteSelection = useCadStore((state) => state.deleteSelection)
+  const log = useCadStore((state) => state.log)
+  const promptText = useCadStore((state) => formatPrompt(currentPrompt(state)))
+
+  const suggestions = useMemo(() => matchCommands(value).slice(0, 8), [value])
+
+  // Keep the newest scrollback line in view as commands run.
+  useEffect(() => {
+    const node = scrollRef.current
+    if (node) node.scrollTop = node.scrollHeight
+  }, [history])
 
   const runCommand = (line: string) => {
     const command = line.trim().toUpperCase()
-    if (!command) return
-    if (command === 'UNDO') return undo()
-    if (command === 'REDO') return redo()
-    if (command === 'DEL') return deleteSelection()
-    if ((command === 'M' || command === 'MOVE') && selectedIds.length > 0) {
-      const dx = Number(window.prompt('Move dx', '10') ?? '0')
-      const dy = Number(window.prompt('Move dy', '10') ?? '0')
-      updateDocument((draft) => ({ ...draft, entities: moveEntities(draft.entities, selectedIds, { x: dx, y: dy }) }))
+    setValue('')
+    setHighlight(0)
+
+    if (FILE_COMMANDS.has(command)) {
+      log('input', command)
+      runFileCommand(command)
       return
     }
-    if ((command === 'CP' || command === 'COPY') && selectedIds.length > 0) {
-      const dx = Number(window.prompt('Copy dx', '10') ?? '0')
-      const dy = Number(window.prompt('Copy dy', '10') ?? '0')
-      updateDocument((draft) => {
-        const moved = moveEntities(draft.entities, selectedIds, { x: dx, y: dy }).filter((entity) =>
-          selectedIds.includes(entity.id),
-        )
-        return { ...draft, entities: [...draft.entities, ...moved.map((entity) => ({ ...entity, id: crypto.randomUUID() }))] }
-      })
-      return
-    }
-    if ((command === 'MI' || command === 'MIRROR') && selectedIds.length > 0) {
-      updateDocument((draft) => ({
-        ...draft,
-        entities: mirrorEntities(draft.entities, selectedIds, { x: 0, y: 0 }, { x: 100, y: 0 }),
-      }))
-      return
-    }
-    if ((command === 'RO' || command === 'ROTATE') && selectedIds.length > 0) {
-      const angle = Number(window.prompt('Angle degrees', '45') ?? '0')
-      updateDocument((draft) => ({
-        ...draft,
-        entities: rotateEntities(draft.entities, selectedIds, { x: 0, y: 0 }, angle),
-      }))
-      return
-    }
-    if ((command === 'SC' || command === 'SCALE') && selectedIds.length > 0) {
-      const factor = Number(window.prompt('Scale factor', '1.5') ?? '1')
-      updateDocument((draft) => ({
-        ...draft,
-        entities: scaleEntities(draft.entities, selectedIds, { x: 0, y: 0 }, factor),
-      }))
-      return
-    }
-    if ((command === 'O' || command === 'OFFSET') && selectedIds.length > 0) {
-      const dist = Number(window.prompt('Offset distance', '10') ?? '0')
-      updateDocument((draft) => ({ ...draft, entities: offsetEntities(draft.entities, selectedIds, dist) }))
-      return
-    }
-    if ((command === 'J' || command === 'JOIN') && selectedIds.length > 1) {
-      const layerId = doc.layers[0].id
-      updateDocument((draft) => ({ ...draft, entities: joinEntities(draft.entities, selectedIds, layerId) }))
-      return
-    }
-    if ((command === 'BR' || command === 'BREAK') && selectedIds.length === 1) {
-      updateDocument((draft) => ({ ...draft, entities: breakLine(draft.entities, selectedIds[0], { x: 0, y: 0 }) }))
-      return
-    }
-    if ((command === 'F' || command === 'FILLET') && selectedIds.length >= 2) {
-      updateDocument((draft) => {
-        const selected = draft.entities.filter((entity) => selectedIds.includes(entity.id))
-        const lines = selected.filter((entity) => entity.type === 'line')
-        if (lines.length < 2) return draft
-        const fillet = createFillet(draft.layers[0].id, lines[0], lines[1], Number(window.prompt('Fillet radius', '10') ?? '10'))
-        if (!fillet) return draft
-        return { ...draft, entities: [...draft.entities, fillet] }
-      })
-      return
-    }
-    if ((command === 'CHA' || command === 'CHAMFER') && selectedIds.length >= 2) {
-      updateDocument((draft) => {
-        const selected = draft.entities.filter((entity) => selectedIds.includes(entity.id))
-        const lines = selected.filter((entity) => entity.type === 'line')
-        if (lines.length < 2) return draft
-        return {
-          ...draft,
-          entities: [
-            ...draft.entities,
-            {
-              id: crypto.randomUUID(),
-              type: 'line',
-              layerId: draft.layers[0].id,
-              start: lines[0].end,
-              end: lines[1].start,
-            },
-          ],
-        }
-      })
-      return
-    }
-    if ((command === 'AR' || command === 'ARRAY') && selectedIds.length > 0) {
-      const kind = window.prompt('Array type: rect|polar', 'rect')
-      if (kind === 'polar') {
-        updateDocument((draft) => ({
-          ...draft,
-          entities: polarArray(draft.entities, selectedIds, { x: 0, y: 0 }, 8, 360),
-        }))
-      } else {
-        updateDocument((draft) => ({
-          ...draft,
-          entities: rectangularArray(draft.entities, selectedIds, 2, 3, 30, 30),
-        }))
-      }
-      return
-    }
-    if (command === 'X' || command === 'EXPLODE') {
-      updateDocument((draft) => ({
-        ...draft,
-        groups: draft.groups.filter((group) => !selectedIds.some((id) => group.entityIds.includes(id))),
-      }))
-      return
-    }
-    if (command === 'G' || command === 'GROUP') {
-      updateDocument((draft) => ({
-        ...draft,
-        groups: [...draft.groups, { id: crypto.randomUUID(), name: `G${draft.groups.length + 1}`, entityIds: selectedIds }],
-      }))
-      return
-    }
-    if (command === 'B' || command === 'BLOCK') {
-      const name = window.prompt('Block name', `Block${doc.blocks.length + 1}`)
-      if (!name) return
-      updateDocument((draft) => ({
-        ...draft,
-        blocks: [
-          ...draft.blocks,
-          {
-            id: crypto.randomUUID(),
-            name,
-            entities: draft.entities.filter((entity) => selectedIds.includes(entity.id)),
-          },
-        ],
-      }))
-      return
-    }
-    if (command === 'I' || command === 'INSERT') {
-      if (!doc.blocks[0]) return
-      updateDocument((draft) => ({
-        ...draft,
-        entities: [
-          ...draft.entities,
-          {
-            id: crypto.randomUUID(),
-            type: 'insert',
-            layerId: draft.layers[0].id,
-            blockId: draft.blocks[0].id,
-            position: { x: 0, y: 0 },
-            rotation: 0,
-            scale: 1,
-          },
-        ],
-      }))
-      return
-    }
-    if (command === 'PRINT') {
-      exportPdf(doc, 'fit')
-      return
-    }
-    if (command === 'PRINT1' || command === 'PRINT 1:1') {
-      exportPdf(doc, '1:1')
+    executeCommand(line)
+  }
+
+  const runFileCommand = (command: string) => {
+    if (command === 'DXFIN') {
+      fileInput?.click()
       return
     }
     if (command === 'DXFOUT') {
-      const dxf = exportDocumentToDxf(doc)
-      const blob = new Blob([dxf], { type: 'application/dxf' })
+      const blob = new Blob([exportDocumentToDxf(doc)], { type: 'application/dxf' })
       const link = document.createElement('a')
       link.href = URL.createObjectURL(blob)
       link.download = 'drawing.dxf'
       link.click()
       URL.revokeObjectURL(link.href)
+      log('result', 'Exported drawing.dxf')
       return
     }
-    if (command === 'DXFIN') {
-      fileInput?.click()
+    exportPdf(doc, command === 'PLOT1' ? '1:1' : 'fit')
+    log('result', `Plotted at ${command === 'PLOT1' ? '1:1' : 'fit to page'}`)
+  }
+
+  /** Earlier inputs, newest first, for arrow-key recall. */
+  const recallable = useMemo(
+    () => history.filter((line) => line.kind === 'input').map((line) => line.text).reverse(),
+    [history],
+  )
+  const [recallIndex, setRecallIndex] = useState(-1)
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    // Space submits just like Enter, which is how AutoCAD accepts a command.
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      // Arrowing onto a suggestion runs that command rather than the raw text.
+      const chosen = highlight > 0 ? suggestions[highlight] : null
+      runCommand(chosen ? chosen.name : value)
+      setRecallIndex(-1)
       return
     }
-    executeCommand(command)
+    if (event.key === 'Tab' && suggestions.length > 0) {
+      event.preventDefault()
+      setValue(suggestions[highlight].name)
+      return
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      if (suggestions.length > 0) setHighlight((index) => (index + 1) % suggestions.length)
+      return
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      if (suggestions.length > 0) {
+        setHighlight((index) => (index - 1 + suggestions.length) % suggestions.length)
+        return
+      }
+      // With nothing to complete, walk back through what was typed before.
+      const next = Math.min(recallIndex + 1, recallable.length - 1)
+      if (next >= 0) {
+        setRecallIndex(next)
+        setValue(recallable[next])
+      }
+      return
+    }
+    if (event.key === 'Escape') {
+      setValue('')
+      setHighlight(0)
+      setRecallIndex(-1)
+    }
   }
 
   return (
     <section className="command-line">
-      <span>Command:</span>
-      <input
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            runCommand(value)
-            setValue('')
-          }
-          if (event.key === 'Escape') {
-            setValue('')
-          }
-        }}
-        placeholder="LINE, CIRCLE, OFFSET, MIRROR, ARRAY, DXFOUT..."
-      />
-      <button type="button" onClick={() => runCommand(value)}>
-        Run
-      </button>
-      <span className="cad-hint">Esc: clear input | Shift+Drag: pan | Wheel: zoom</span>
+      <div className="command-history" ref={scrollRef} role="log" aria-label="Command history">
+        {history.slice(-40).map((line) => (
+          <div key={line.id} className={`command-history-line ${line.kind}`}>
+            {line.kind === 'input' ? `> ${line.text}` : line.text}
+          </div>
+        ))}
+      </div>
+
+      <div className="command-entry">
+        <span className="command-prompt">{promptText}</span>
+        <div className="command-input-wrap">
+          <input
+            id={COMMAND_INPUT_ID}
+            value={value}
+            onChange={(event) => {
+              setValue(event.target.value)
+              setHighlight(0)
+              setRecallIndex(-1)
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder="Type a command, or press Enter to repeat the last one"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {suggestions.length > 0 && (
+            <ul className="command-suggestions">
+              {suggestions.map((command, index) => (
+                <li key={command.name}>
+                  <button
+                    type="button"
+                    className={index === highlight ? 'active' : ''}
+                    onMouseEnter={() => setHighlight(index)}
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      runCommand(command.name)
+                    }}
+                  >
+                    <span className="suggestion-name">{command.name}</span>
+                    <span className="suggestion-alias">{aliasLabel(command)}</span>
+                    <span className="suggestion-summary">{command.summary}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
       <input
         ref={setFileInput}
         style={{ display: 'none' }}
@@ -238,8 +173,11 @@ export function CommandLine() {
           if (!file) return
           const content = await file.text()
           updateDocument((draft) => importDocumentFromDxf(content, draft))
+          log('result', `Imported ${file.name}`)
         }}
       />
     </section>
   )
 }
+
+const aliasLabel = (command: CommandDef): string => (command.aliases.length > 0 ? command.aliases[0] : '')

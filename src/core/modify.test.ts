@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createCircle, createLine, createRect } from './commands'
 import { mirrorEntity } from './geometry'
-import { extendEntity, offsetEntity, trimEntity } from './modify'
+import { extendEntity, extendResult, fenceHits, offsetEntity, trimEntity, trimResult } from './modify'
 import type { ArcEntity, CadEntity, PolylineEntity } from './types'
 
 const arc = (overrides: Partial<ArcEntity> = {}): ArcEntity => ({
@@ -256,5 +256,143 @@ describe('mirror', () => {
 
     expect(result.type === 'circle' && result.center.x).toBeCloseTo(-30, 6)
     expect(result.type === 'circle' && result.radius).toBe(7)
+  })
+})
+
+describe('trim and extend previews', () => {
+  it('reports the exact span a trim would delete', () => {
+    const target = createLine('L', { x: 0, y: 0 }, { x: 100, y: 0 })
+    const first = createLine('L', { x: 20, y: -10 }, { x: 20, y: 10 })
+    const second = createLine('L', { x: 60, y: -10 }, { x: 60, y: 10 })
+
+    const result = trimResult(target, [first, second], { x: 40, y: 0 })!
+
+    expect(result.removed.type === 'line' && result.removed.start.x).toBeCloseTo(20, 6)
+    expect(result.removed.type === 'line' && result.removed.end.x).toBeCloseTo(60, 6)
+    expect(result.remaining).toHaveLength(2)
+  })
+
+  it('reports only the new material an extend would add', () => {
+    const target = createLine('L', { x: 0, y: 0 }, { x: 50, y: 0 })
+    const boundary = createLine('L', { x: 90, y: -10 }, { x: 90, y: 10 })
+
+    const result = extendResult(target, [boundary], { x: 48, y: 0 })!
+
+    expect(result.added.type === 'line' && result.added.start.x).toBeCloseTo(50, 6)
+    expect(result.added.type === 'line' && result.added.end.x).toBeCloseTo(90, 6)
+    expect(result.entity.type === 'line' && result.entity.end.x).toBeCloseTo(90, 6)
+  })
+
+  it('gives previews a stable id so hover does not remount them', () => {
+    const target = createLine('L', { x: 0, y: 0 }, { x: 100, y: 0 })
+    const cutter = createLine('L', { x: 50, y: -10 }, { x: 50, y: 10 })
+
+    const first = trimResult(target, [cutter], { x: 80, y: 0 })!
+    const second = trimResult(target, [cutter], { x: 90, y: 0 })!
+
+    expect(first.removed.id).toBe(second.removed.id)
+    expect(first.removed.id).not.toBe(target.id)
+  })
+
+  it('leaves the picked piece out of what remains', () => {
+    const circle = createCircle('L', { x: 0, y: 0 }, 10)
+    const cutter = createLine('L', { x: -20, y: 0 }, { x: 20, y: 0 })
+
+    const result = trimResult(circle, [cutter], { x: 0, y: 9 })!
+
+    expect(result.removed.type).toBe('arc')
+    expect(result.remaining).toHaveLength(1)
+    // The surviving arc is the lower half, running from 180 degrees back round to 0.
+    expect(result.remaining[0].type === 'arc' && result.remaining[0].startAngle).toBeCloseTo(Math.PI, 5)
+  })
+})
+
+describe('trimming something that has already been trimmed', () => {
+  it('erases the middle piece once both its ends sit on cutting edges', () => {
+    const line = createLine('L', { x: 0, y: 0 }, { x: 400, y: 0 })
+    const left = createLine('L', { x: 100, y: -10 }, { x: 100, y: 10 })
+    const right = createLine('L', { x: 300, y: -10 }, { x: 300, y: 10 })
+
+    const first = trimResult(line, [left, right], { x: 350, y: 0 })!
+    const middle = first.remaining.find(
+      (piece) => piece.type === 'line' && Math.abs(piece.start.x - 100) < 1e-6,
+    )!
+
+    // The middle piece runs edge to edge, so nothing crosses its interior any more.
+    const second = trimResult(middle, [left, right], { x: 200, y: 0 })!
+
+    expect(second.remaining).toHaveLength(0)
+  })
+
+  it('erases a stub left hanging off a single edge', () => {
+    const line = createLine('L', { x: 0, y: 0 }, { x: 200, y: 0 })
+    const cutter = createLine('L', { x: 100, y: -10 }, { x: 100, y: 10 })
+
+    const first = trimResult(line, [cutter], { x: 150, y: 0 })!
+    expect(first.remaining).toHaveLength(1)
+
+    const second = trimResult(first.remaining[0], [cutter], { x: 50, y: 0 })!
+
+    expect(second.remaining).toHaveLength(0)
+  })
+
+  it('still refuses to trim an object that touches no edge at all', () => {
+    const line = createLine('L', { x: 0, y: 0 }, { x: 100, y: 0 })
+    const elsewhere = createLine('L', { x: 0, y: 50 }, { x: 100, y: 50 })
+
+    expect(trimResult(line, [elsewhere], { x: 50, y: 0 })).toBeNull()
+  })
+
+  it('erases a half arc whose ends rest on the line that cut it', () => {
+    const circle = createCircle('L', { x: 0, y: 0 }, 10)
+    const cutter = createLine('L', { x: -20, y: 0 }, { x: 20, y: 0 })
+
+    const first = trimResult(circle, [cutter], { x: 0, y: 9 })!
+    const half = first.remaining[0]
+
+    const second = trimResult(half, [cutter], { x: 0, y: -9 })!
+
+    expect(second.remaining).toHaveLength(0)
+  })
+
+  it('erases a polyline leg that has already been cut back to an edge', () => {
+    const path = createRect('L', { x: 0, y: 0 }, { x: 100, y: 60 }) as PolylineEntity
+    const open: PolylineEntity = { ...path, closed: false }
+    const cutter = createLine('L', { x: 50, y: -10 }, { x: 50, y: 10 })
+
+    const first = trimResult(open, [cutter], { x: 20, y: 0 })!
+    expect(first.remaining).toHaveLength(1)
+
+    const second = trimResult(first.remaining[0], [cutter], { x: 80, y: 0 })
+
+    expect(second?.remaining).toHaveLength(0)
+  })
+})
+
+describe('fence', () => {
+  it('lists each crossing along the fence in order', () => {
+    const first = createLine('L', { x: 0, y: 10 }, { x: 100, y: 10 })
+    const second = createLine('L', { x: 0, y: 20 }, { x: 100, y: 20 })
+    const third = createLine('L', { x: 0, y: 30 }, { x: 100, y: 30 })
+
+    const hits = fenceHits([first, second, third], { x: 50, y: 0 }, { x: 50, y: 40 })
+
+    expect(hits.map((hit) => hit.entity.id)).toEqual([first.id, second.id, third.id])
+    expect(hits.map((hit) => hit.point.y)).toEqual([10, 20, 30])
+  })
+
+  it('records both crossings when the fence cuts a circle twice', () => {
+    const circle = createCircle('L', { x: 0, y: 0 }, 10)
+
+    const hits = fenceHits([circle], { x: -20, y: 0 }, { x: 20, y: 0 })
+
+    expect(hits).toHaveLength(2)
+    expect(hits.map((hit) => hit.point.x)).toEqual([-10, 10])
+  })
+
+  it('ignores objects the fence stops short of', () => {
+    const line = createLine('L', { x: 0, y: 100 }, { x: 100, y: 100 })
+
+    expect(fenceHits([line], { x: 50, y: 0 }, { x: 50, y: 40 })).toHaveLength(0)
   })
 })
