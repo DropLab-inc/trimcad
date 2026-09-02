@@ -39,7 +39,23 @@ list that narrows as you type.
 | `Enter` at an idle prompt | Repeat the last command |
 | `Tab` | Complete to the highlighted suggestion |
 | `↑` / `↓` | Move through the suggestions, or recall earlier entries |
-| `Esc` | Cancel the running command |
+| `Esc` | Leave the running command and go back to selecting |
+
+### How a command begins and ends
+
+Commands behave the way they do in AutoCAD, so the crosshair is either running a command or
+sitting at an idle prompt ready to select.
+
+- **`LINE` keeps going.** Each click draws a segment and leaves the rubber band attached to the
+  point you just placed, so the next click continues the run. `C` closes it back to the start and
+  `U` steps back a segment. `PLINE` and `SPLINE` behave the same way.
+- **Everything else finishes on its own.** Once a circle, rectangle, arc or a `MOVE` is complete
+  the command ends and you are back at the idle prompt where clicking picks objects. Press `Enter`
+  or `Space` to run it again.
+- **`Enter`, `Space` and right-click accept.** They close the running command and return you to
+  the idle prompt; from there they repeat whatever ran last.
+- **`Esc` always gets you out.** It abandons the running command, throws away any half-drawn
+  geometry and returns to selection. Pressing it again at the idle prompt clears the selection.
 
 The prompt tells you what the command wants next and lists its options in brackets, for example
 `Select object to trim or shift-select to extend or [cuTting edges/Fence/Undo]:`. Typing an
@@ -53,8 +69,8 @@ Everything that scrolls past is kept in the history panel above the input.
 | Input | Action |
 | --- | --- |
 | Left click | Place the next point of the active command |
-| Right click | Finish the current command |
-| `Esc` | Cancel the current command |
+| Right click | Accept the current command, as `Enter` does |
+| `Esc` | Leave the current command and go back to selecting |
 | `Delete` | Erase the current selection |
 | Middle mouse drag | Pan |
 | Mouse wheel | Zoom at the cursor |
@@ -65,6 +81,11 @@ Everything that scrolls past is kept in the history panel above the input.
 
 The status bar along the bottom shows the crosshair coordinates and carries the OSNAP, ORTHO and
 POLAR toggles, which stay lit while they are on.
+
+ORTHO and polar tracking steer picks that measure a direction from the previous point, such as the
+next point of a line or the displacement of a `MOVE`. They deliberately leave alone the picks that
+set two sizes at once — a rectangle's opposite corner and an ellipse's axis point — because
+forcing those onto an axis would flatten the shape to nothing.
 
 ### Selecting objects
 

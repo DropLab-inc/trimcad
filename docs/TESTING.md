@@ -26,8 +26,11 @@
 - `src/core/prompts.test.ts` (prompt per step, bracketed options, keyword matching)
 - `src/core/commandSession.test.ts` (typing commands, repeat, coordinates and direct distance
   entry, the transform commands, options winning over same-named commands)
+- `src/core/commandLifecycle.test.ts` (a run of lines chaining, closing and stepping back; one-shot
+  commands returning to the idle prompt; Escape abandoning a command; which picks tracking steers)
 - `src/ui/CanvasViewport.test.tsx` (snap marker position, window/crossing drag selection)
-- `src/ui/DynamicInput.test.tsx` (typing into dynamic fields, and the modify tools end to end
+- `src/ui/DynamicInput.test.tsx` (typing into dynamic fields, leaving commands with Escape, Enter
+  and right-click, drawing with ortho latched on, and the modify tools end to end
   including trim previews, Shift swapping to extend, fence drags and chosen cutting edges)
 
 The command registry test asserts that no two commands claim the same token. That check is the

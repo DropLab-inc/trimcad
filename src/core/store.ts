@@ -106,6 +106,10 @@ type CadState = {
   finishDraft: () => void
   closeDraft: () => void
   cancelDraft: () => void
+  /** Ends the running command normally and returns to the idle selection prompt. */
+  endCommand: () => void
+  /** Abandons the running command, as Escape does. */
+  cancelCommand: () => void
   setTool: (tool: ToolMode) => void
   setActiveLayerId: (layerId: string) => void
   setCamera: (camera: Partial<CameraState>) => void
@@ -216,6 +220,7 @@ export const useCadStore = create<CadState>((set, get) => ({
     const state = get()
     const { activeTool, draftPoints } = state
     const layerId = state.activeLayerId || state.doc.layers[0].id
+    // LINE has already committed each segment as it was drawn, so it only needs clearing.
     if (activeTool === 'polyline' && draftPoints.length >= 2) {
       state.addEntity({ id: uid(), type: 'polyline', layerId, points: draftPoints, closed: false })
     } else if (activeTool === 'spline' && draftPoints.length >= 2) {
@@ -226,13 +231,42 @@ export const useCadStore = create<CadState>((set, get) => ({
   closeDraft: () => {
     const state = get()
     const { activeTool, draftPoints } = state
-    if (activeTool !== 'polyline' || draftPoints.length < 3) return
+    if (draftPoints.length < 3) return
     const layerId = state.activeLayerId || state.doc.layers[0].id
+
+    if (activeTool === 'line') {
+      // Closing a run of lines just adds the segment back to where it started.
+      state.addEntity(createLine(layerId, draftPoints.at(-1)!, draftPoints[0]))
+      set({ draftPoints: [], statusMessage: 'Line closed' })
+      return
+    }
+    if (activeTool !== 'polyline') return
     state.addEntity({ id: uid(), type: 'polyline', layerId, points: draftPoints, closed: true })
     set({ draftPoints: [], statusMessage: 'Polyline closed' })
   },
   cancelDraft: () =>
     set({ draftPoints: [], modifyTargetId: null, pickingEdges: false, statusMessage: '*Cancel*' }),
+  endCommand: () =>
+    set({
+      activeTool: 'select',
+      draftPoints: [],
+      modifyTargetId: null,
+      edgeIds: null,
+      pickingEdges: false,
+      statusMessage: 'Ready',
+    }),
+  cancelCommand: () => {
+    get().log('result', '*Cancel*')
+    set({
+      activeTool: 'select',
+      draftPoints: [],
+      modifyTargetId: null,
+      edgeIds: null,
+      pickingEdges: false,
+      commandInput: '',
+      statusMessage: '*Cancel*',
+    })
+  },
   setTool: (tool) =>
     set({
       activeTool: tool,
@@ -550,8 +584,10 @@ const runTransform = (state: CadStoreState, point: Vec2) => {
     }
   })
 
+  const finished = activeTool.toUpperCase()
   state.clearDraft()
-  state.setStatusMessage(`${activeTool.toUpperCase()} complete`)
+  state.endCommand()
+  state.setStatusMessage(`${finished} complete`)
 }
 
 /**
@@ -591,8 +627,10 @@ const applyTransformValue = (state: CadStoreState, value: number): boolean => {
     return false
   }
 
+  const finished = activeTool.toUpperCase()
   state.clearDraft()
-  state.setStatusMessage(`${activeTool.toUpperCase()} complete`)
+  state.endCommand()
+  state.setStatusMessage(`${finished} complete`)
   return true
 }
 
@@ -737,6 +775,10 @@ const runKeyword = (state: CadStoreState, keyword: Keyword) => {
       return
     case 'Undo':
       state.undo()
+      // A run of lines commits a segment per pick, so stepping back also rewinds the rubber band.
+      if (state.activeTool === 'line' && state.draftPoints.length > 1) {
+        useCadStore.setState({ draftPoints: state.draftPoints.slice(0, -1) })
+      }
       return
     case 'Close':
       state.closeDraft()
@@ -806,6 +848,7 @@ const applyModifyTool = (state: CadStoreState, point: Vec2, swapped: boolean): b
       return { ...doc, entities: [...kept, ...mirrored] }
     })
     state.clearDraft()
+    state.endCommand()
     state.setStatusMessage(state.mirrorKeepSource ? 'Mirrored' : 'Mirrored and erased source')
     return true
   }
@@ -820,6 +863,10 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
 
   if (applyModifyTool(state, point, options.swapped ?? false)) return
 
+  /**
+   * Commands that finish on their second pick. AutoCAD drops back to the idle prompt afterwards,
+   * where Enter or Space repeats the command, rather than leaving the tool armed.
+   */
   const finishTwoPoint = (factory: (a: Vec2, b: Vec2) => CadEntity) => {
     if (draftPoints.length === 0) {
       addDraftPoint(point)
@@ -827,10 +874,17 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
     }
     addEntity(factory(draftPoints[0], point))
     clearDraft()
+    state.endCommand()
   }
 
   if (activeTool === 'line') {
-    finishTwoPoint((a, b) => createLine(currentLayerId, a, b))
+    // LINE keeps going, each segment starting where the last one ended, until Enter or Escape.
+    if (draftPoints.length === 0) {
+      addDraftPoint(point)
+      return
+    }
+    addEntity(createLine(currentLayerId, draftPoints.at(-1)!, point))
+    addDraftPoint(point)
     return
   }
 
@@ -879,6 +933,7 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
       endAngle: Math.atan2(point.y - center.y, point.x - center.x),
     })
     clearDraft()
+    state.endCommand()
     return
   }
 
@@ -905,6 +960,7 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
     const value = window.prompt('Text value', 'NOTE')
     if (!value) return
     addEntity({ id: uid(), type: 'text', layerId: currentLayerId, position: point, value, height: 12 })
+    state.endCommand()
     return
   }
 

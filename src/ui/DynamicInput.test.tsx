@@ -387,3 +387,124 @@ describe('modify tools in the viewport', () => {
     expect(useCadStore.getState().doc.entities).toHaveLength(1)
   })
 })
+
+describe('starting and leaving commands from the keyboard', () => {
+  beforeEach(() => {
+    seed()
+    useCadStore.setState({ osnapEnabled: false, polarEnabled: false, orthoEnabled: false })
+  })
+
+  it('goes back to picking objects when Escape leaves a command', () => {
+    useCadStore.getState().setTool('circle')
+    const { container } = render(<CanvasViewport />)
+    fireEvent.mouseDown(container.querySelector('svg')!, { clientX: 100, clientY: 100, button: 0 })
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    expect(useCadStore.getState().activeTool).toBe('select')
+    expect(useCadStore.getState().draftPoints).toHaveLength(0)
+    expect(useCadStore.getState().doc.entities).toHaveLength(0)
+  })
+
+  it('clears the selection when Escape is pressed with nothing running', () => {
+    seed([createCircle(layerId(), { x: 100, y: 100 }, 20)])
+    const state = useCadStore.getState()
+    state.setTool('select')
+    state.setSelection([useCadStore.getState().doc.entities[0].id])
+    render(<CanvasViewport />)
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    expect(useCadStore.getState().selectedIds).toHaveLength(0)
+  })
+
+  it('ends a run of lines on Enter and hands the crosshair back to selection', () => {
+    useCadStore.getState().setTool('line')
+    const { container } = render(<CanvasViewport />)
+    const svg = container.querySelector('svg')!
+
+    fireEvent.mouseDown(svg, { clientX: 0, clientY: 0, button: 0 })
+    fireEvent.mouseDown(svg, { clientX: 100, clientY: 0, button: 0 })
+    fireEvent.keyDown(window, { key: 'Enter' })
+
+    expect(useCadStore.getState().doc.entities).toHaveLength(1)
+    expect(useCadStore.getState().activeTool).toBe('select')
+  })
+
+  it('brings the last command back when Enter is pressed at the empty prompt', () => {
+    useCadStore.getState().executeCommand('CIRCLE')
+    render(<CanvasViewport />)
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(window, { key: 'Enter' })
+
+    expect(useCadStore.getState().activeTool).toBe('circle')
+  })
+
+  it('treats a right-click as Enter and closes the command', () => {
+    useCadStore.getState().setTool('line')
+    const { container } = render(<CanvasViewport />)
+    const svg = container.querySelector('svg')!
+
+    fireEvent.mouseDown(svg, { clientX: 0, clientY: 0, button: 0 })
+    fireEvent.mouseDown(svg, { clientX: 100, clientY: 0, button: 0 })
+    fireEvent.contextMenu(svg)
+
+    expect(useCadStore.getState().activeTool).toBe('select')
+  })
+})
+
+describe('drawing with ortho latched on', () => {
+  beforeEach(() => {
+    seed()
+    useCadStore.setState({ osnapEnabled: false, polarEnabled: false, orthoEnabled: true })
+  })
+
+  it('holds a line square to the axis', () => {
+    useCadStore.getState().setTool('line')
+    const { container } = render(<CanvasViewport />)
+    const svg = container.querySelector('svg')!
+
+    fireEvent.mouseDown(svg, { clientX: 0, clientY: 0, button: 0 })
+    fireEvent.mouseDown(svg, { clientX: 100, clientY: 20, button: 0 })
+
+    const line = useCadStore.getState().doc.entities.at(-1)!
+    expect(line.type).toBe('line')
+    if (line.type === 'line') expect(line.end).toEqual({ x: 100, y: 0 })
+  })
+
+  it('still gives a rectangle both a width and a height', () => {
+    useCadStore.getState().setTool('rect')
+    const { container } = render(<CanvasViewport />)
+    const svg = container.querySelector('svg')!
+
+    fireEvent.mouseDown(svg, { clientX: 0, clientY: 0, button: 0 })
+    fireEvent.mouseDown(svg, { clientX: 100, clientY: 40, button: 0 })
+
+    // A rectangle is stored as a closed polyline through its four corners.
+    const rect = useCadStore.getState().doc.entities.at(-1)!
+    expect(rect.type).toBe('polyline')
+    if (rect.type === 'polyline') {
+      const xs = rect.points.map((corner) => corner.x)
+      const ys = rect.points.map((corner) => corner.y)
+      expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(100, 6)
+      expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(40, 6)
+    }
+  })
+
+  it('still gives an ellipse a minor axis', () => {
+    useCadStore.getState().setTool('ellipse')
+    const { container } = render(<CanvasViewport />)
+    const svg = container.querySelector('svg')!
+
+    fireEvent.mouseDown(svg, { clientX: 0, clientY: 0, button: 0 })
+    fireEvent.mouseDown(svg, { clientX: 100, clientY: 40, button: 0 })
+
+    const ellipse = useCadStore.getState().doc.entities.at(-1)!
+    expect(ellipse.type).toBe('ellipse')
+    if (ellipse.type === 'ellipse') {
+      expect(ellipse.rx).toBeGreaterThan(0)
+      expect(ellipse.ry).toBeGreaterThan(0)
+    }
+  })
+})

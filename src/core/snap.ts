@@ -1,6 +1,28 @@
 import { angleInSweep, circleTangentPoints, midpoint, polar } from './geometry'
 import { add, distance, dot, mul, normalize, sub, type Vec2 } from './math/vec2'
-import type { CadEntity, SnapMode } from './types'
+import type { CadEntity, SnapMode, ToolMode } from './types'
+
+/**
+ * Ortho and polar tracking constrain a pick to a direction measured from the previous point, so
+ * they only make sense where the rubber band really is a direction. A rectangle's opposite corner
+ * and an ellipse's axis point each carry two independent dimensions; forcing them onto an axis
+ * would flatten the shape to nothing, which is why AutoCAD leaves them alone too.
+ */
+const DIRECTION_PICKS: ToolMode[] = [
+  'line',
+  'polyline',
+  'spline',
+  'circle',
+  'arc',
+  'polygon',
+  'dimension',
+  'move',
+  'copy',
+  'rotate',
+  'mirror',
+]
+
+export const trackingAppliesTo = (tool: ToolMode): boolean => DIRECTION_PICKS.includes(tool)
 
 export type SnapCandidate = {
   point: Vec2

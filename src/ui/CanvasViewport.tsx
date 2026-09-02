@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { applyDrawTool, currentPrompt, previewTrimExtend, useCadStore } from '../core/store'
 import { formatPrompt, matchKeyword } from '../core/prompts'
-import { applyOrtho, applyPolarTracking, findBestSnap } from '../core/snap'
+import { applyOrtho, applyPolarTracking, findBestSnap, trackingAppliesTo } from '../core/snap'
 import { rectFromPoints, selectEntitiesInRect, selectionModeFor } from '../core/selection'
 import {
   fieldsForTool,
@@ -135,7 +135,8 @@ export function CanvasViewport() {
   const applyFence = useCadStore((state) => state.applyFence)
   const applyKeyword = useCadStore((state) => state.applyKeyword)
   const finishDraft = useCadStore((state) => state.finishDraft)
-  const cancelDraft = useCadStore((state) => state.cancelDraft)
+  const endCommand = useCadStore((state) => state.endCommand)
+  const cancelCommand = useCadStore((state) => state.cancelCommand)
   const deleteSelection = useCadStore((state) => state.deleteSelection)
   const setCommandInput = useCadStore((state) => state.setCommandInput)
   const repeatLastCommand = useCadStore((state) => state.repeatLastCommand)
@@ -252,8 +253,10 @@ export function CanvasViewport() {
 
       if (event.key === 'Escape') {
         clearTyped()
-        cancelDraft()
-        applySelection([], 'replace')
+        // Escape leaves whatever command is running and drops back to the selection prompt.
+        // Pressing it again from there clears the selection, as AutoCAD does.
+        if (activeTool !== 'select' || draftPoints.length > 0 || pickingEdges) cancelCommand()
+        else applySelection([], 'replace')
         return
       }
       if (event.key === 'Enter' || event.key === ' ') {
@@ -267,8 +270,10 @@ export function CanvasViewport() {
           clearTyped()
           return
         }
-        // Enter and Space end the running command, or repeat the last one when idle.
+        // Enter and Space accept the running command and return to the selection prompt; from
+        // there they repeat whatever ran last.
         if (draftPoints.length > 0) finishDraft()
+        if (activeTool !== 'select') endCommand()
         else repeatLastCommand()
         return
       }
@@ -308,12 +313,14 @@ export function CanvasViewport() {
       window.removeEventListener('keyup', onKeyUp)
     }
   }, [
+    activeTool,
     applyKeyword,
     applySelection,
-    cancelDraft,
+    cancelCommand,
     commandPoint,
     deleteSelection,
     draftPoints.length,
+    endCommand,
     dynamicFields,
     fieldIndex,
     finishDraft,
@@ -339,7 +346,7 @@ export function CanvasViewport() {
         return { point: snap.point, snap: snap.mode, tracking: null }
       }
     }
-    if (!basePoint) {
+    if (!basePoint || !trackingAppliesTo(activeTool)) {
       return { point: raw, snap: null, tracking: null }
     }
     // Shift forces ortho on temporarily; the status bar toggle latches it on.
@@ -762,8 +769,16 @@ export function CanvasViewport() {
         onMouseLeave={handleMouseLeave}
         onWheel={handleWheel}
         onContextMenu={(event) => {
+          // Right-click stands in for Enter, matching AutoCAD with shortcut menus turned off.
           event.preventDefault()
-          finishDraft()
+          const store = useCadStore.getState()
+          if (store.pickingEdges) {
+            finishEdgeSelection()
+            return
+          }
+          if (store.draftPoints.length > 0) finishDraft()
+          if (store.activeTool !== 'select') endCommand()
+          else repeatLastCommand()
         }}
       >
         <HatchDefs />
