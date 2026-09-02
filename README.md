@@ -56,6 +56,39 @@ With the Select tool, click an object to pick it, or drag a box across the drawi
 Hold `Shift` while picking to add to the selection and `Ctrl` to remove from it. Picking any
 member of a group selects the whole group. `Esc` clears the selection.
 
+### Dynamic input
+
+While a command is running, editable fields follow the crosshair, the same way AutoCAD's dynamic
+input works. Drawing a line shows Length and Angle; a rectangle shows Width and Height; a circle
+shows Radius.
+
+Just start typing to set the highlighted field, `Tab` to move to the next one, and `Enter` to
+place the point. A field you have typed into stops tracking the cursor while the others keep
+following it, so you can type a length of `250`, press `Tab`, type `30`, and press `Enter` to
+draw exactly 250 units at 30 degrees. `Backspace` corrects a digit and `Esc` discards the entry.
+
+You can also type coordinates into the command line:
+
+| Entry | Meaning |
+| --- | --- |
+| `50,30` | Absolute point |
+| `@50,30` | Relative to the last point |
+| `@250<30` | 250 units at 30 degrees from the last point |
+
+### Modifying objects
+
+| Tool | How it works |
+| --- | --- |
+| Offset | Set a distance in the ribbon, click the object, then click the side to offset toward |
+| Trim | Click the part of an object you want removed; everything visible acts as a cutting edge |
+| Extend | Click the end you want lengthened; it stops at the nearest object in that direction |
+| Mirror | Select objects first, then pick the two points of the mirror line |
+
+Offset produces a true parallel outline, so offsetting a rectangle inwards gives a smaller
+rectangle rather than a diagonally shifted one. Trimming a full circle leaves an arc covering
+everything except the piece you picked. "Keep source" in the ribbon controls whether Mirror
+leaves the originals in place.
+
 ### Object snap
 
 The right-hand Object Snap panel toggles each running snap individually. Endpoint, midpoint,
@@ -83,8 +116,9 @@ lines enclose a rectangle, and two overlapping circles let you hatch just the le
 them. Nested shapes hatch the region you actually clicked in rather than the outer shape.
 
 While a command is running you get a full-screen crosshair, a live preview of the actual
-shape (a circle previews as a circle, not just its radius), a dynamic input readout with
-length/angle or radius, and the current prompt in the lower-left corner.
+shape (a circle previews as a circle, not just its radius), the dynamic input fields described
+above, and the current prompt in the lower-left corner. Offset and Mirror preview their result
+before you commit it.
 
 Polar tracking only engages when the cursor is within a few degrees of a tracking angle,
 so the cursor does not jump while you move it. Object snaps show a marker and a label at
@@ -95,8 +129,9 @@ the snapped point.
 - `L`/`LINE`, `C`/`CIRCLE`, `PL`/`POLYLINE`, `REC`/`RECT`
 - `A`/`ARC`, `EL`/`ELLIPSE`, `PG`/`POLYGON`, `SP`/`SPLINE`
 - `H`/`HATCH`, `D`/`DIM`, `I`/`INSERT`
-- `M`/`MOVE`, `MI`/`MIRROR`, `RO`/`ROTATE`, `SC`/`SCALE`
-- `O`/`OFFSET`, `F`/`FILLET`, `J`/`JOIN`, `BR`/`BREAK`, `AR`/`ARRAY`
+- `O`/`OFFSET`, `TR`/`TRIM`, `EX`/`EXTEND`, `MI`/`MIRROR`
+- `M`/`MOVE`, `RO`/`ROTATE`, `SC`/`SCALE`
+- `F`/`FILLET`, `J`/`JOIN`, `BR`/`BREAK`, `AR`/`ARRAY`
 - `G`/`GROUP`, `B`/`BLOCK`, `X`/`EXPLODE`
 - `DXFIN`, `DXFOUT`, `PRINT`, `UNDO`, `REDO`, `DEL`
 

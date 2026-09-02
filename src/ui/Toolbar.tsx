@@ -32,6 +32,13 @@ const dimensionTypes: Array<{ value: DimensionType; label: string }> = [
 
 const hatchPatterns: HatchPattern[] = ['ansi31', 'ansi37', 'dots', 'solid']
 
+const modifyTools: Array<{ tool: ToolMode; label: string; hint: string }> = [
+  { tool: 'offset', label: 'Offset', hint: 'Pick an object, then pick the side to offset toward' },
+  { tool: 'trim', label: 'Trim', hint: 'Click the part of an object to cut away' },
+  { tool: 'extend', label: 'Extend', hint: 'Click the end of an object to lengthen it' },
+  { tool: 'mirror', label: 'Mirror', hint: 'Select objects first, then pick the mirror line' },
+]
+
 export function Toolbar() {
   const activeTool = useCadStore((state) => state.activeTool)
   const setTool = useCadStore((state) => state.setTool)
@@ -41,6 +48,10 @@ export function Toolbar() {
   const setDimensionType = useCadStore((state) => state.setDimensionType)
   const hatchPattern = useCadStore((state) => state.hatchPattern)
   const setHatchPattern = useCadStore((state) => state.setHatchPattern)
+  const offsetDistance = useCadStore((state) => state.offsetDistance)
+  const setOffsetDistance = useCadStore((state) => state.setOffsetDistance)
+  const mirrorKeepSource = useCadStore((state) => state.mirrorKeepSource)
+  const toggleMirrorKeepSource = useCadStore((state) => state.toggleMirrorKeepSource)
 
   return (
     <div className="toolbar-ribbon">
@@ -81,6 +92,37 @@ export function Toolbar() {
           </div>
         </section>
       ))}
+
+      <section className="toolbar-group">
+        <h2>Modify</h2>
+        <div className="toolbar">
+          {modifyTools.map((item) => (
+            <button
+              key={item.tool}
+              type="button"
+              className={`ribbon-btn ${item.tool === activeTool ? 'active' : ''}`}
+              onClick={() => setTool(item.tool)}
+              title={item.hint}
+            >
+              {item.label}
+            </button>
+          ))}
+          <label className="ribbon-field" title="Offset distance">
+            Distance
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={offsetDistance}
+              onChange={(event) => setOffsetDistance(Number(event.target.value))}
+            />
+          </label>
+          <label className="ribbon-field" title="Keep the original objects when mirroring">
+            Keep source
+            <input type="checkbox" checked={mirrorKeepSource} onChange={toggleMirrorKeepSource} />
+          </label>
+        </div>
+      </section>
 
       <section className="toolbar-group">
         <h2>Dimension</h2>

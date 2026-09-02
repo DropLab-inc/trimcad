@@ -3,7 +3,9 @@ import { createCircle, createLine, createPolygon, createRect } from './commands'
 import { loadAutosave, saveAutosave } from './autosave'
 import { DocumentController, makeDefaultDocument } from './document'
 import { findRegionBoundary } from './boundary'
-import { findHatchBoundary, isPointNearEntity, uid } from './geometry'
+import { findHatchBoundary, isPointNearEntity, mirrorEntity, uid } from './geometry'
+import { parseCoordinate } from './dynamicInput'
+import { extendEntity, offsetEntity, trimEntity } from './modify'
 import { applySelectionModifier, expandSelectionToGroups, type SelectionModifier } from './selection'
 import type { Vec2 } from './math/vec2'
 import type {
@@ -49,6 +51,11 @@ type CadState = {
   polygonSides: number
   dimensionType: DimensionType
   hatchPattern: HatchPattern
+  offsetDistance: number
+  mirrorKeepSource: boolean
+  modifyTargetId: string | null
+  setOffsetDistance: (distance: number) => void
+  toggleMirrorKeepSource: () => void
   setPolygonSides: (sides: number) => void
   setDimensionType: (dimType: DimensionType) => void
   setHatchPattern: (pattern: HatchPattern) => void
@@ -100,6 +107,11 @@ export const useCadStore = create<CadState>((set, get) => ({
   polygonSides: 6,
   dimensionType: 'linear',
   hatchPattern: 'ansi31',
+  offsetDistance: 10,
+  mirrorKeepSource: true,
+  modifyTargetId: null,
+  setOffsetDistance: (offsetDistance) => set({ offsetDistance: Math.abs(offsetDistance) || 1 }),
+  toggleMirrorKeepSource: () => set((state) => ({ mirrorKeepSource: !state.mirrorKeepSource })),
   setPolygonSides: (polygonSides) => set({ polygonSides: Math.max(3, Math.round(polygonSides)) }),
   setDimensionType: (dimensionType) => set({ dimensionType, draftPoints: [], activeTool: 'dimension' }),
   setHatchPattern: (hatchPattern) => set({ hatchPattern }),
@@ -128,8 +140,9 @@ export const useCadStore = create<CadState>((set, get) => ({
     state.addEntity({ id: uid(), type: 'polyline', layerId, points: draftPoints, closed: true })
     set({ draftPoints: [], statusMessage: 'Polyline closed' })
   },
-  cancelDraft: () => set({ draftPoints: [], statusMessage: '*Cancel*' }),
-  setTool: (tool) => set({ activeTool: tool, draftPoints: [], statusMessage: `Tool: ${tool.toUpperCase()}` }),
+  cancelDraft: () => set({ draftPoints: [], modifyTargetId: null, statusMessage: '*Cancel*' }),
+  setTool: (tool) =>
+    set({ activeTool: tool, draftPoints: [], modifyTargetId: null, statusMessage: `Tool: ${tool.toUpperCase()}` }),
   setActiveLayerId: (activeLayerId) => set({ activeLayerId }),
   setCamera: (camera) => set((state) => ({ camera: { ...state.camera, ...camera } })),
   setCommandInput: (commandInput) => set({ commandInput }),
@@ -163,6 +176,19 @@ export const useCadStore = create<CadState>((set, get) => ({
     const cmd = line.trim().toUpperCase()
     const state = get()
     if (!cmd) return
+
+    // Typed coordinates feed the running command: `50,30`, `@50,30`, `@250<30`.
+    const typedPoint = parseCoordinate(line, state.draftPoints.at(-1))
+    if (typedPoint) {
+      applyDrawTool(typedPoint)
+      set({ statusMessage: `Point ${typedPoint.x.toFixed(2)}, ${typedPoint.y.toFixed(2)}` })
+      return
+    }
+
+    if (cmd === 'O' || cmd === 'OFFSET') return state.setTool('offset')
+    if (cmd === 'TR' || cmd === 'TRIM') return state.setTool('trim')
+    if (cmd === 'EX' || cmd === 'EXTEND') return state.setTool('extend')
+    if (cmd === 'MI' || cmd === 'MIRROR') return state.setTool('mirror')
     if (cmd === 'L' || cmd === 'LINE') return state.setTool('line')
     if (cmd === 'C' || cmd === 'CIRCLE') return state.setTool('circle')
     if (cmd === 'PL' || cmd === 'POLYLINE') return state.setTool('polyline')
@@ -224,10 +250,116 @@ export const useCadStore = create<CadState>((set, get) => ({
   },
 }))
 
+/** Entities the user can currently act on: visible layers that are not locked. */
+export const editableEntities = (doc: DrawingDocument): CadEntity[] =>
+  doc.entities.filter((entity) => {
+    const layer = doc.layers.find((candidate) => candidate.id === entity.layerId)
+    return layer?.visible !== false && layer?.locked !== true
+  })
+
+const pickEntity = (state: ReturnType<typeof useCadStore.getState>, point: Vec2): CadEntity | undefined =>
+  [...editableEntities(state.doc)]
+    .reverse()
+    .find((entity) => isPointNearEntity(point, entity, 8 / state.camera.zoom))
+
+const applyModifyTool = (state: ReturnType<typeof useCadStore.getState>, point: Vec2): boolean => {
+  const { activeTool } = state
+
+  if (activeTool === 'offset') {
+    if (!state.modifyTargetId) {
+      const target = pickEntity(state, point)
+      if (!target) {
+        state.setStatusMessage('No object found at that point.')
+        return true
+      }
+      useCadStore.setState({ modifyTargetId: target.id, statusMessage: 'Specify point on side to offset:' })
+      return true
+    }
+    const target = state.doc.entities.find((entity) => entity.id === state.modifyTargetId)
+    const offset = target ? offsetEntity(target, state.offsetDistance, point) : null
+    if (!offset) {
+      state.setStatusMessage('Cannot offset that object by this distance.')
+      useCadStore.setState({ modifyTargetId: null })
+      return true
+    }
+    state.addEntity(offset)
+    useCadStore.setState({ modifyTargetId: null, statusMessage: `Offset by ${state.offsetDistance}` })
+    return true
+  }
+
+  if (activeTool === 'trim') {
+    const target = pickEntity(state, point)
+    if (!target) {
+      state.setStatusMessage('No object found at that point.')
+      return true
+    }
+    const pieces = trimEntity(target, editableEntities(state.doc), point)
+    if (!pieces) {
+      state.setStatusMessage('Nothing crosses that object there.')
+      return true
+    }
+    state.updateDocument((doc) => ({
+      ...doc,
+      entities: doc.entities.flatMap((entity) => (entity.id === target.id ? pieces : [entity])),
+    }))
+    state.setStatusMessage(pieces.length === 0 ? 'Erased' : 'Trimmed')
+    return true
+  }
+
+  if (activeTool === 'extend') {
+    const target = pickEntity(state, point)
+    if (!target) {
+      state.setStatusMessage('No object found at that point.')
+      return true
+    }
+    const extended = extendEntity(target, editableEntities(state.doc), point)
+    if (!extended) {
+      state.setStatusMessage('No boundary found in that direction.')
+      return true
+    }
+    state.updateDocument((doc) => ({
+      ...doc,
+      entities: doc.entities.map((entity) => (entity.id === target.id ? extended : entity)),
+    }))
+    state.setStatusMessage('Extended')
+    return true
+  }
+
+  if (activeTool === 'mirror') {
+    if (state.selectedIds.length === 0) {
+      state.setStatusMessage('Select objects before mirroring.')
+      return true
+    }
+    if (state.draftPoints.length === 0) {
+      state.addDraftPoint(point)
+      return true
+    }
+    const axisStart = state.draftPoints[0]
+    const selected = new Set(state.selectedIds)
+    state.updateDocument((doc) => {
+      const mirrored = doc.entities
+        .filter((entity) => selected.has(entity.id))
+        .map((entity) => ({ ...mirrorEntity(entity, axisStart, point), id: uid() }))
+      const kept = state.mirrorKeepSource
+        ? doc.entities
+        : doc.entities.filter((entity) => !selected.has(entity.id))
+      return { ...doc, entities: [...kept, ...mirrored] }
+    })
+    state.clearDraft()
+    state.setStatusMessage(state.mirrorKeepSource ? 'Mirrored' : 'Mirrored and erased source')
+    return true
+  }
+
+  return false
+}
+
 export const applyDrawTool = (point: Vec2) => {
   const state = useCadStore.getState()
   const { activeLayerId, activeTool, draftPoints, addEntity, clearDraft, addDraftPoint } = state
   const currentLayerId = activeLayerId || state.doc.layers[0].id
+
+  if (applyModifyTool(state, point)) return
+
   const finishTwoPoint = (factory: (a: Vec2, b: Vec2) => CadEntity) => {
     if (draftPoints.length === 0) {
       addDraftPoint(point)

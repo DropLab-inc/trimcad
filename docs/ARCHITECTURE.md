@@ -8,6 +8,8 @@
 - `src/core/snap.ts`: object snap candidate extraction + best candidate scoring.
 - `src/core/selection.ts`: entity bounds, window/crossing hit tests, selection modifiers.
 - `src/core/boundary.ts`: planar arrangement of curves used to find hatch regions.
+- `src/core/modify.ts`: offset, trim and extend geometry.
+- `src/core/dynamicInput.ts`: on-canvas dimension fields and typed coordinate parsing.
 - `src/core/commands.ts`: command implementations for draw and modify operations.
 - `src/core/dxf.ts`: DXF import/export adapters.
 - `src/core/print.ts`: scaled PDF output.

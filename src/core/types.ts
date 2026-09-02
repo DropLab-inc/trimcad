@@ -169,3 +169,7 @@ export type ToolMode =
   | 'hatch'
   | 'dimension'
   | 'insert'
+  | 'offset'
+  | 'trim'
+  | 'extend'
+  | 'mirror'

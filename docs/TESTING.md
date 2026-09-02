@@ -19,7 +19,10 @@
 - `src/core/boundary.test.ts` (regions formed by crossing geometry, checked by area)
 - `src/core/dimension.test.ts` (labels, dimension line geometry, multi-click workflow)
 - `src/core/store.test.ts` (end-to-end draw pipeline for each tool)
+- `src/core/modify.test.ts` (offset sides and parallelism, trim pieces, extend targets, mirror)
+- `src/core/dynamicInput.test.ts` (tracked fields, typed overrides, coordinate parsing)
 - `src/ui/CanvasViewport.test.tsx` (snap marker position, window/crossing drag selection)
+- `src/ui/DynamicInput.test.tsx` (typing into dynamic fields and the modify tools end to end)
 
 `CanvasViewport.test.tsx` renders the real viewport in jsdom and drives it with mouse events.
 Because jsdom reports a zero-origin bounding box, client coordinates map straight to viewport

@@ -10,13 +10,25 @@ import {
 import { applyDrawTool, useCadStore } from '../core/store'
 import { applyOrtho, applyPolarTracking, findBestSnap } from '../core/snap'
 import { rectFromPoints, selectEntitiesInRect, selectionModeFor } from '../core/selection'
-import { getEntityAnchorPoints, isPointNearEntity } from '../core/geometry'
+import {
+  fieldsForTool,
+  hasTypedValue,
+  resolveDynamicPoint,
+  type DynamicField,
+} from '../core/dynamicInput'
+import { getEntityAnchorPoints, isPointNearEntity, mirrorEntity } from '../core/geometry'
+import { offsetEntity } from '../core/modify'
 import type { DimensionEntity, SnapMode, ToolMode } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
 import { HatchDefs } from './HatchDefs'
 import { renderDimension, renderEntity, splinePath } from './renderers'
 
 type Camera = { x: number; y: number; zoom: number }
+
+type TypedState = { step: string; values: Record<string, string>; field: number }
+
+/** Stable empty object so memo dependencies do not change on every render. */
+const NO_VALUES: Record<string, string> = {}
 
 const screenToWorld = (point: Vec2, camera: Camera): Vec2 => ({
   x: (point.x - camera.x) / camera.zoom,
@@ -42,6 +54,10 @@ const PROMPTS: Record<ToolMode, string[]> = {
   hatch: ['Pick an internal point of a closed area:'],
   dimension: ['Specify first extension line origin:', 'Specify second extension line origin:'],
   insert: ['Specify insertion point:'],
+  offset: ['Select object to offset:'],
+  trim: ['Select the part of an object to trim away:'],
+  extend: ['Select the end of an object to extend:'],
+  mirror: ['Specify first point of mirror line:', 'Specify second point of mirror line:'],
 }
 
 const DIM_PROMPTS: Record<string, string[]> = {
@@ -134,6 +150,8 @@ export function CanvasViewport() {
   const draftPoints = useCadStore((state) => state.draftPoints)
   const polygonSides = useCadStore((state) => state.polygonSides)
   const dimensionType = useCadStore((state) => state.dimensionType)
+  const modifyTargetId = useCadStore((state) => state.modifyTargetId)
+  const offsetDistance = useCadStore((state) => state.offsetDistance)
   const finishDraft = useCadStore((state) => state.finishDraft)
   const closeDraft = useCadStore((state) => state.closeDraft)
   const cancelDraft = useCadStore((state) => state.cancelDraft)
@@ -150,6 +168,7 @@ export function CanvasViewport() {
   const [lastMouse, setLastMouse] = useState<Vec2 | null>(null)
   const [boxStart, setBoxStart] = useState<Vec2 | null>(null)
   const [boxEnd, setBoxEnd] = useState<Vec2 | null>(null)
+  const [typedState, setTypedState] = useState<TypedState>({ step: '', values: NO_VALUES, field: 0 })
   const [size, setSize] = useState({ width: 1000, height: 700 })
 
   const visibleEntities = useMemo(
@@ -168,6 +187,28 @@ export function CanvasViewport() {
     observer.observe(frame)
     return () => observer.disconnect()
   }, [])
+
+  // Typed values belong to a single step of a command, so anything captured for a previous step
+  // is simply ignored rather than cleared from an effect.
+  const stepKey = `${activeTool}:${draftPoints.length}`
+  const typedValues = typedState.step === stepKey ? typedState.values : NO_VALUES
+  const activeFieldIndex = typedState.step === stepKey ? typedState.field : 0
+
+  const dynamicFields = useMemo<DynamicField[]>(() => {
+    if (!cursorWorld) return []
+    const fields = fieldsForTool(activeTool, draftPoints, cursorWorld)
+    if (!fields) return []
+    return fields.map((field) => ({ ...field, typed: typedValues[field.key] }))
+  }, [activeTool, cursorWorld, draftPoints, typedValues])
+
+  /** The point a click or Enter would use: typed field values override the cursor. */
+  const commandPoint = useMemo(() => {
+    if (!cursorWorld) return null
+    if (!hasTypedValue(dynamicFields)) return cursorWorld
+    return resolveDynamicPoint(activeTool, dynamicFields, draftPoints, cursorWorld)
+  }, [activeTool, cursorWorld, draftPoints, dynamicFields])
+
+  const fieldIndex = Math.min(activeFieldIndex, Math.max(0, dynamicFields.length - 1))
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -193,11 +234,44 @@ export function CanvasViewport() {
         return
       }
 
+      const clearTyped = () => setTypedState({ step: stepKey, values: NO_VALUES, field: 0 })
+      const writeTyped = (values: Record<string, string>, field: number) =>
+        setTypedState({ step: stepKey, values, field })
+
+      if (dynamicFields.length > 0) {
+        const key = dynamicFields[fieldIndex].key
+        if (event.key === 'Tab') {
+          event.preventDefault()
+          writeTyped(typedValues, (fieldIndex + 1) % dynamicFields.length)
+          return
+        }
+        if (/^[0-9.-]$/.test(event.key)) {
+          event.preventDefault()
+          writeTyped({ ...typedValues, [key]: (typedValues[key] ?? '') + event.key }, fieldIndex)
+          return
+        }
+        if (event.key === 'Backspace') {
+          event.preventDefault()
+          writeTyped({ ...typedValues, [key]: (typedValues[key] ?? '').slice(0, -1) }, fieldIndex)
+          return
+        }
+      }
+
       if (event.key === 'Escape') {
+        clearTyped()
         cancelDraft()
         applySelection([], 'replace')
+        return
       }
-      if (event.key === 'Enter') finishDraft()
+      if (event.key === 'Enter') {
+        if (commandPoint && hasTypedValue(dynamicFields)) {
+          applyDrawTool(commandPoint)
+          clearTyped()
+          return
+        }
+        finishDraft()
+        return
+      }
       if (event.key.toLowerCase() === 'c' && draftPoints.length >= 2) closeDraft()
       if (event.key === 'Delete') deleteSelection()
     }
@@ -210,7 +284,22 @@ export function CanvasViewport() {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
     }
-  }, [applySelection, cancelDraft, closeDraft, deleteSelection, draftPoints.length, finishDraft, redo, selectAll, undo])
+  }, [
+    applySelection,
+    cancelDraft,
+    closeDraft,
+    commandPoint,
+    deleteSelection,
+    draftPoints.length,
+    dynamicFields,
+    fieldIndex,
+    finishDraft,
+    redo,
+    selectAll,
+    stepKey,
+    typedValues,
+    undo,
+  ])
 
   const resolvePoint = (screenPoint: Vec2): { point: Vec2; snap: SnapMode | null; tracking: string | null } => {
     const raw = screenToWorld(screenPoint, camera)
@@ -374,7 +463,42 @@ export function CanvasViewport() {
     return lines
   }, [camera, width, height])
 
+  const modifyPreview = useMemo(() => {
+    if (!cursorWorld) return null
+    const ghost = { selected: false, color: '#f59e0b', dash: '6 4', dimStyle: doc.dimStyle }
+
+    if (activeTool === 'offset' && modifyTargetId) {
+      const target = doc.entities.find((entity) => entity.id === modifyTargetId)
+      const result = target ? offsetEntity(target, offsetDistance, cursorWorld) : null
+      return result ? renderEntity(result, ghost) : null
+    }
+
+    if (activeTool === 'mirror' && draftPoints.length === 1 && selectedIds.length > 0) {
+      const axisStart = draftPoints[0]
+      return (
+        <g>
+          <line
+            x1={axisStart.x}
+            y1={axisStart.y}
+            x2={cursorWorld.x}
+            y2={cursorWorld.y}
+            stroke="#f59e0b"
+            strokeWidth={1}
+            strokeDasharray="8 4"
+            vectorEffect="non-scaling-stroke"
+          />
+          {doc.entities
+            .filter((entity) => selectedIds.includes(entity.id))
+            .map((entity) => renderEntity(mirrorEntity(entity, axisStart, cursorWorld), ghost))}
+        </g>
+      )
+    }
+
+    return null
+  }, [activeTool, cursorWorld, doc.dimStyle, doc.entities, draftPoints, modifyTargetId, offsetDistance, selectedIds])
+
   const preview = useMemo(() => {
+    const cursorWorld = commandPoint
     if (!cursorWorld || draftPoints.length === 0) return null
     const style = {
       stroke: '#f59e0b',
@@ -480,24 +604,7 @@ export function CanvasViewport() {
       default:
         return null
     }
-  }, [activeTool, cursorWorld, dimensionType, doc.dimStyle, draftPoints, polygonSides])
-
-  const dynamicInput = useMemo(() => {
-    if (!cursorWorld || draftPoints.length === 0) return null
-    const first = draftPoints[0]
-    const last = draftPoints.at(-1)!
-    const radius = Math.hypot(cursorWorld.x - first.x, cursorWorld.y - first.y)
-    const length = Math.hypot(cursorWorld.x - last.x, cursorWorld.y - last.y)
-    const angle = (Math.atan2(cursorWorld.y - last.y, cursorWorld.x - last.x) * 180) / Math.PI
-    if (activeTool === 'circle' || activeTool === 'polygon') return `R ${radius.toFixed(2)}`
-    if (activeTool === 'rect') {
-      return `${Math.abs(cursorWorld.x - first.x).toFixed(2)} x ${Math.abs(cursorWorld.y - first.y).toFixed(2)}`
-    }
-    if (activeTool === 'ellipse') {
-      return `RX ${Math.abs(cursorWorld.x - first.x).toFixed(2)}  RY ${Math.abs(cursorWorld.y - first.y).toFixed(2)}`
-    }
-    return `${length.toFixed(2)} < ${((angle + 360) % 360).toFixed(1)}°`
-  }, [activeTool, cursorWorld, draftPoints])
+  }, [activeTool, commandPoint, dimensionType, doc.dimStyle, draftPoints, polygonSides])
 
   const grips = useMemo(() => {
     if (selectedIds.length === 0) return []
@@ -585,6 +692,7 @@ export function CanvasViewport() {
           })}
 
           {grips}
+          {modifyPreview}
           {preview}
         </g>
 
@@ -616,11 +724,37 @@ export function CanvasViewport() {
                 {trackingLabel}
               </text>
             )}
-            {dynamicInput && (
-              <text x={snapScreen.x + 14} y={snapScreen.y + 20} fill="#fbbf24" fontSize={12}>
-                {dynamicInput}
-              </text>
-            )}
+            {dynamicFields.map((field, index) => {
+              const top = snapScreen.y + 14 + index * 21
+              const isActive = index === fieldIndex
+              const typed = field.typed !== undefined && field.typed !== ''
+              return (
+                <g key={field.key}>
+                  <rect
+                    x={snapScreen.x + 14}
+                    y={top}
+                    width={140}
+                    height={19}
+                    rx={3}
+                    fill="rgba(8,15,28,0.92)"
+                    stroke={isActive ? '#fbbf24' : 'rgba(148,163,184,0.45)'}
+                    strokeWidth={1}
+                  />
+                  <text x={snapScreen.x + 21} y={top + 13} fill="#94a3b8" fontSize={11}>
+                    {field.label}
+                  </text>
+                  <text
+                    x={snapScreen.x + 147}
+                    y={top + 13}
+                    textAnchor="end"
+                    fill={typed ? '#fbbf24' : '#e2e8f0'}
+                    fontSize={11}
+                  >
+                    {`${typed ? field.typed : field.tracked.toFixed(2)}${field.suffix ?? ''}`}
+                  </text>
+                </g>
+              )
+            })}
           </g>
         )}
       </svg>
