@@ -1,0 +1,280 @@
+import { uid, angleBetween, approxEntityCenter, offsetCircle, offsetLine } from './geometry'
+import { add, mul, sub, type Vec2 } from './math/vec2'
+import type { CadEntity, CircleEntity, DrawingDocument, LineEntity } from './types'
+
+export const createLine = (layerId: string, start: Vec2, end: Vec2): LineEntity => ({
+  id: uid(),
+  type: 'line',
+  layerId,
+  start,
+  end,
+})
+
+export const createCircle = (layerId: string, center: Vec2, radius: number): CircleEntity => ({
+  id: uid(),
+  type: 'circle',
+  layerId,
+  center,
+  radius,
+})
+
+export const createRect = (layerId: string, a: Vec2, b: Vec2): CadEntity => ({
+  id: uid(),
+  type: 'polyline',
+  layerId,
+  closed: true,
+  points: [
+    { x: a.x, y: a.y },
+    { x: b.x, y: a.y },
+    { x: b.x, y: b.y },
+    { x: a.x, y: b.y },
+  ],
+})
+
+export const createPolygon = (layerId: string, center: Vec2, radius: number, sides: number): CadEntity => {
+  const clamped = Math.max(3, sides)
+  const points = Array.from({ length: clamped }, (_, index) => {
+    const angle = (index / clamped) * Math.PI * 2
+    return { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius }
+  })
+  return {
+    id: uid(),
+    type: 'polyline',
+    layerId,
+    closed: true,
+    points,
+  }
+}
+
+export const moveEntities = (entities: CadEntity[], ids: string[], delta: Vec2): CadEntity[] => {
+  const idSet = new Set(ids)
+  return entities.map((entity) => {
+    if (!idSet.has(entity.id)) return entity
+    switch (entity.type) {
+      case 'line':
+        return { ...entity, start: add(entity.start, delta), end: add(entity.end, delta) }
+      case 'circle':
+      case 'arc':
+      case 'ellipse':
+        return { ...entity, center: add(entity.center, delta) }
+      case 'polyline':
+        return { ...entity, points: entity.points.map((point) => add(point, delta)) }
+      case 'spline':
+        return { ...entity, controlPoints: entity.controlPoints.map((point) => add(point, delta)) }
+      case 'hatch':
+        return { ...entity, boundary: entity.boundary.map((point) => add(point, delta)) }
+      case 'text':
+        return { ...entity, position: add(entity.position, delta) }
+      case 'dimension':
+        return {
+          ...entity,
+          p1: add(entity.p1, delta),
+          p2: add(entity.p2, delta),
+          p3: entity.p3 ? add(entity.p3, delta) : undefined,
+        }
+      case 'insert':
+        return { ...entity, position: add(entity.position, delta) }
+      default:
+        return entity
+    }
+  })
+}
+
+export const rotateEntities = (entities: CadEntity[], ids: string[], origin: Vec2, angleDeg: number): CadEntity[] => {
+  const angle = (angleDeg * Math.PI) / 180
+  const idSet = new Set(ids)
+  return entities.map((entity) => {
+    if (!idSet.has(entity.id)) return entity
+    const center = approxEntityCenter(entity)
+    const p = add(origin, rotate(sub(center, origin), angle))
+    return moveEntities([entity], [entity.id], sub(p, center))[0]
+  })
+}
+
+const rotate = (point: Vec2, angle: number): Vec2 => ({
+  x: point.x * Math.cos(angle) - point.y * Math.sin(angle),
+  y: point.x * Math.sin(angle) + point.y * Math.cos(angle),
+})
+
+export const scaleEntities = (entities: CadEntity[], ids: string[], origin: Vec2, factor: number): CadEntity[] => {
+  const idSet = new Set(ids)
+  return entities.map((entity) => {
+    if (!idSet.has(entity.id)) return entity
+    switch (entity.type) {
+      case 'line':
+        return { ...entity, start: add(origin, mul(sub(entity.start, origin), factor)), end: add(origin, mul(sub(entity.end, origin), factor)) }
+      case 'circle':
+        return { ...entity, center: add(origin, mul(sub(entity.center, origin), factor)), radius: Math.abs(entity.radius * factor) }
+      case 'arc':
+        return { ...entity, center: add(origin, mul(sub(entity.center, origin), factor)), radius: Math.abs(entity.radius * factor) }
+      case 'ellipse':
+        return { ...entity, center: add(origin, mul(sub(entity.center, origin), factor)), rx: Math.abs(entity.rx * factor), ry: Math.abs(entity.ry * factor) }
+      case 'polyline':
+        return { ...entity, points: entity.points.map((point) => add(origin, mul(sub(point, origin), factor))) }
+      case 'spline':
+        return { ...entity, controlPoints: entity.controlPoints.map((point) => add(origin, mul(sub(point, origin), factor))) }
+      case 'hatch':
+        return { ...entity, boundary: entity.boundary.map((point) => add(origin, mul(sub(point, origin), factor))) }
+      case 'text':
+        return { ...entity, position: add(origin, mul(sub(entity.position, origin), factor)), height: entity.height * factor }
+      case 'dimension':
+        return {
+          ...entity,
+          p1: add(origin, mul(sub(entity.p1, origin), factor)),
+          p2: add(origin, mul(sub(entity.p2, origin), factor)),
+          p3: entity.p3 ? add(origin, mul(sub(entity.p3, origin), factor)) : undefined,
+        }
+      case 'insert':
+        return { ...entity, position: add(origin, mul(sub(entity.position, origin), factor)), scale: entity.scale * factor }
+      default:
+        return entity
+    }
+  })
+}
+
+export const mirrorEntities = (entities: CadEntity[], ids: string[], a: Vec2, b: Vec2): CadEntity[] => {
+  const idSet = new Set(ids)
+  const dir = sub(b, a)
+  const denom = dir.x * dir.x + dir.y * dir.y || 1
+  const mirror = (p: Vec2): Vec2 => {
+    const ap = sub(p, a)
+    const t = (ap.x * dir.x + ap.y * dir.y) / denom
+    const proj = add(a, mul(dir, t))
+    return add(p, mul(sub(proj, p), 2))
+  }
+  return entities.map((entity) => {
+    if (!idSet.has(entity.id)) return entity
+    switch (entity.type) {
+      case 'line':
+        return { ...entity, start: mirror(entity.start), end: mirror(entity.end) }
+      case 'circle':
+      case 'arc':
+      case 'ellipse':
+        return { ...entity, center: mirror(entity.center) }
+      case 'polyline':
+        return { ...entity, points: entity.points.map(mirror) }
+      case 'spline':
+        return { ...entity, controlPoints: entity.controlPoints.map(mirror) }
+      case 'hatch':
+        return { ...entity, boundary: entity.boundary.map(mirror) }
+      case 'text':
+        return { ...entity, position: mirror(entity.position) }
+      case 'dimension':
+        return { ...entity, p1: mirror(entity.p1), p2: mirror(entity.p2), p3: entity.p3 ? mirror(entity.p3) : undefined }
+      case 'insert':
+        return { ...entity, position: mirror(entity.position) }
+      default:
+        return entity
+    }
+  })
+}
+
+export const offsetEntities = (entities: CadEntity[], ids: string[], distanceValue: number): CadEntity[] => {
+  const idSet = new Set(ids)
+  const output: CadEntity[] = [...entities]
+  for (const entity of entities) {
+    if (!idSet.has(entity.id)) continue
+    if (entity.type === 'line') {
+      const off = offsetLine(entity, distanceValue)
+      output.push({ ...entity, id: uid(), start: off.start, end: off.end })
+    } else if (entity.type === 'circle') {
+      output.push({ ...offsetCircle(entity, distanceValue), id: uid() })
+    } else if (entity.type === 'polyline') {
+      const shifted = entity.points.map((point) => ({ x: point.x + distanceValue, y: point.y + distanceValue }))
+      output.push({ ...entity, id: uid(), points: shifted })
+    }
+  }
+  return output
+}
+
+export const createFillet = (layerId: string, a: LineEntity, b: LineEntity, radius: number): CadEntity | null => {
+  const center = lineIntersection(a.start, a.end, b.start, b.end)
+  if (!center) return null
+  const aAngle = angleBetween(center, a.end)
+  const bAngle = angleBetween(center, b.end)
+  return {
+    id: uid(),
+    type: 'arc',
+    layerId,
+    center,
+    radius: Math.max(0.01, radius),
+    startAngle: aAngle,
+    endAngle: bAngle,
+  }
+}
+
+const lineIntersection = (a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2): Vec2 | null => {
+  const d = (a1.x - a2.x) * (b1.y - b2.y) - (a1.y - a2.y) * (b1.x - b2.x)
+  if (Math.abs(d) < 1e-9) return null
+  const x =
+    ((a1.x * a2.y - a1.y * a2.x) * (b1.x - b2.x) - (a1.x - a2.x) * (b1.x * b2.y - b1.y * b2.x)) /
+    d
+  const y =
+    ((a1.x * a2.y - a1.y * a2.x) * (b1.y - b2.y) - (a1.y - a2.y) * (b1.x * b2.y - b1.y * b2.x)) /
+    d
+  return { x, y }
+}
+
+export const joinEntities = (entities: CadEntity[], ids: string[], layerId: string): CadEntity[] => {
+  const selected = entities.filter((entity) => ids.includes(entity.id))
+  const lines = selected.filter((entity): entity is LineEntity => entity.type === 'line')
+  if (lines.length < 2) return entities
+  const points = [lines[0].start, ...lines.map((line) => line.end)]
+  const remainder = entities.filter((entity) => !ids.includes(entity.id))
+  return [...remainder, { id: uid(), type: 'polyline', layerId, points, closed: false }]
+}
+
+export const breakLine = (entities: CadEntity[], lineId: string, breakPoint: Vec2): CadEntity[] => {
+  const line = entities.find((entity): entity is LineEntity => entity.id === lineId && entity.type === 'line')
+  if (!line) return entities
+  const first = { ...line, id: uid(), end: breakPoint }
+  const second = { ...line, id: uid(), start: breakPoint }
+  return entities.flatMap((entity) => (entity.id === lineId ? [first, second] : [entity]))
+}
+
+export const rectangularArray = (
+  entities: CadEntity[],
+  ids: string[],
+  rows: number,
+  cols: number,
+  dx: number,
+  dy: number,
+): CadEntity[] => {
+  const selected = entities.filter((entity) => ids.includes(entity.id))
+  const copies: CadEntity[] = []
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      if (r === 0 && c === 0) continue
+      for (const entity of selected) {
+        const moved = moveEntities([entity], [entity.id], { x: c * dx, y: r * dy })[0]
+        copies.push({ ...moved, id: uid() })
+      }
+    }
+  }
+  return [...entities, ...copies]
+}
+
+export const polarArray = (
+  entities: CadEntity[],
+  ids: string[],
+  center: Vec2,
+  count: number,
+  totalAngleDeg: number,
+): CadEntity[] => {
+  const selected = entities.filter((entity) => ids.includes(entity.id))
+  const copies: CadEntity[] = []
+  const step = count <= 1 ? 0 : totalAngleDeg / count
+  for (let i = 1; i < count; i += 1) {
+    for (const entity of selected) {
+      const rotated = rotateEntities([entity], [entity.id], center, step * i)[0]
+      copies.push({ ...rotated, id: uid() })
+    }
+  }
+  return [...entities, ...copies]
+}
+
+export const documentStats = (document: DrawingDocument) => ({
+  entityCount: document.entities.length,
+  layerCount: document.layers.length,
+  blockCount: document.blocks.length,
+})
