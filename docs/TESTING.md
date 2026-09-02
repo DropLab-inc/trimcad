@@ -18,6 +18,13 @@
 - `src/core/hatch.test.ts` (boundary detection under the picked point)
 - `src/core/dimension.test.ts` (labels, dimension line geometry, multi-click workflow)
 - `src/core/store.test.ts` (end-to-end draw pipeline for each tool)
+- `src/ui/CanvasViewport.test.tsx` (snap marker position, window/crossing drag selection)
+
+`CanvasViewport.test.tsx` renders the real viewport in jsdom and drives it with mouse events.
+Because jsdom reports a zero-origin bounding box, client coordinates map straight to viewport
+coordinates; with the camera at the origin and zoom 1 the expected marker positions are exact.
+That is what lets the suite assert the snap marker is drawn *at the snap point* rather than
+under the raw cursor, which was a real bug.
 
 ## Run tests
 

@@ -1,0 +1,197 @@
+import { fireEvent, render, screen } from '@testing-library/react'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { createCircle, createLine, createRect } from '../core/commands'
+import { useCadStore } from '../core/store'
+import type { CadEntity } from '../core/types'
+import { CanvasViewport } from './CanvasViewport'
+
+/**
+ * jsdom reports a zero-origin bounding box for the SVG, so client coordinates map straight to
+ * viewport coordinates. With the camera at the origin and zoom 1, screen and world coordinates
+ * are identical, which makes the expected marker positions exact.
+ */
+const seed = (entities: CadEntity[]) => {
+  const state = useCadStore.getState()
+  state.cancelDraft()
+  state.setSelection([])
+  state.updateDocument((doc) => ({ ...doc, entities, groups: [] }))
+  state.setCamera({ x: 0, y: 0, zoom: 1 })
+}
+
+const layerId = () => useCadStore.getState().doc.layers[0].id
+
+const snapGlyph = (container: HTMLElement) => container.querySelector('[stroke="#00f5d4"]')
+
+describe('snap marker placement', () => {
+  beforeEach(() => {
+    seed([])
+  })
+
+  it('draws the endpoint marker at the endpoint, not under the raw cursor', () => {
+    seed([createLine(layerId(), { x: 100, y: 100 }, { x: 300, y: 100 })])
+    useCadStore.getState().setTool('line')
+
+    const { container } = render(<CanvasViewport />)
+    const svg = container.querySelector('svg')!
+
+    fireEvent.mouseMove(svg, { clientX: 296, clientY: 104 })
+
+    expect(screen.getByText('endpoint')).toBeInTheDocument()
+    const glyph = snapGlyph(container)
+    expect(glyph).not.toBeNull()
+    // The marker is a 14px square centred on the snap point at x=300, not on the cursor at x=296.
+    expect(Number(glyph!.getAttribute('x'))).toBe(293)
+    expect(Number(glyph!.getAttribute('y'))).toBe(93)
+  })
+
+  it('reports the snapped coordinates in the status readout', () => {
+    seed([createLine(layerId(), { x: 100, y: 100 }, { x: 300, y: 100 })])
+    useCadStore.getState().setTool('line')
+
+    const { container } = render(<CanvasViewport />)
+    fireEvent.mouseMove(container.querySelector('svg')!, { clientX: 296, clientY: 104 })
+
+    expect(screen.getByText(/X 300\.00 Y 100\.00/)).toBeInTheDocument()
+  })
+
+  it('labels a midpoint snap when hovering the middle of a segment', () => {
+    seed([createLine(layerId(), { x: 0, y: 0 }, { x: 200, y: 0 })])
+    useCadStore.getState().setTool('line')
+
+    const { container } = render(<CanvasViewport />)
+    fireEvent.mouseMove(container.querySelector('svg')!, { clientX: 102, clientY: 3 })
+
+    expect(screen.getByText('midpoint')).toBeInTheDocument()
+  })
+
+  it('labels a centre snap when hovering the middle of a circle', () => {
+    seed([createCircle(layerId(), { x: 250, y: 250 }, 80)])
+    useCadStore.getState().setTool('line')
+
+    const { container } = render(<CanvasViewport />)
+    fireEvent.mouseMove(container.querySelector('svg')!, { clientX: 252, clientY: 248 })
+
+    expect(screen.getByText('center')).toBeInTheDocument()
+  })
+
+  it('shows no marker in empty space', () => {
+    seed([createLine(layerId(), { x: 0, y: 0 }, { x: 10, y: 0 })])
+    useCadStore.getState().setTool('line')
+
+    const { container } = render(<CanvasViewport />)
+    fireEvent.mouseMove(container.querySelector('svg')!, { clientX: 600, clientY: 400 })
+
+    expect(snapGlyph(container)).toBeNull()
+  })
+
+  it('places the drawn point at the snapped location', () => {
+    seed([createLine(layerId(), { x: 100, y: 100 }, { x: 300, y: 100 })])
+    useCadStore.getState().setTool('line')
+
+    const { container } = render(<CanvasViewport />)
+    const svg = container.querySelector('svg')!
+
+    fireEvent.mouseMove(svg, { clientX: 296, clientY: 104 })
+    fireEvent.mouseDown(svg, { clientX: 296, clientY: 104, button: 0 })
+
+    expect(useCadStore.getState().draftPoints[0]).toEqual({ x: 300, y: 100 })
+  })
+})
+
+describe('rectangular selection', () => {
+  beforeEach(() => {
+    seed([])
+    useCadStore.getState().setTool('select')
+  })
+
+  const drag = (container: HTMLElement, from: { x: number; y: number }, to: { x: number; y: number }) => {
+    const svg = container.querySelector('svg')!
+    fireEvent.mouseDown(svg, { clientX: from.x, clientY: from.y, button: 0 })
+    fireEvent.mouseMove(svg, { clientX: to.x, clientY: to.y })
+    return svg
+  }
+
+  it('shows a solid blue box when dragging left to right', () => {
+    const { container } = render(<CanvasViewport />)
+    drag(container, { x: 50, y: 50 }, { x: 250, y: 200 })
+
+    const box = container.querySelector('[stroke="#3b82f6"]')
+    expect(box).not.toBeNull()
+    expect(box!.getAttribute('stroke-dasharray')).toBeNull()
+    expect(Number(box!.getAttribute('width'))).toBe(200)
+  })
+
+  it('shows a dashed green box when dragging right to left', () => {
+    const { container } = render(<CanvasViewport />)
+    drag(container, { x: 250, y: 200 }, { x: 50, y: 50 })
+
+    const box = container.querySelector('[stroke="#22c55e"]')
+    expect(box).not.toBeNull()
+    expect(box!.getAttribute('stroke-dasharray')).toBe('6 4')
+  })
+
+  it('window drag selects only fully enclosed objects', () => {
+    const inside = createRect(layerId(), { x: 60, y: 60 }, { x: 120, y: 120 })
+    const straddling = createLine(layerId(), { x: 200, y: 100 }, { x: 900, y: 100 })
+    seed([inside, straddling])
+    useCadStore.getState().setTool('select')
+
+    const { container } = render(<CanvasViewport />)
+    const svg = drag(container, { x: 20, y: 20 }, { x: 400, y: 400 })
+    fireEvent.mouseUp(svg, { clientX: 400, clientY: 400, button: 0 })
+
+    expect(useCadStore.getState().selectedIds).toEqual([inside.id])
+  })
+
+  it('crossing drag also selects objects the box merely touches', () => {
+    const inside = createRect(layerId(), { x: 60, y: 60 }, { x: 120, y: 120 })
+    const straddling = createLine(layerId(), { x: 200, y: 100 }, { x: 900, y: 100 })
+    seed([inside, straddling])
+    useCadStore.getState().setTool('select')
+
+    const { container } = render(<CanvasViewport />)
+    const svg = drag(container, { x: 400, y: 400 }, { x: 20, y: 20 })
+    fireEvent.mouseUp(svg, { clientX: 20, clientY: 20, button: 0 })
+
+    const selected = useCadStore.getState().selectedIds
+    expect(selected).toContain(inside.id)
+    expect(selected).toContain(straddling.id)
+  })
+
+  it('treats a drag shorter than the pick threshold as a single click pick', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    seed([line])
+    useCadStore.getState().setTool('select')
+
+    const { container } = render(<CanvasViewport />)
+    const svg = drag(container, { x: 250, y: 101 }, { x: 251, y: 101 })
+    fireEvent.mouseUp(svg, { clientX: 251, clientY: 101, button: 0 })
+
+    expect(useCadStore.getState().selectedIds).toEqual([line.id])
+  })
+
+  it('adds to the selection when Shift is held', () => {
+    const first = createRect(layerId(), { x: 60, y: 60 }, { x: 120, y: 120 })
+    const second = createRect(layerId(), { x: 300, y: 300 }, { x: 360, y: 360 })
+    seed([first, second])
+    useCadStore.getState().setTool('select')
+
+    const { container } = render(<CanvasViewport />)
+    let svg = drag(container, { x: 20, y: 20 }, { x: 200, y: 200 })
+    fireEvent.mouseUp(svg, { clientX: 200, clientY: 200, button: 0 })
+    expect(useCadStore.getState().selectedIds).toEqual([first.id])
+
+    svg = drag(container, { x: 250, y: 250 }, { x: 500, y: 500 })
+    fireEvent.mouseUp(svg, { clientX: 500, clientY: 500, button: 0, shiftKey: true })
+
+    expect(useCadStore.getState().selectedIds).toHaveLength(2)
+  })
+
+  it('does not leave a selection box on screen after the drag ends', () => {
+    const { container } = render(<CanvasViewport />)
+    const svg = drag(container, { x: 50, y: 50 }, { x: 250, y: 200 })
+    fireEvent.mouseUp(svg, { clientX: 250, clientY: 200, button: 0 })
+
+    expect(container.querySelector('[stroke="#3b82f6"]')).toBeNull()
+  })
+})
