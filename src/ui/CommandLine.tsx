@@ -227,6 +227,7 @@ export function CommandLine() {
       <button type="button" onClick={() => runCommand(value)}>
         Run
       </button>
+      <span className="cad-hint">Esc: clear input | Shift+Drag: pan | Wheel: zoom</span>
       <input
         ref={setFileInput}
         style={{ display: 'none' }}

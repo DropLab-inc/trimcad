@@ -28,6 +28,11 @@ type CadState = {
   snapModes: SnapMode[]
   osnapEnabled: boolean
   polarEnabled: boolean
+  polygonSides: number
+  setPolygonSides: (sides: number) => void
+  finishDraft: () => void
+  closeDraft: () => void
+  cancelDraft: () => void
   setTool: (tool: ToolMode) => void
   setActiveLayerId: (layerId: string) => void
   setCamera: (camera: Partial<CameraState>) => void
@@ -67,6 +72,28 @@ export const useCadStore = create<CadState>((set, get) => ({
   snapModes: defaultSnapModes,
   osnapEnabled: true,
   polarEnabled: true,
+  polygonSides: 6,
+  setPolygonSides: (polygonSides) => set({ polygonSides: Math.max(3, Math.round(polygonSides)) }),
+  finishDraft: () => {
+    const state = get()
+    const { activeTool, draftPoints } = state
+    const layerId = state.activeLayerId || state.doc.layers[0].id
+    if (activeTool === 'polyline' && draftPoints.length >= 2) {
+      state.addEntity({ id: uid(), type: 'polyline', layerId, points: draftPoints, closed: false })
+    } else if (activeTool === 'spline' && draftPoints.length >= 2) {
+      state.addEntity({ id: uid(), type: 'spline', layerId, controlPoints: draftPoints })
+    }
+    set({ draftPoints: [], statusMessage: 'Command completed' })
+  },
+  closeDraft: () => {
+    const state = get()
+    const { activeTool, draftPoints } = state
+    if (activeTool !== 'polyline' || draftPoints.length < 3) return
+    const layerId = state.activeLayerId || state.doc.layers[0].id
+    state.addEntity({ id: uid(), type: 'polyline', layerId, points: draftPoints, closed: true })
+    set({ draftPoints: [], statusMessage: 'Polyline closed' })
+  },
+  cancelDraft: () => set({ draftPoints: [], statusMessage: '*Cancel*' }),
   setTool: (tool) => set({ activeTool: tool, draftPoints: [], statusMessage: `Tool: ${tool.toUpperCase()}` }),
   setActiveLayerId: (activeLayerId) => set({ activeLayerId }),
   setCamera: (camera) => set((state) => ({ camera: { ...state.camera, ...camera } })),
@@ -187,7 +214,7 @@ export const applyDrawTool = (point: Vec2) => {
   }
 
   if (activeTool === 'polygon') {
-    finishTwoPoint((a, b) => createPolygon(currentLayerId, a, Math.hypot(b.x - a.x, b.y - a.y), 6))
+    finishTwoPoint((a, b) => createPolygon(currentLayerId, a, Math.hypot(b.x - a.x, b.y - a.y), state.polygonSides))
     return
   }
 
@@ -226,12 +253,7 @@ export const applyDrawTool = (point: Vec2) => {
   }
 
   if (activeTool === 'spline') {
-    if (draftPoints.length < 3) {
-      addDraftPoint(point)
-      return
-    }
-    addEntity({ id: uid(), type: 'spline', layerId: currentLayerId, controlPoints: [...draftPoints, point] })
-    clearDraft()
+    addDraftPoint(point)
     return
   }
 

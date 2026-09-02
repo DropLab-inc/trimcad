@@ -26,6 +26,30 @@ npm run dev
 
 Open the URL shown by Vite (typically `http://localhost:5173`).
 
+## Drafting controls
+
+The viewport follows AutoCAD conventions.
+
+| Input | Action |
+| --- | --- |
+| Left click | Place the next point of the active command |
+| Right click | Finish the current command |
+| `Enter` | Finish an open polyline or spline |
+| `C` | Close the current polyline |
+| `Esc` | Cancel the current command |
+| `Delete` | Erase the current selection |
+| Middle mouse drag | Pan |
+| Mouse wheel | Zoom at the cursor |
+| Hold `Shift` | Ortho: constrain to horizontal/vertical |
+
+While a command is running you get a full-screen crosshair, a live preview of the actual
+shape (a circle previews as a circle, not just its radius), a dynamic input readout with
+length/angle or radius, and the current prompt in the lower-left corner.
+
+Polar tracking only engages when the cursor is within a few degrees of a tracking angle,
+so the cursor does not jump while you move it. Object snaps show a marker and a label at
+the snapped point.
+
 ## Command aliases
 
 - `L`/`LINE`, `C`/`CIRCLE`, `PL`/`POLYLINE`, `REC`/`RECT`

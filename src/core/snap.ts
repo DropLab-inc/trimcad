@@ -145,10 +145,39 @@ const lineIntersection = (a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2): Vec2 | null =
   return { x, y }
 }
 
-export const applyPolarTracking = (basePoint: Vec2, targetPoint: Vec2, incrementDeg = 45): Vec2 => {
-  const angle = Math.atan2(targetPoint.y - basePoint.y, targetPoint.x - basePoint.x)
+export type TrackingResult = {
+  point: Vec2
+  snapped: boolean
+}
+
+/**
+ * Polar tracking only engages when the cursor is already close to a tracking angle,
+ * matching AutoCAD behaviour. Snapping on every move makes the cursor feel like it jumps.
+ */
+export const applyPolarTracking = (
+  basePoint: Vec2,
+  targetPoint: Vec2,
+  incrementDeg = 45,
+  toleranceDeg = 4,
+): TrackingResult => {
   const distanceValue = distance(basePoint, targetPoint)
+  if (distanceValue < 1e-9) {
+    return { point: targetPoint, snapped: false }
+  }
+  const angle = Math.atan2(targetPoint.y - basePoint.y, targetPoint.x - basePoint.x)
   const increment = (incrementDeg * Math.PI) / 180
   const snappedAngle = Math.round(angle / increment) * increment
-  return polar(basePoint, distanceValue, snappedAngle)
+  const deviationDeg = Math.abs(((snappedAngle - angle) * 180) / Math.PI)
+  if (deviationDeg > toleranceDeg) {
+    return { point: targetPoint, snapped: false }
+  }
+  return { point: polar(basePoint, distanceValue, snappedAngle), snapped: true }
+}
+
+export const applyOrtho = (basePoint: Vec2, targetPoint: Vec2): Vec2 => {
+  const dx = targetPoint.x - basePoint.x
+  const dy = targetPoint.y - basePoint.y
+  return Math.abs(dx) >= Math.abs(dy)
+    ? { x: targetPoint.x, y: basePoint.y }
+    : { x: basePoint.x, y: targetPoint.y }
 }

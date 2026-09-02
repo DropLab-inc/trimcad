@@ -13,6 +13,8 @@
 - `src/core/document.test.ts`
 - `src/core/commands.test.ts`
 - `src/core/dxf.test.ts`
+- `src/core/snap.test.ts` (object snap, polar tracking tolerance, ortho)
+- `src/core/store.test.ts` (end-to-end draw pipeline for each tool)
 
 ## Run tests
 
