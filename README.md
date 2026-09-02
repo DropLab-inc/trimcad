@@ -74,9 +74,13 @@ using the drawing's dimension style.
 
 ### Hatching
 
-Choose a pattern in the ribbon, then click inside any closed area. The smallest closed region
-containing the point you clicked is used as the boundary, so nested shapes hatch the way you
-would expect.
+Choose a pattern in the ribbon, then click inside any enclosed area.
+
+The boundary does not have to be a single object. Every visible curve is split at its
+intersections and the resulting arrangement is searched for the smallest region surrounding
+your pick point, so a line drawn across a circle lets you hatch either half, four crossing
+lines enclose a rectangle, and two overlapping circles let you hatch just the lens between
+them. Nested shapes hatch the region you actually clicked in rather than the outer shape.
 
 While a command is running you get a full-screen crosshair, a live preview of the actual
 shape (a circle previews as a circle, not just its radius), a dynamic input readout with

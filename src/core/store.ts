@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { createCircle, createLine, createPolygon, createRect } from './commands'
 import { loadAutosave, saveAutosave } from './autosave'
 import { DocumentController, makeDefaultDocument } from './document'
+import { findRegionBoundary } from './boundary'
 import { findHatchBoundary, isPointNearEntity, uid } from './geometry'
 import { applySelectionModifier, expandSelectionToGroups, type SelectionModifier } from './selection'
 import type { Vec2 } from './math/vec2'
@@ -316,9 +317,16 @@ export const applyDrawTool = (point: Vec2) => {
   }
 
   if (activeTool === 'hatch') {
-    const boundary = findHatchBoundary(state.doc.entities, point)
+    const candidates = state.doc.entities.filter(
+      (entity) =>
+        entity.type !== 'hatch' &&
+        state.doc.layers.find((layer) => layer.id === entity.layerId)?.visible !== false,
+    )
+    // The arrangement finds regions bounded by several crossing objects; the whole-entity search
+    // is a fallback for shapes it cannot resolve.
+    const boundary = findRegionBoundary(candidates, point) ?? findHatchBoundary(candidates, point)
     if (!boundary) {
-      state.setStatusMessage('No closed boundary found at that point.')
+      state.setStatusMessage('No enclosed area found at that point.')
       return
     }
     addEntity({

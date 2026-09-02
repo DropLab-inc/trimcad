@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createCircle, createRect } from './commands'
-import { findHatchBoundary } from './geometry'
+import { createCircle, createLine, createRect } from './commands'
+import { findHatchBoundary, polygonArea } from './geometry'
 import { applyDrawTool, useCadStore } from './store'
 
 describe('hatch boundary detection', () => {
@@ -65,6 +65,41 @@ describe('hatch tool', () => {
     applyDrawTool({ x: 5, y: 5 })
 
     expect(useCadStore.getState().doc.entities).toHaveLength(0)
-    expect(useCadStore.getState().statusMessage).toMatch(/No closed boundary/i)
+    expect(useCadStore.getState().statusMessage).toMatch(/No enclosed area/i)
+  })
+
+  it('hatches only the half of a circle cut off by a line', () => {
+    const layerId = useCadStore.getState().doc.layers[0].id
+    useCadStore.getState().updateDocument((draft) => ({
+      ...draft,
+      entities: [createCircle(layerId, { x: 0, y: 0 }, 10), createLine(layerId, { x: -20, y: 0 }, { x: 20, y: 0 })],
+    }))
+
+    useCadStore.getState().setTool('hatch')
+    applyDrawTool({ x: 0, y: 5 })
+
+    const hatch = useCadStore.getState().doc.entities.find((entity) => entity.type === 'hatch')
+    expect(hatch).toBeDefined()
+    if (hatch?.type === 'hatch') {
+      expect(hatch.boundary.every((point) => point.y >= -1e-3)).toBe(true)
+      expect(polygonArea(hatch.boundary)).toBeLessThan(Math.PI * 100 * 0.6)
+    }
+  })
+
+  it('does not treat an existing hatch as a boundary for the next one', () => {
+    const layerId = useCadStore.getState().doc.layers[0].id
+    useCadStore.getState().updateDocument((draft) => ({
+      ...draft,
+      entities: [createRect(layerId, { x: 0, y: 0 }, { x: 40, y: 40 })],
+    }))
+
+    useCadStore.getState().setTool('hatch')
+    applyDrawTool({ x: 20, y: 20 })
+    applyDrawTool({ x: 20, y: 20 })
+
+    const hatches = useCadStore.getState().doc.entities.filter((entity) => entity.type === 'hatch')
+    expect(hatches).toHaveLength(2)
+    expect(polygonArea(hatches[0].type === 'hatch' ? hatches[0].boundary : [])).toBeCloseTo(1600, 4)
+    expect(polygonArea(hatches[1].type === 'hatch' ? hatches[1].boundary : [])).toBeCloseTo(1600, 4)
   })
 })

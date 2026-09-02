@@ -16,6 +16,7 @@
 - `src/core/snap.test.ts` (every snap mode, snap priority, polar tracking tolerance, ortho)
 - `src/core/selection.test.ts` (window vs crossing selection, bounds, modifiers, groups)
 - `src/core/hatch.test.ts` (boundary detection under the picked point)
+- `src/core/boundary.test.ts` (regions formed by crossing geometry, checked by area)
 - `src/core/dimension.test.ts` (labels, dimension line geometry, multi-click workflow)
 - `src/core/store.test.ts` (end-to-end draw pipeline for each tool)
 - `src/ui/CanvasViewport.test.tsx` (snap marker position, window/crossing drag selection)
