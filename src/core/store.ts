@@ -4,25 +4,37 @@ import {
   createLine,
   createPolygon,
   createRect,
+  isTransformTool,
   moveEntities,
   rotateEntities,
   scaleEntities,
+  transformedBy,
 } from './commands'
-import { loadAutosave, saveAutosave } from './autosave'
+import { clearAutosave, currentSessionId, decideRecovery, describeAge, loadAutosave, saveAutosave } from './autosave'
 import { DocumentController, makeDefaultDocument } from './document'
 import { findRegionBoundary } from './boundary'
-import { findHatchBoundary, isPointNearEntity, mirrorEntity, uid } from './geometry'
+import { DRAWING_EXTENSION } from './fileIo'
+import {
+  countEntitiesOnLayer,
+  editableEntities,
+  isLayerVisible,
+  layerOf,
+  makeLayer,
+  nextLayerName,
+} from './layers'
+import { findHatchBoundary, getEntityAnchorPoints, isPointNearEntity, mirrorEntity, uid } from './geometry'
 import { parseCoordinate } from './dynamicInput'
 import { extendResult, fenceHits, offsetEntity, trimResult } from './modify'
 import { COMMANDS, resolveCommand, type CommandDef } from './commandRegistry'
 import { formatPrompt, matchKeyword, promptFor, type Keyword, type Prompt, type PromptContext } from './prompts'
 import { applySelectionModifier, expandSelectionToGroups, type SelectionModifier } from './selection'
-import { distance, sub, type Vec2 } from './math/vec2'
+import { sub, type Vec2 } from './math/vec2'
 import type {
   CadEntity,
   DimensionType,
   DrawingDocument,
   HatchPattern,
+  Layer,
   SnapMode,
   ToolMode,
 } from './types'
@@ -65,11 +77,23 @@ type CadState = {
   activeLayerId: string
   commandInput: string
   statusMessage: string
+  /** OFFSET asks for a distance first; true while it is still waiting for one. */
+  offsetPending: boolean
+  /** OFFSET's Through option: the copy passes through the picked point instead of a set distance. */
+  offsetThrough: boolean
+  /** OFFSET's Erase option: remove the source object once the copy is made. */
+  offsetErase: boolean
+  /** Name the drawing saves under, shown in the title bar. */
+  fileName: string
+  /** Objects held by COPYCLIP or CUTCLIP, kept out of the document until pasted. */
+  clipboard: CadEntity[]
   camera: CameraState
   draftPoints: Vec2[]
   snapModes: SnapMode[]
   osnapEnabled: boolean
   polarEnabled: boolean
+  /** AutoCAD's LWT: draw each object at its layer's plotted width instead of a hairline. */
+  lwDisplay: boolean
   polygonSides: number
   dimensionType: DimensionType
   hatchPattern: HatchPattern
@@ -117,6 +141,7 @@ type CadState = {
   setStatusMessage: (message: string) => void
   toggleOsnap: () => void
   togglePolar: () => void
+  toggleLwDisplay: () => void
   setSelection: (ids: string[]) => void
   applySelection: (ids: string[], modifier: SelectionModifier) => void
   selectAll: () => void
@@ -129,6 +154,20 @@ type CadState = {
   redo: () => void
   deleteSelection: () => void
   maybeRecoverAutosave: () => void
+  /** Starts an empty drawing, discarding whatever is open. */
+  newDrawing: () => void
+  /** Replaces the whole drawing, as opening or importing a file does. */
+  loadDrawing: (doc: DrawingDocument, fileName: string) => void
+  setFileName: (fileName: string) => void
+  addLayer: () => void
+  /** Changes one layer's settings, as the layer manager's columns do. */
+  updateLayer: (id: string, patch: Partial<Layer>) => void
+  /** Removes a layer and everything drawn on it. Layer 0 and the current layer stay. */
+  deleteLayer: (id: string) => void
+  copySelection: () => void
+  cutSelection: () => void
+  /** Drops the clipboard at the crosshair, keeping the copied objects' relative spacing. */
+  pasteClipboard: () => void
 }
 
 const autosaveDoc = (doc: DrawingDocument) => {
@@ -146,11 +185,17 @@ export const useCadStore = create<CadState>((set, get) => ({
   activeLayerId: controller.getDocument().layers[0].id,
   commandInput: '',
   statusMessage: 'Ready',
+  offsetPending: false,
+  offsetThrough: false,
+  offsetErase: false,
+  fileName: `Drawing1${DRAWING_EXTENSION}`,
+  clipboard: [],
   camera: { x: 400, y: 300, zoom: 1 },
   draftPoints: [],
   snapModes: defaultSnapModes,
   osnapEnabled: true,
   polarEnabled: true,
+  lwDisplay: false,
   polygonSides: 6,
   dimensionType: 'linear',
   hatchPattern: 'ansi31',
@@ -274,6 +319,9 @@ export const useCadStore = create<CadState>((set, get) => ({
       modifyTargetId: null,
       edgeIds: null,
       pickingEdges: false,
+      // OFFSET opens by asking for its distance, the way AutoCAD does.
+      offsetPending: tool === 'offset',
+      offsetThrough: false,
       statusMessage: `Tool: ${tool.toUpperCase()}`,
     }),
   setActiveLayerId: (activeLayerId) => set({ activeLayerId }),
@@ -282,6 +330,7 @@ export const useCadStore = create<CadState>((set, get) => ({
   setStatusMessage: (statusMessage) => set({ statusMessage }),
   toggleOsnap: () => set((state) => ({ osnapEnabled: !state.osnapEnabled })),
   togglePolar: () => set((state) => ({ polarEnabled: !state.polarEnabled })),
+  toggleLwDisplay: () => set((state) => ({ lwDisplay: !state.lwDisplay })),
   setSelection: (ids) => {
     controller.select(ids)
     set({ selectedIds: controller.getSelection() })
@@ -294,12 +343,7 @@ export const useCadStore = create<CadState>((set, get) => ({
     set({ selectedIds: controller.getSelection() })
   },
   selectAll: () => {
-    const selectable = get()
-      .doc.entities.filter((entity) => {
-        const layer = get().doc.layers.find((candidate) => candidate.id === entity.layerId)
-        return layer?.visible !== false && layer?.locked !== true
-      })
-      .map((entity) => entity.id)
+    const selectable = editableEntities(get().doc).map((entity) => entity.id)
     controller.select(selectable)
     set({ selectedIds: controller.getSelection(), statusMessage: `Selected ${selectable.length} objects` })
   },
@@ -388,22 +432,155 @@ export const useCadStore = create<CadState>((set, get) => ({
     set({ doc, selectedIds: controller.getSelection(), statusMessage: `Deleted ${ids.length} entit${ids.length === 1 ? 'y' : 'ies'}` })
   },
   maybeRecoverAutosave: () => {
-    const payload = loadAutosave()
-    if (!payload) return
-    const ageMs = Date.now() - payload.savedAt
-    const answer = window.confirm(`Recovered autosave from ${Math.round(ageMs / 1000)}s ago. Load it?`)
-    if (!answer) return
-    controller.setDocument(payload.document)
-    set({ doc: controller.getDocument(), selectedIds: controller.getSelection(), statusMessage: 'Autosave recovered' })
+    const decision = decideRecovery(loadAutosave(), currentSessionId())
+    if (decision.kind === 'none') return
+
+    // Work from this same run is just a page reload, so it comes back quietly.
+    if (decision.kind === 'offer') {
+      const when = describeAge(decision.savedAt)
+      if (!window.confirm(`DropLabCad closed with unsaved work from ${when}. Recover it?`)) {
+        clearAutosave()
+        return
+      }
+    }
+
+    controller.setDocument(decision.document)
+    const doc = controller.getDocument()
+    set({
+      doc,
+      selectedIds: controller.getSelection(),
+      activeLayerId: doc.layers[0].id,
+      statusMessage: decision.kind === 'offer' ? 'Recovered unsaved work' : 'Ready',
+    })
+  },
+  newDrawing: () => {
+    controller.setDocument(makeDefaultDocument())
+    const doc = controller.getDocument()
+    autosaveDoc(doc)
+    set({
+      doc,
+      selectedIds: controller.getSelection(),
+      activeLayerId: doc.layers[0].id,
+      activeTool: 'select',
+      draftPoints: [],
+      fileName: `Drawing1${DRAWING_EXTENSION}`,
+      statusMessage: 'New drawing',
+    })
+    get().log('result', 'New drawing')
+  },
+  loadDrawing: (incoming, fileName) => {
+    controller.setDocument(incoming)
+    const doc = controller.getDocument()
+    autosaveDoc(doc)
+    set({
+      doc,
+      selectedIds: controller.getSelection(),
+      activeLayerId: doc.layers[0].id,
+      activeTool: 'select',
+      draftPoints: [],
+      fileName,
+      statusMessage: `Opened ${fileName}`,
+    })
+  },
+  setFileName: (fileName) => set({ fileName }),
+  addLayer: () => {
+    const state = get()
+    const name = nextLayerName(state.doc.layers)
+    state.updateDocument((doc) => ({
+      ...doc,
+      layers: [...doc.layers, makeLayer(uid(), name, doc.linetypes[0].id)],
+    }))
+    state.setStatusMessage(`Added layer ${name}`)
+  },
+  updateLayer: (id, patch) => {
+    const state = get()
+    state.updateDocument((doc) => ({
+      ...doc,
+      layers: doc.layers.map((layer) => (layer.id === id ? { ...layer, ...patch } : layer)),
+    }))
+    // Anything now hidden or locked must not stay selected.
+    const doc = get().doc
+    const stillEditable = editableEntities(doc).map((entity) => entity.id)
+    const kept = get().selectedIds.filter((selectedId) => stillEditable.includes(selectedId))
+    controller.select(kept)
+    set({ selectedIds: controller.getSelection() })
+  },
+  deleteLayer: (id) => {
+    const state = get()
+    if (state.doc.layers.length <= 1) {
+      state.setStatusMessage('A drawing needs at least one layer.')
+      return
+    }
+    if (id === state.activeLayerId) {
+      state.setStatusMessage('That is the current layer. Make another one current first.')
+      return
+    }
+    const layer = state.doc.layers.find((candidate) => candidate.id === id)
+    const count = countEntitiesOnLayer(state.doc, id)
+    if (count > 0 && !window.confirm(`Delete layer ${layer?.name} and the ${count} object(s) on it?`)) return
+
+    state.updateDocument((doc) => ({
+      ...doc,
+      layers: doc.layers.filter((candidate) => candidate.id !== id),
+      entities: doc.entities.filter((entity) => entity.layerId !== id),
+    }))
+    state.setStatusMessage(`Deleted layer ${layer?.name}`)
+  },
+  copySelection: () => {
+    const state = get()
+    const chosen = state.doc.entities.filter((entity) => state.selectedIds.includes(entity.id))
+    if (chosen.length === 0) {
+      state.setStatusMessage('Select objects before copying.')
+      return
+    }
+    set({ clipboard: structuredClone(chosen), statusMessage: `Copied ${describeCount(chosen.length)}` })
+  },
+  cutSelection: () => {
+    const state = get()
+    const chosen = state.doc.entities.filter((entity) => state.selectedIds.includes(entity.id))
+    if (chosen.length === 0) {
+      state.setStatusMessage('Select objects before cutting.')
+      return
+    }
+    set({ clipboard: structuredClone(chosen) })
+    state.deleteSelection()
+    set({ statusMessage: `Cut ${describeCount(chosen.length)}` })
+  },
+  pasteClipboard: () => {
+    const state = get()
+    const { clipboard } = state
+    if (clipboard.length === 0) {
+      state.setStatusMessage('Nothing on the clipboard.')
+      return
+    }
+
+    const pasted = structuredClone(clipboard).map((entity) => ({ ...entity, id: uid() }))
+    state.updateDocument((doc) => ({ ...doc, entities: [...doc.entities, ...pasted] }))
+    controller.select(pasted.map((entity) => entity.id))
+
+    // AutoCAD hands the pasted objects to the crosshair rather than dropping them somewhere you
+    // did not choose, so paste leaves MOVE running with its base point already set.
+    set({
+      selectedIds: controller.getSelection(),
+      activeTool: 'move',
+      draftPoints: [clipboardAnchor(pasted)],
+      modifyTargetId: null,
+      statusMessage: `Pasted ${describeCount(pasted.length)}. Specify insertion point:`,
+    })
   },
 }))
 
-/** Entities the user can currently act on: visible layers that are not locked. */
-export const editableEntities = (doc: DrawingDocument): CadEntity[] =>
-  doc.entities.filter((entity) => {
-    const layer = doc.layers.find((candidate) => candidate.id === entity.layerId)
-    return layer?.visible !== false && layer?.locked !== true
-  })
+const describeCount = (count: number): string => `${count} object${count === 1 ? '' : 's'}`
+
+/** Lower-left corner of the copied objects, used as the handle a paste is positioned by. */
+const clipboardAnchor = (entities: CadEntity[]): Vec2 => {
+  const points = entities.flatMap((entity) => getEntityAnchorPoints(entity))
+  if (points.length === 0) return { x: 0, y: 0 }
+  return {
+    x: Math.min(...points.map((point) => point.x)),
+    y: Math.min(...points.map((point) => point.y)),
+  }
+}
 
 type CadStoreState = ReturnType<typeof useCadStore.getState>
 
@@ -556,32 +733,20 @@ const runTransform = (state: CadStoreState, point: Vec2) => {
     return
   }
 
+  if (!isTransformTool(activeTool)) return
+
   const base = draftPoints[0]
   const selected = new Set(selectedIds)
 
   state.updateDocument((doc) => {
-    switch (activeTool) {
-      case 'move':
-        return { ...doc, entities: moveEntities(doc.entities, selectedIds, sub(point, base)) }
-      case 'copy': {
-        const copies = moveEntities(doc.entities, selectedIds, sub(point, base))
-          .filter((entity) => selected.has(entity.id))
-          .map((entity) => ({ ...entity, id: uid() }))
-        return { ...doc, entities: [...doc.entities, ...copies] }
-      }
-      case 'rotate': {
-        const angle = (Math.atan2(point.y - base.y, point.x - base.x) * 180) / Math.PI
-        return { ...doc, entities: rotateEntities(doc.entities, selectedIds, base, angle) }
-      }
-      case 'scale': {
-        // AutoCAD reads the distance from the base point as the factor itself.
-        const factor = distance(point, base)
-        if (!Number.isFinite(factor) || factor <= 0) return doc
-        return { ...doc, entities: scaleEntities(doc.entities, selectedIds, base, factor) }
-      }
-      default:
-        return doc
+    const transformed = transformedBy(activeTool, doc.entities, selectedIds, base, point)
+    if (activeTool === 'copy') {
+      const copies = transformed
+        .filter((entity) => selected.has(entity.id))
+        .map((entity) => ({ ...entity, id: uid() }))
+      return { ...doc, entities: [...doc.entities, ...copies] }
     }
+    return { ...doc, entities: transformed }
   })
 
   const finished = activeTool.toUpperCase()
@@ -640,6 +805,18 @@ const applyTransformValue = (state: CadStoreState, value: number): boolean => {
  * far in the direction the crosshair is pointing".
  */
 const applyTypedNumber = (state: CadStoreState, value: number): boolean => {
+  // OFFSET asks for its distance before anything else, so a bare number answers that prompt.
+  if (state.activeTool === 'offset' && state.offsetPending) {
+    if (value <= 0) {
+      state.log('error', 'The offset distance must be greater than zero.')
+      return true
+    }
+    useCadStore.setState({ offsetDistance: value, offsetPending: false, offsetThrough: false, draftPoints: [] })
+    state.log('result', `Offset distance ${value}`)
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return true
+  }
+
   if (applyTransformValue(state, value)) return true
 
   const base = state.draftPoints.at(-1)
@@ -696,6 +873,18 @@ const runCommandDef = (state: CadStoreState, command: CommandDef) => {
       state.redo()
       state.log('result', 'Redone')
       return
+    case 'COPYCLIP':
+      state.copySelection()
+      state.log('result', useCadStore.getState().statusMessage)
+      return
+    case 'CUTCLIP':
+      state.cutSelection()
+      state.log('result', useCadStore.getState().statusMessage)
+      return
+    case 'PASTECLIP':
+      state.pasteClipboard()
+      state.log('result', useCadStore.getState().statusMessage)
+      return
     case 'OSNAP':
       state.toggleOsnap()
       state.log('result', `Object snap ${useCadStore.getState().osnapEnabled ? 'on' : 'off'}`)
@@ -707,6 +896,10 @@ const runCommandDef = (state: CadStoreState, command: CommandDef) => {
     case 'POLAR':
       state.togglePolar()
       state.log('result', `Polar tracking ${useCadStore.getState().polarEnabled ? 'on' : 'off'}`)
+      return
+    case 'LWDISPLAY':
+      state.toggleLwDisplay()
+      state.log('result', `Lineweight display ${useCadStore.getState().lwDisplay ? 'on' : 'off'}`)
       return
     case 'GROUP': {
       const ids = state.selectedIds
@@ -966,9 +1159,7 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
 
   if (activeTool === 'hatch') {
     const candidates = state.doc.entities.filter(
-      (entity) =>
-        entity.type !== 'hatch' &&
-        state.doc.layers.find((layer) => layer.id === entity.layerId)?.visible !== false,
+      (entity) => entity.type !== 'hatch' && isLayerVisible(layerOf(state.doc, entity)),
     )
     // The arrangement finds regions bounded by several crossing objects; the whole-entity search
     // is a fallback for shapes it cannot resolve.

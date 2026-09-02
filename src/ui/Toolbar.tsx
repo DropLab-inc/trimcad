@@ -1,55 +1,107 @@
 import { useCadStore } from '../core/store'
+import { shortestAlias, resolveCommand } from '../core/commandRegistry'
+import { Icon, type IconName } from './Icon'
 import type { DimensionType, HatchPattern, ToolMode } from '../core/types'
+
+type ToolItem = { tool: ToolMode; label: string; icon: IconName; command: string; hint?: string }
 
 type ToolGroup = {
   title: string
-  items: Array<{ tool: ToolMode; label: string }>
+  items: ToolItem[]
 }
 
 const groups: ToolGroup[] = [
   {
     title: 'Draw',
     items: [
-      { tool: 'line', label: 'Line' },
-      { tool: 'polyline', label: 'PLine' },
-      { tool: 'rect', label: 'Rect' },
-      { tool: 'circle', label: 'Circle' },
-      { tool: 'arc', label: 'Arc' },
-      { tool: 'ellipse', label: 'Ellipse' },
-      { tool: 'polygon', label: 'Polygon' },
-      { tool: 'spline', label: 'Spline' },
+      { tool: 'line', label: 'Line', icon: 'line', command: 'LINE' },
+      { tool: 'polyline', label: 'Polyline', icon: 'polyline', command: 'PLINE' },
+      { tool: 'rect', label: 'Rectangle', icon: 'rect', command: 'RECTANG' },
+      { tool: 'circle', label: 'Circle', icon: 'circle', command: 'CIRCLE' },
+      { tool: 'arc', label: 'Arc', icon: 'arc', command: 'ARC' },
+      { tool: 'ellipse', label: 'Ellipse', icon: 'ellipse', command: 'ELLIPSE' },
+      { tool: 'polygon', label: 'Polygon', icon: 'polygon', command: 'POLYGON' },
+      { tool: 'spline', label: 'Spline', icon: 'spline', command: 'SPLINE' },
     ],
   },
 ]
 
-const dimensionTypes: Array<{ value: DimensionType; label: string }> = [
-  { value: 'linear', label: 'Linear' },
-  { value: 'aligned', label: 'Aligned' },
-  { value: 'radial', label: 'Radius' },
-  { value: 'diameter', label: 'Diameter' },
-  { value: 'angular', label: 'Angular' },
+const dimensionTypes: Array<{ value: DimensionType; label: string; icon: IconName; command: string }> = [
+  { value: 'linear', label: 'Linear', icon: 'dim-linear', command: 'DIMLINEAR' },
+  { value: 'aligned', label: 'Aligned', icon: 'dim-aligned', command: 'DIMALIGNED' },
+  { value: 'radial', label: 'Radius', icon: 'dim-radius', command: 'DIMRADIUS' },
+  { value: 'diameter', label: 'Diameter', icon: 'dim-diameter', command: 'DIMDIAMETER' },
+  { value: 'angular', label: 'Angular', icon: 'dim-angular', command: 'DIMANGULAR' },
 ]
 
 const hatchPatterns: HatchPattern[] = ['ansi31', 'ansi37', 'dots', 'solid']
 
-const modifyTools: Array<{ tool: ToolMode; label: string; hint: string }> = [
-  { tool: 'move', label: 'Move', hint: 'Select objects, pick a base point, then pick where it goes' },
-  { tool: 'copy', label: 'Copy', hint: 'Select objects, pick a base point, then pick where the copy goes' },
-  { tool: 'rotate', label: 'Rotate', hint: 'Select objects, pick a base point, then type or pick an angle' },
-  { tool: 'scale', label: 'Scale', hint: 'Select objects, pick a base point, then type a factor' },
-  { tool: 'offset', label: 'Offset', hint: 'Pick an object, then pick the side to offset toward' },
+const modifyTools: ToolItem[] = [
+  {
+    tool: 'move',
+    label: 'Move',
+    icon: 'move',
+    command: 'MOVE',
+    hint: 'Select objects, pick a base point, then pick where it goes',
+  },
+  {
+    tool: 'copy',
+    label: 'Copy',
+    icon: 'copy',
+    command: 'COPY',
+    hint: 'Select objects, pick a base point, then pick where the copy goes',
+  },
+  {
+    tool: 'rotate',
+    label: 'Rotate',
+    icon: 'rotate',
+    command: 'ROTATE',
+    hint: 'Select objects, pick a base point, then type or pick an angle',
+  },
+  {
+    tool: 'scale',
+    label: 'Scale',
+    icon: 'scale',
+    command: 'SCALE',
+    hint: 'Select objects, pick a base point, then type a factor',
+  },
+  {
+    tool: 'offset',
+    label: 'Offset',
+    icon: 'offset',
+    command: 'OFFSET',
+    hint: 'Pick an object, then pick the side to offset toward',
+  },
   {
     tool: 'trim',
     label: 'Trim',
+    icon: 'trim',
+    command: 'TRIM',
     hint: 'Click the part to cut away, drag a fence across many, or hold Shift to extend',
   },
   {
     tool: 'extend',
     label: 'Extend',
+    icon: 'extend',
+    command: 'EXTEND',
     hint: 'Click the end to lengthen, drag a fence across many, or hold Shift to trim',
   },
-  { tool: 'mirror', label: 'Mirror', hint: 'Select objects first, then pick the mirror line' },
+  {
+    tool: 'mirror',
+    label: 'Mirror',
+    icon: 'mirror',
+    command: 'MIRROR',
+    hint: 'Select objects first, then pick the mirror line',
+  },
 ]
+
+/** Tooltip in AutoCAD's shape: what the button does, then how to type it. */
+const tooltip = (item: { label: string; command: string; hint?: string }): string => {
+  const command = resolveCommand(item.command)
+  const alias = command ? shortestAlias(command) : item.command
+  const detail = item.hint ? `\n${item.hint}` : ''
+  return `${item.label} (${item.command}${alias && alias !== item.command ? `, ${alias}` : ''})${detail}`
+}
 
 export function Toolbar() {
   const activeTool = useCadStore((state) => state.activeTool)
@@ -77,9 +129,10 @@ export function Toolbar() {
         type="button"
         className={`ribbon-btn ribbon-select ${activeTool === 'select' ? 'active' : ''}`}
         onClick={() => setTool('select')}
-        title="Select"
+        title="Select objects (Esc returns here from any command)"
       >
-        Select
+        <Icon name="select" />
+        <span>Select</span>
       </button>
 
       {groups.map((group) => (
@@ -92,9 +145,10 @@ export function Toolbar() {
                 type="button"
                 className={`ribbon-btn ${item.tool === activeTool ? 'active' : ''}`}
                 onClick={() => setTool(item.tool)}
-                title={item.tool.toUpperCase()}
+                title={tooltip(item)}
               >
-                {item.label}
+                <Icon name={item.icon} />
+                <span>{item.label}</span>
               </button>
             ))}
             <label className="ribbon-field" title="Number of polygon sides">
@@ -120,9 +174,10 @@ export function Toolbar() {
               type="button"
               className={`ribbon-btn ${item.tool === activeTool ? 'active' : ''}`}
               onClick={() => setTool(item.tool)}
-              title={item.hint}
+              title={tooltip(item)}
             >
-              {item.label}
+              <Icon name={item.icon} />
+              <span>{item.label}</span>
             </button>
           ))}
           <label className="ribbon-field" title="Offset distance">
@@ -163,8 +218,10 @@ export function Toolbar() {
               type="button"
               className={`ribbon-btn ${activeTool === 'dimension' && dimensionType === item.value ? 'active' : ''}`}
               onClick={() => setDimensionType(item.value)}
+              title={tooltip(item)}
             >
-              {item.label}
+              <Icon name={item.icon} />
+              <span>{item.label}</span>
             </button>
           ))}
         </div>
@@ -177,15 +234,19 @@ export function Toolbar() {
             type="button"
             className={`ribbon-btn ${activeTool === 'text' ? 'active' : ''}`}
             onClick={() => setTool('text')}
+            title={tooltip({ label: 'Text', command: 'TEXT' })}
           >
-            Text
+            <Icon name="text" />
+            <span>Text</span>
           </button>
           <button
             type="button"
             className={`ribbon-btn ${activeTool === 'hatch' ? 'active' : ''}`}
             onClick={() => setTool('hatch')}
+            title={tooltip({ label: 'Hatch', command: 'HATCH' })}
           >
-            Hatch
+            <Icon name="hatch" />
+            <span>Hatch</span>
           </button>
           <label className="ribbon-field" title="Hatch pattern">
             Pattern
@@ -201,8 +262,10 @@ export function Toolbar() {
             type="button"
             className={`ribbon-btn ${activeTool === 'insert' ? 'active' : ''}`}
             onClick={() => setTool('insert')}
+            title={tooltip({ label: 'Insert block', command: 'INSERT' })}
           >
-            Insert
+            <Icon name="insert" />
+            <span>Insert</span>
           </button>
         </div>
       </section>

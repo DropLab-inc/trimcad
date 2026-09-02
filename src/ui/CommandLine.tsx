@@ -1,29 +1,39 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { matchCommands, type CommandDef } from '../core/commandRegistry'
-import { exportDocumentToDxf, importDocumentFromDxf } from '../core/dxf'
-import { exportPdf } from '../core/print'
 import { currentPrompt, useCadStore } from '../core/store'
 import { formatPrompt } from '../core/prompts'
+import { useFileActions } from './useFileActions'
 
 /** The canvas focuses the input by id so any keystroke can start a command. */
 export const COMMAND_INPUT_ID = 'cad-command-input'
 
-/** Commands that need the DOM directly, so they stay with the component that owns the file input. */
-const FILE_COMMANDS = new Set(['DXFIN', 'DXFOUT', 'PLOT', 'PLOT1', 'PRINT'])
-
 export function CommandLine() {
-  const [fileInput, setFileInput] = useState<HTMLInputElement | null>(null)
   const [highlight, setHighlight] = useState(0)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const files = useFileActions()
 
-  const doc = useCadStore((state) => state.doc)
   const value = useCadStore((state) => state.commandInput)
   const setValue = useCadStore((state) => state.setCommandInput)
   const history = useCadStore((state) => state.history)
   const executeCommand = useCadStore((state) => state.executeCommand)
-  const updateDocument = useCadStore((state) => state.updateDocument)
   const log = useCadStore((state) => state.log)
   const promptText = useCadStore((state) => formatPrompt(currentPrompt(state)))
+
+  /** Commands that reach for the file system, so they run through the shared file actions. */
+  const fileCommands: Record<string, () => void> = {
+    NEW: files.newDrawing,
+    OPEN: () => void files.openDrawing(),
+    SAVE: files.saveDrawing,
+    SAVEAS: files.saveDrawingAs,
+    // Drawings are DXF now, so importing and exporting are just opening and saving.
+    DXFIN: () => void files.openDrawing(),
+    IMPORT: () => void files.openDrawing(),
+    DXFOUT: files.saveDrawing,
+    EXPORT: files.saveDrawing,
+    PLOT: () => files.print('fit'),
+    PRINT: () => files.print('fit'),
+    PLOT1: () => files.print('1:1'),
+  }
 
   const suggestions = useMemo(() => matchCommands(value).slice(0, 8), [value])
 
@@ -38,31 +48,13 @@ export function CommandLine() {
     setValue('')
     setHighlight(0)
 
-    if (FILE_COMMANDS.has(command)) {
+    const fileCommand = fileCommands[command]
+    if (fileCommand) {
       log('input', command)
-      runFileCommand(command)
+      fileCommand()
       return
     }
     executeCommand(line)
-  }
-
-  const runFileCommand = (command: string) => {
-    if (command === 'DXFIN') {
-      fileInput?.click()
-      return
-    }
-    if (command === 'DXFOUT') {
-      const blob = new Blob([exportDocumentToDxf(doc)], { type: 'application/dxf' })
-      const link = document.createElement('a')
-      link.href = URL.createObjectURL(blob)
-      link.download = 'drawing.dxf'
-      link.click()
-      URL.revokeObjectURL(link.href)
-      log('result', 'Exported drawing.dxf')
-      return
-    }
-    exportPdf(doc, command === 'PLOT1' ? '1:1' : 'fit')
-    log('result', `Plotted at ${command === 'PLOT1' ? '1:1' : 'fit to page'}`)
   }
 
   /** Earlier inputs, newest first, for arrow-key recall. */
@@ -163,19 +155,6 @@ export function CommandLine() {
         </div>
       </div>
 
-      <input
-        ref={setFileInput}
-        style={{ display: 'none' }}
-        type="file"
-        accept=".dxf"
-        onChange={async (event) => {
-          const file = event.target.files?.[0]
-          if (!file) return
-          const content = await file.text()
-          updateDocument((draft) => importDocumentFromDxf(content, draft))
-          log('result', `Imported ${file.name}`)
-        }}
-      />
     </section>
   )
 }

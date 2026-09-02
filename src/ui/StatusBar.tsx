@@ -17,9 +17,11 @@ export function StatusBar() {
   const osnapEnabled = useCadStore((state) => state.osnapEnabled)
   const polarEnabled = useCadStore((state) => state.polarEnabled)
   const orthoEnabled = useCadStore((state) => state.orthoEnabled)
+  const lwDisplay = useCadStore((state) => state.lwDisplay)
   const toggleOsnap = useCadStore((state) => state.toggleOsnap)
   const togglePolar = useCadStore((state) => state.togglePolar)
   const toggleOrtho = useCadStore((state) => state.toggleOrtho)
+  const toggleLwDisplay = useCadStore((state) => state.toggleLwDisplay)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -65,6 +67,14 @@ export function StatusBar() {
         title="Object snap (F3)"
       >
         OSNAP
+      </button>
+      <button
+        type="button"
+        className={`statusbar-toggle ${lwDisplay ? 'on' : ''}`}
+        onClick={toggleLwDisplay}
+        title="Show each layer's plotted lineweight"
+      >
+        LWT
       </button>
 
       <span className="statusbar-facts">

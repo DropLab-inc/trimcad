@@ -61,17 +61,25 @@ export const COMMANDS: CommandDef[] = [
   { name: 'ALL', aliases: [], category: 'Edit', summary: 'Select every unlocked object' },
   { name: 'UNDO', aliases: ['U'], category: 'Edit', summary: 'Undo the last change' },
   { name: 'REDO', aliases: ['RE'], category: 'Edit', summary: 'Redo the last undone change' },
+  { name: 'COPYCLIP', aliases: ['CTRL+C'], category: 'Edit', summary: 'Copy the selection to the clipboard' },
+  { name: 'CUTCLIP', aliases: ['CTRL+X'], category: 'Edit', summary: 'Cut the selection to the clipboard' },
+  { name: 'PASTECLIP', aliases: ['CTRL+V'], category: 'Edit', summary: 'Paste the clipboard at the crosshair' },
 
   // View
   { name: 'ZOOM', aliases: ['Z'], category: 'View', summary: 'Zoom to the drawing extents' },
   { name: 'OSNAP', aliases: ['OS'], category: 'View', summary: 'Toggle object snap' },
   { name: 'ORTHO', aliases: ['OR'], category: 'View', summary: 'Toggle orthogonal tracking' },
   { name: 'POLAR', aliases: ['PO'], category: 'View', summary: 'Toggle polar tracking' },
+  { name: 'LWDISPLAY', aliases: ['LWT'], category: 'View', summary: 'Show or hide plotted lineweights' },
   { name: 'HELP', aliases: ['?'], category: 'View', summary: 'List every command' },
 
   // File
-  { name: 'DXFOUT', aliases: [], category: 'File', summary: 'Export the drawing as DXF' },
-  { name: 'DXFIN', aliases: [], category: 'File', summary: 'Import a DXF file' },
+  { name: 'NEW', aliases: [], category: 'File', summary: 'Start an empty drawing' },
+  { name: 'OPEN', aliases: [], category: 'File', summary: 'Open a saved drawing' },
+  { name: 'SAVE', aliases: [], category: 'File', summary: 'Save the drawing' },
+  { name: 'SAVEAS', aliases: [], category: 'File', summary: 'Save the drawing under a new name' },
+  { name: 'DXFOUT', aliases: ['EXPORT'], category: 'File', summary: 'Export the drawing as DXF' },
+  { name: 'DXFIN', aliases: ['IMPORT'], category: 'File', summary: 'Import a DXF file' },
   { name: 'PLOT', aliases: ['PRINT'], category: 'File', summary: 'Print to PDF, scaled to fit' },
   { name: 'PLOT1', aliases: [], category: 'File', summary: 'Print to PDF at 1:1' },
 ]

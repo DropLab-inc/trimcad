@@ -17,6 +17,8 @@ import {
   resolveDynamicPoint,
   type DynamicField,
 } from '../core/dynamicInput'
+import { isTransformTool, transformedBy } from '../core/commands'
+import { editableEntities, lineweightPixels, visibleEntities as visibleOnLayers } from '../core/layers'
 import { getEntityAnchorPoints, isPointNearEntity, mirrorEntity } from '../core/geometry'
 import { offsetEntity } from '../core/modify'
 import type { DimensionEntity, SnapMode } from '../core/types'
@@ -124,6 +126,7 @@ export function CanvasViewport() {
   const snapModes = useCadStore((state) => state.snapModes)
   const osnapEnabled = useCadStore((state) => state.osnapEnabled)
   const polarEnabled = useCadStore((state) => state.polarEnabled)
+  const lwDisplay = useCadStore((state) => state.lwDisplay)
   const draftPoints = useCadStore((state) => state.draftPoints)
   const polygonSides = useCadStore((state) => state.polygonSides)
   const dimensionType = useCadStore((state) => state.dimensionType)
@@ -165,10 +168,10 @@ export function CanvasViewport() {
   const swapped = editingEdges && orthoHeld
   const promptText = useCadStore((state) => formatPrompt(currentPrompt(state, swapped)))
 
-  const visibleEntities = useMemo(
-    () => doc.entities.filter((entity) => doc.layers.find((layer) => layer.id === entity.layerId)?.visible !== false),
-    [doc],
-  )
+  const visibleEntities = useMemo(() => visibleOnLayers(doc), [doc])
+
+  /** What a click may actually pick: locked layers stay on screen but refuse selection. */
+  const pickableEntities = useMemo(() => editableEntities(doc), [doc])
 
   useEffect(() => {
     const frame = frameRef.current
@@ -210,23 +213,8 @@ export function CanvasViewport() {
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
 
-      if (event.ctrlKey || event.metaKey) {
-        const key = event.key.toLowerCase()
-        if (key === 'a') {
-          event.preventDefault()
-          selectAll()
-        }
-        if (key === 'z') {
-          event.preventDefault()
-          if (event.shiftKey) redo()
-          else undo()
-        }
-        if (key === 'y') {
-          event.preventDefault()
-          redo()
-        }
-        return
-      }
+      // Ctrl and Cmd chords are application-wide accelerators, handled by useGlobalShortcuts.
+      if (event.ctrlKey || event.metaKey) return
 
       const clearTyped = () => setTypedState({ step: stepKey, values: NO_VALUES, field: 0 })
       const writeTyped = (values: Record<string, string>, field: number) =>
@@ -408,7 +396,7 @@ export function CanvasViewport() {
 
     // Rollover highlight: show which object a click would pick before committing to it.
     if (activeTool === 'select' || pickingEdges) {
-      const hit = [...visibleEntities].reverse().find((entity) => isPointNearEntity(point, entity, 8 / camera.zoom))
+      const hit = [...pickableEntities].reverse().find((entity) => isPointNearEntity(point, entity, 8 / camera.zoom))
       setHoverId(hit?.id ?? null)
     } else if (hoverId) {
       setHoverId(null)
@@ -442,14 +430,14 @@ export function CanvasViewport() {
 
       if (dragged < 4) {
         const { point } = resolvePoint(boxStart)
-        const hit = [...visibleEntities].reverse().find((entity) => isPointNearEntity(point, entity, 8 / camera.zoom))
+        const hit = [...pickableEntities].reverse().find((entity) => isPointNearEntity(point, entity, 8 / camera.zoom))
         applySelection(hit ? [hit.id] : [], hit ? modifier : 'replace')
         setStatusMessage(hit ? `Selected ${hit.type}` : 'Nothing selected')
       } else {
         const start = screenToWorld(boxStart, camera)
         const end = screenToWorld(boxEnd, camera)
         const mode = selectionModeFor(start, end)
-        const ids = selectEntitiesInRect(visibleEntities, rectFromPoints(start, end), mode)
+        const ids = selectEntitiesInRect(pickableEntities, rectFromPoints(start, end), mode)
         applySelection(ids, modifier)
         setStatusMessage(`${mode === 'window' ? 'Window' : 'Crossing'} selected ${ids.length} object(s)`)
       }
@@ -580,6 +568,28 @@ export function CanvasViewport() {
       const target = doc.entities.find((entity) => entity.id === modifyTargetId)
       const result = target ? offsetEntity(target, offsetDistance, cursorWorld) : null
       return result ? renderEntity(result, ghost) : null
+    }
+
+    // MOVE, COPY, ROTATE and SCALE drag a ghost of the selection so you can see where it lands.
+    if (isTransformTool(activeTool) && draftPoints.length === 1 && selectedIds.length > 0) {
+      const base = draftPoints[0]
+      const chosen = doc.entities.filter((entity) => selectedIds.includes(entity.id))
+      const moved = transformedBy(activeTool, chosen, selectedIds, base, cursorWorld)
+      return (
+        <g>
+          <line
+            x1={base.x}
+            y1={base.y}
+            x2={cursorWorld.x}
+            y2={cursorWorld.y}
+            stroke="#f59e0b"
+            strokeWidth={1}
+            strokeDasharray="4 4"
+            vectorEffect="non-scaling-stroke"
+          />
+          {moved.map((entity) => renderEntity(entity, ghost))}
+        </g>
+      )
     }
 
     if (activeTool === 'mirror' && draftPoints.length === 1 && selectedIds.length > 0) {
@@ -794,11 +804,12 @@ export function CanvasViewport() {
             const linetypeId = entity.linetypeId ?? layer?.linetypeId
             const linetype = doc.linetypes.find((candidate) => candidate.id === linetypeId)
             const selected = selectedIds.includes(entity.id)
+            const hovered = !selected && entity.id === hoverId
             return renderEntity(entity, {
               selected,
               color: entity.color ?? layer?.color ?? '#7cc6ff',
               dash: linetype?.pattern.length ? linetype.pattern.join(' ') : undefined,
-              width: !selected && entity.id === hoverId ? 2.5 : undefined,
+              width: hovered ? 2.5 : lwDisplay ? lineweightPixels(layer?.lineweight) : undefined,
               dimStyle: doc.dimStyle,
             })
           })}

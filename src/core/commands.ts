@@ -172,6 +172,39 @@ export const scaleEntities = (entities: CadEntity[], ids: string[], origin: Vec2
   })
 }
 
+export type TransformTool = 'move' | 'copy' | 'rotate' | 'scale'
+
+export const isTransformTool = (tool: string): tool is TransformTool =>
+  tool === 'move' || tool === 'copy' || tool === 'rotate' || tool === 'scale'
+
+/**
+ * Reads a base point and a second point the way the transform commands do. Both the ghost that
+ * follows the crosshair and the geometry finally committed go through here, so what you drag is
+ * exactly what you get.
+ */
+export const transformedBy = (
+  tool: TransformTool,
+  entities: CadEntity[],
+  ids: string[],
+  base: Vec2,
+  point: Vec2,
+): CadEntity[] => {
+  switch (tool) {
+    case 'move':
+    case 'copy':
+      return moveEntities(entities, ids, sub(point, base))
+    case 'rotate': {
+      const angle = (Math.atan2(point.y - base.y, point.x - base.x) * 180) / Math.PI
+      return rotateEntities(entities, ids, base, angle)
+    }
+    case 'scale': {
+      // AutoCAD reads the distance from the base point as the factor itself.
+      const factor = Math.hypot(point.x - base.x, point.y - base.y)
+      return Number.isFinite(factor) && factor > 0 ? scaleEntities(entities, ids, base, factor) : entities
+    }
+  }
+}
+
 export const mirrorEntities = (entities: CadEntity[], ids: string[], a: Vec2, b: Vec2): CadEntity[] => {
   const idSet = new Set(ids)
   const dir = sub(b, a)

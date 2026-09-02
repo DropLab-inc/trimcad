@@ -1,4 +1,5 @@
 import { uid } from './geometry'
+import { makeLayer } from './layers'
 import type { CadEntity, DimStyle, DrawingDocument, Layer, Linetype } from './types'
 
 type Snapshot = {
@@ -15,15 +16,7 @@ const baseLinetypes: Linetype[] = [
   { id: 'lt-center', name: 'Center', pattern: [12, 3, 2, 3] },
 ]
 
-const defaultLayer: Layer = {
-  id: 'layer-0',
-  name: '0',
-  color: '#7cc6ff',
-  linetypeId: baseLinetypes[0].id,
-  lineweight: 1,
-  visible: true,
-  locked: false,
-}
+const defaultLayer: Layer = makeLayer('layer-0', '0', baseLinetypes[0].id)
 
 const defaultDimStyle: DimStyle = {
   precision: 2,
@@ -140,15 +133,7 @@ export class DocumentController {
 
   addLayer(name: string, color = '#7cc6ff') {
     this.mutate((draft) => {
-      draft.layers.push({
-        id: uid(),
-        name,
-        color,
-        linetypeId: draft.linetypes[0].id,
-        lineweight: 1,
-        visible: true,
-        locked: false,
-      })
+      draft.layers.push(makeLayer(uid(), name, draft.linetypes[0].id, color))
     })
   }
 

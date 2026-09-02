@@ -13,9 +13,16 @@ export type Layer = {
   name: string
   color: string
   linetypeId: string
+  /** Plotted width in millimetres. Like AutoCAD, it is not drawn on screen by default. */
   lineweight: number
+  /** AutoCAD's On/Off: the layer is hidden but still regenerates and can be snapped to. */
   visible: boolean
+  /** Frozen layers are hidden and take no part in selection, snapping or editing. */
+  frozen: boolean
+  /** Locked layers stay visible and snappable but cannot be selected or changed. */
   locked: boolean
+  /** Whether the layer appears on a plot. */
+  plottable: boolean
 }
 
 export type DimStyle = {

@@ -29,17 +29,164 @@ body,
   background: linear-gradient(#111c32, #0b1426);
 }
 
+.topbar {
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .topbar h1 {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   margin: 0;
   font-weight: 600;
-  min-width: 110px;
+  letter-spacing: 0.02em;
+  color: #dbeafe;
+  padding: 0 0.5rem 0 0.15rem;
+}
+
+/* Icons take the button's own colour, with the acted-on part picked out in amber. */
+.icon {
+  flex: none;
+  pointer-events: none;
+}
+
+.icon .accent {
+  stroke: #f0a92b;
+}
+
+.icon .accent[fill='currentColor'] {
+  fill: #f0a92b;
+  stroke: none;
+}
+
+button:disabled .icon .accent {
+  stroke: currentColor;
+  fill: currentColor;
+}
+
+/* ---- File menu ---- */
+
+.file-menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.file-menu-button {
+  border: 1px solid #24344d;
+  background: #16233c;
+  color: #dbeafe;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.28rem 0.7rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+}
+
+.file-menu-button:hover,
+.file-menu-button.active {
+  background: #24354f;
+  border-color: #3f5a7f;
+}
+
+.file-menu-popup {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  z-index: 40;
+  min-width: 232px;
+  padding: 0.25rem;
+  border: 1px solid #2c4160;
+  border-radius: 0.35rem;
+  background: #101c30;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+}
+
+.file-menu-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.file-menu-group hr {
+  border: none;
+  border-top: 1px solid #24344d;
+  margin: 0.25rem 0.35rem;
+}
+
+.file-menu-popup button {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: none;
+  border-radius: 0.25rem;
+  background: none;
+  color: #dbeafe;
+  font-size: 0.74rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-menu-popup button:hover {
+  background: #24354f;
+}
+
+.file-menu-label {
+  flex: 1;
+}
+
+.file-menu-shortcut {
+  color: #7f93b1;
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.file-name {
+  color: #7f93b1;
+  font-size: 0.7rem;
+}
+
+/* ---- Quick access strip ---- */
+
+.quick-access {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin-left: auto;
+  padding: 0.1rem 0.2rem;
+  border: 1px solid #24344d;
+  border-radius: 0.3rem;
+  background: #0b1220;
+}
+
+.quick-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #24344d;
-  border-radius: 0.35rem;
-  background: #0b1220;
+  width: 28px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 0.2rem;
+  background: none;
+  color: #dbeafe;
+  cursor: pointer;
+}
+
+.quick-btn:hover:not(:disabled) {
+  background: #24354f;
+  border-color: #3f5a7f;
+}
+
+.quick-btn:disabled {
+  color: #46586f;
+  cursor: default;
 }
 
 .toolbar-ribbon {
@@ -68,20 +215,27 @@ body,
 .toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: stretch;
   gap: 0.25rem;
-  max-width: 420px;
+  max-width: 500px;
 }
 
 .ribbon-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.12rem;
   border: 1px solid #334155;
   background: #1a2842;
   color: #dbeafe;
-  padding: 0.22rem 0.42rem;
+  padding: 0.25rem 0.3rem;
   border-radius: 0.2rem;
   cursor: pointer;
-  font-size: 0.66rem;
-  min-width: 58px;
-  min-height: 24px;
+  font-size: 0.62rem;
+  line-height: 1.1;
+  width: 58px;
+  min-height: 46px;
   text-align: center;
 }
 
@@ -95,17 +249,28 @@ body,
   background: #5f430f;
 }
 
+/* The active button keeps its amber accents legible against the amber fill. */
+.ribbon-btn.active .icon .accent {
+  stroke: #fde68a;
+}
+
+.ribbon-btn.active .icon .accent[fill='currentColor'] {
+  fill: #fde68a;
+}
+
 .ribbon-select {
   align-self: center;
-  min-width: 72px;
+  width: 68px;
   min-height: 54px;
+  justify-content: center;
   font-weight: 600;
   border-color: #3f5a7f;
 }
 
+/* The column widths are set inline so the divider can drag them. */
 .workspace {
   display: grid;
-  grid-template-columns: 1fr 310px;
+  grid-template-columns: minmax(0, 1fr) 6px 320px;
   min-height: 0;
 }
 
@@ -199,6 +364,56 @@ body,
   overflow-y: auto;
 }
 
+.sidebar-resizer {
+  cursor: col-resize;
+  background: #23324a;
+}
+
+/* The layer list is scrollable and its height is dragged by the bar underneath. */
+.layer-list {
+  overflow-y: auto;
+}
+
+.layer-list-resizer {
+  height: 7px;
+  margin: 0.15rem 0 0.3rem;
+  border-radius: 3px;
+  background: #1b2942;
+  cursor: row-resize;
+}
+
+.layer-list-resizer::after {
+  display: block;
+  width: 28px;
+  height: 1px;
+  margin: 3px auto;
+  background: #4a5f80;
+  content: '';
+}
+
+.layer-list-resizer:hover {
+  background: #263a5c;
+}
+
+body.resizing-panel {
+  cursor: row-resize;
+  user-select: none;
+}
+
+.sidebar-resizer:hover {
+  background: #3f5a7f;
+}
+
+/* Keep the drag going even when the pointer runs over the canvas or a text field. */
+body.resizing-sidebar {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.resizing-sidebar .sidebar-resizer {
+  background: #f0a92b;
+}
+
 .panel {
   border: 1px solid #2b3a53;
   border-radius: 0.5rem;
@@ -234,30 +449,236 @@ body,
   border-radius: 0.25rem;
 }
 
+/* ---- Layer properties manager ---- */
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.panel-head h3 {
+  margin: 0;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 0.15rem;
+}
+
+.panel-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #334155;
+  border-radius: 0.2rem;
+  background: #1a2842;
+  color: #dbeafe;
+  cursor: pointer;
+}
+
+.panel-actions button:hover:not(:disabled) {
+  background: #243654;
+}
+
+.panel-actions button:disabled {
+  color: #46586f;
+  cursor: default;
+}
+
+.layer-head,
+.layer-row {
+  display: grid;
+  grid-template-columns: 12px 16px minmax(0, 1fr) repeat(4, 20px);
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.layer-head {
+  padding: 0 0.2rem 0.25rem;
+  color: #7f93b1;
+  font-size: 0.58rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border-bottom: 1px solid #24344d;
+}
+
+.layer-head span:nth-child(3) {
+  padding-left: 0.2rem;
+}
+
+.layer-head .layer-head-icon {
+  display: flex;
+  justify-content: center;
+  color: #6d819e;
+}
+
 .layer-list {
   list-style: none;
   padding: 0;
-  margin: 0;
+  margin: 0.2rem 0 0;
   display: grid;
-  gap: 0.4rem;
+  gap: 0.05rem;
+  max-height: 210px;
+  overflow-y: auto;
 }
 
-.layer-list li {
-  border: 1px solid #334155;
-  padding: 0.3rem;
-  border-radius: 0.3rem;
+.layer-row {
+  position: relative;
+  padding: 0.1rem 0.2rem;
+  border: 1px solid transparent;
+  border-radius: 0.25rem;
 }
 
-.swatch {
-  width: 0.75rem;
-  height: 0.75rem;
-  display: inline-block;
+.layer-row:hover {
+  background: #1a2b48;
+}
+
+.layer-row.current {
+  background: #1d2f4d;
+  border-color: #3f5a7f;
+}
+
+/* A filled tick marks the layer new objects are drawn on. */
+.layer-current {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.layer-current-mark {
+  width: 7px;
+  height: 7px;
+  border: 1px solid #4b6382;
+  border-radius: 50%;
+}
+
+.layer-row.current .layer-current-mark {
+  border-color: #f0a92b;
+  background: #f0a92b;
+}
+
+.layer-swatch {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid #47597a;
   border-radius: 2px;
-  margin-right: 0.35rem;
+  cursor: pointer;
 }
 
-.active-layer {
-  border-color: #f59e0b !important;
+.layer-name {
+  min-width: 0;
+  padding: 0.12rem 0.25rem;
+  border: 1px solid transparent;
+  border-radius: 0.2rem;
+  background: none;
+  color: #dbeafe;
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+}
+
+.layer-name:hover {
+  border-color: #334155;
+}
+
+.layer-name:focus {
+  outline: none;
+  border-color: #3f5a7f;
+  background: #0f172a;
+}
+
+.layer-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 0.2rem;
+  background: none;
+  color: #9fb3d1;
+  cursor: pointer;
+}
+
+.layer-toggle:hover {
+  background: #24354f;
+}
+
+.layer-toggle .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.layer-toggle.off {
+  color: #5e7292;
+}
+
+/* The colour palette drops below the row it belongs to. */
+.layer-colors {
+  position: absolute;
+  top: calc(100% - 2px);
+  left: 24px;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: repeat(5, 18px);
+  gap: 3px;
+  padding: 0.3rem;
+  border: 1px solid #2c4160;
+  border-radius: 0.3rem;
+  background: #101c30;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.55);
+}
+
+.layer-color {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #47597a;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.layer-colors input[type='color'] {
+  grid-column: span 5;
+  width: 100%;
+  height: 20px;
+  padding: 0;
+}
+
+/* Linetype and lineweight belong to whichever layer is current. */
+.layer-details {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.3rem 0.45rem;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #24344d;
+  font-size: 0.7rem;
+  color: #7f93b1;
+}
+
+.layer-details select {
+  width: 100%;
+  padding: 0.15rem 0.2rem;
+  border: 1px solid #334155;
+  border-radius: 0.2rem;
+  background: #0f172a;
+  color: #dbeafe;
+  font-size: 0.7rem;
 }
 
 .command-line {
