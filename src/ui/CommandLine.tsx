@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { matchCommands, type CommandDef } from '../core/commandRegistry'
 import { currentPrompt, useCadStore } from '../core/store'
+import { formatPrompt } from '../core/prompts'
 import { useFileActions } from './useFileActions'
 
 /** The canvas focuses the input by id so any keystroke can start a command. */
@@ -18,8 +19,13 @@ export function CommandLine() {
   const executeCommand = useCadStore((state) => state.executeCommand)
   const log = useCadStore((state) => state.log)
   const applyKeyword = useCadStore((state) => state.applyKeyword)
-  // Kept whole rather than pre-formatted so the options can be rendered as buttons you can click.
-  const prompt = useCadStore((state) => currentPrompt(state))
+  /**
+   * The prompt is needed whole, so its options can be rendered as buttons. Building it inside the
+   * selector would hand back a new object on every render and spin forever, so the subscription is
+   * to the formatted text, which is a plain string that only changes when the prompt really does.
+   */
+  const promptText = useCadStore((state) => formatPrompt(currentPrompt(state)))
+  const prompt = useMemo(() => currentPrompt(useCadStore.getState()), [promptText])
 
   /** Commands that reach for the file system, so they run through the shared file actions. */
   const fileCommands: Record<string, () => void> = {
