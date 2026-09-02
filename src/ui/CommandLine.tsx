@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { matchCommands, type CommandDef } from '../core/commandRegistry'
 import { currentPrompt, useCadStore } from '../core/store'
-import { formatPrompt } from '../core/prompts'
 import { useFileActions } from './useFileActions'
 
 /** The canvas focuses the input by id so any keystroke can start a command. */
@@ -9,6 +8,7 @@ export const COMMAND_INPUT_ID = 'cad-command-input'
 
 export function CommandLine() {
   const [highlight, setHighlight] = useState(0)
+  const [expanded, setExpanded] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const files = useFileActions()
 
@@ -17,7 +17,9 @@ export function CommandLine() {
   const history = useCadStore((state) => state.history)
   const executeCommand = useCadStore((state) => state.executeCommand)
   const log = useCadStore((state) => state.log)
-  const promptText = useCadStore((state) => formatPrompt(currentPrompt(state)))
+  const applyKeyword = useCadStore((state) => state.applyKeyword)
+  // Kept whole rather than pre-formatted so the options can be rendered as buttons you can click.
+  const prompt = useCadStore((state) => currentPrompt(state))
 
   /** Commands that reach for the file system, so they run through the shared file actions. */
   const fileCommands: Record<string, () => void> = {
@@ -41,7 +43,18 @@ export function CommandLine() {
   useEffect(() => {
     const node = scrollRef.current
     if (node) node.scrollTop = node.scrollHeight
-  }, [history])
+  }, [history, expanded])
+
+  // F2 opens the taller history, as it does in AutoCAD, wherever the focus happens to be.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'F2') return
+      event.preventDefault()
+      setExpanded((open) => !open)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   const runCommand = (line: string) => {
     const command = line.trim().toUpperCase()
@@ -106,17 +119,42 @@ export function CommandLine() {
   }
 
   return (
-    <section className="command-line">
+    <section className={expanded ? 'command-line expanded' : 'command-line'}>
       <div className="command-history" ref={scrollRef} role="log" aria-label="Command history">
-        {history.slice(-40).map((line) => (
+        {history.slice(expanded ? -400 : -40).map((line) => (
           <div key={line.id} className={`command-history-line ${line.kind}`}>
-            {line.kind === 'input' ? `> ${line.text}` : line.text}
+            {line.kind === 'input' ? `Command: ${line.text}` : line.text}
           </div>
         ))}
       </div>
 
       <div className="command-entry">
-        <span className="command-prompt">{promptText}</span>
+        <span className="command-prompt">
+          {prompt.text}
+          {prompt.keywords.length > 0 && (
+            <>
+              {' or ['}
+              {prompt.keywords.map((keyword, index) => (
+                <span key={keyword.label}>
+                  {index > 0 && '/'}
+                  <button
+                    type="button"
+                    className="prompt-option"
+                    title={`Type ${keyword.key} or click`}
+                    onClick={() => {
+                      log('input', keyword.label)
+                      applyKeyword(keyword)
+                    }}
+                  >
+                    {keyword.label}
+                  </button>
+                </span>
+              ))}
+              {']'}
+            </>
+          )}
+          {prompt.defaultValue ? ` <${prompt.defaultValue}>` : ''}:
+        </span>
         <div className="command-input-wrap">
           <input
             id={COMMAND_INPUT_ID}

@@ -36,6 +36,10 @@ export type PromptContext = {
   /** True once OFFSET has an object picked. */
   hasTarget: boolean
   offsetDistance: number
+  /** OFFSET is still waiting for the distance it opens by asking for. */
+  offsetPending: boolean
+  /** OFFSET's Through option is on, so the copy passes through a picked point. */
+  offsetThrough: boolean
   polygonSides: number
   /** TRIM and EXTEND are collecting their cutting or boundary edges. */
   pickingEdges: boolean
@@ -100,7 +104,8 @@ const trimExtendPrompts = (ctx: PromptContext): Prompt[] => {
 const promptsForTool = (ctx: PromptContext): Prompt[] => {
   switch (ctx.tool) {
     case 'select':
-      return [selection('Select objects')]
+      // Nothing is running, so this is AutoCAD's idle prompt rather than a request for a selection.
+      return [selection('Command')]
     case 'line':
       return [point('Specify first point'), point('Specify next point', CLOSE_UNDO)]
     case 'polyline':
@@ -129,9 +134,29 @@ const promptsForTool = (ctx: PromptContext): Prompt[] => {
     case 'dimension':
       return DIM_PROMPTS[ctx.dimensionType] ?? DIM_PROMPTS.linear
     case 'offset':
-      return ctx.hasTarget
-        ? [point('Specify point on side to offset')]
-        : [{ ...entity('Select object to offset'), defaultValue: String(ctx.offsetDistance) }]
+      // AutoCAD asks for the distance first, then loops between picking an object and a side.
+      if (ctx.offsetPending) {
+        return [
+          {
+            ...point('Specify offset distance', [
+              { key: 'T', label: 'Through' },
+              { key: 'E', label: 'Erase' },
+              { key: 'L', label: 'Layer' },
+            ]),
+            kind: 'number',
+            defaultValue: String(ctx.offsetDistance),
+          },
+        ]
+      }
+      if (ctx.hasTarget) {
+        return [point(ctx.offsetThrough ? 'Specify through point' : 'Specify point on side to offset')]
+      }
+      return [
+        {
+          ...entity('Select object to offset', [{ key: 'E', label: 'Exit' }, { key: 'U', label: 'Undo' }]),
+          defaultValue: 'Exit',
+        },
+      ]
     case 'trim':
     case 'extend':
       return trimExtendPrompts(ctx)

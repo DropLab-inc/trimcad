@@ -23,6 +23,7 @@ import {
   nextLayerName,
 } from './layers'
 import { findHatchBoundary, getEntityAnchorPoints, isPointNearEntity, mirrorEntity, uid } from './geometry'
+import { distanceToEntity } from './flatten'
 import { parseCoordinate } from './dynamicInput'
 import { extendResult, fenceHits, offsetEntity, trimResult } from './modify'
 import { COMMANDS, resolveCommand, type CommandDef } from './commandRegistry'
@@ -83,6 +84,8 @@ type CadState = {
   offsetThrough: boolean
   /** OFFSET's Erase option: remove the source object once the copy is made. */
   offsetErase: boolean
+  /** OFFSET's Layer option: put the copy on the current layer rather than the source's. */
+  offsetToCurrentLayer: boolean
   /** Name the drawing saves under, shown in the title bar. */
   fileName: string
   /** Objects held by COPYCLIP or CUTCLIP, kept out of the document until pasted. */
@@ -188,6 +191,7 @@ export const useCadStore = create<CadState>((set, get) => ({
   offsetPending: false,
   offsetThrough: false,
   offsetErase: false,
+  offsetToCurrentLayer: false,
   fileName: `Drawing1${DRAWING_EXTENSION}`,
   clipboard: [],
   camera: { x: 400, y: 300, zoom: 1 },
@@ -364,8 +368,24 @@ export const useCadStore = create<CadState>((set, get) => ({
       return
     }
 
-    const cmd = raw.toUpperCase()
-    state.log('input', cmd)
+    // A leading apostrophe runs a command transparently, without disturbing the one in progress.
+    // AutoCAD also accepts a leading underscore for untranslated command names.
+    const transparent = raw.startsWith("'")
+    const cmd = raw.replace(/^['_.]+/, '').toUpperCase()
+    if (!cmd) return
+    state.log('input', raw.toUpperCase())
+
+    if (transparent) {
+      const inner = resolveCommand(cmd)
+      if (inner && TRANSPARENT_COMMANDS.has(inner.name)) {
+        runCommandDef(state, inner)
+        // The interrupted command carries on, so its prompt is shown again.
+        state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+        return
+      }
+      state.log('error', `${cmd} cannot be used transparently.`)
+      return
+    }
 
     // An option belonging to the running command wins over a command of the same name, which is
     // how `C` closes a polyline mid-command but starts CIRCLE at an empty prompt.
@@ -944,11 +964,19 @@ export const promptContextFor = (state: CadStoreState, swapped = false): PromptC
   hasSelection: state.selectedIds.length > 0,
   hasTarget: state.modifyTargetId !== null,
   offsetDistance: state.offsetDistance,
+  offsetPending: state.offsetPending,
+  offsetThrough: state.offsetThrough,
   polygonSides: state.polygonSides,
   pickingEdges: state.pickingEdges,
   edgeCount: state.edgeIds === null ? null : state.edgeIds.length,
   swapped,
 })
+
+/**
+ * Commands that may run inside another one, written with a leading apostrophe. They only change the
+ * view or a drafting setting, so the command they interrupt is left exactly as it was.
+ */
+const TRANSPARENT_COMMANDS = new Set(['ZOOM', 'OSNAP', 'ORTHO', 'POLAR', 'LWDISPLAY', 'HELP'])
 
 export const currentPrompt = (state: CadStoreState, swapped = false): Prompt =>
   promptFor(promptContextFor(state, swapped))
@@ -980,6 +1008,26 @@ const runKeyword = (state: CadStoreState, keyword: Keyword) => {
       state.toggleMirrorKeepSource()
       state.setStatusMessage(state.mirrorKeepSource ? 'Source objects will be erased.' : 'Source objects will be kept.')
       return
+    case 'Through':
+      // The distance stops mattering: the copy is placed through whatever point is picked.
+      useCadStore.setState({ offsetThrough: true, offsetPending: false })
+      state.log('result', 'Offset through a picked point')
+      return
+    case 'Erase': {
+      const erase = !useCadStore.getState().offsetErase
+      useCadStore.setState({ offsetErase: erase })
+      state.log('result', `Erase source after offsetting: ${erase ? 'Yes' : 'No'}`)
+      return
+    }
+    case 'Layer': {
+      const toCurrent = !useCadStore.getState().offsetToCurrentLayer
+      useCadStore.setState({ offsetToCurrentLayer: toCurrent })
+      state.log('result', `Offset objects go on the ${toCurrent ? 'current' : 'source'} layer`)
+      return
+    }
+    case 'Exit':
+      state.endCommand()
+      return
     default:
       state.setStatusMessage(`Unhandled option: ${keyword.label}`)
   }
@@ -999,14 +1047,28 @@ const applyModifyTool = (state: CadStoreState, point: Vec2, swapped: boolean): b
       return true
     }
     const target = state.doc.entities.find((entity) => entity.id === state.modifyTargetId)
-    const offset = target ? offsetEntity(target, state.offsetDistance, point) : null
+    // Through mode ignores the set distance and puts the copy where the crosshair is instead.
+    const distance = state.offsetThrough && target ? distanceToEntity(point, target) : state.offsetDistance
+    const offset = target && distance > 0 ? offsetEntity(target, distance, point) : null
     if (!offset) {
       state.setStatusMessage('Cannot offset that object by this distance.')
       useCadStore.setState({ modifyTargetId: null })
       return true
     }
-    state.addEntity(offset)
-    useCadStore.setState({ modifyTargetId: null, statusMessage: `Offset by ${state.offsetDistance}` })
+
+    const placed = state.offsetToCurrentLayer ? { ...offset, layerId: state.activeLayerId } : offset
+    state.addEntity(placed)
+    if (state.offsetErase && target) {
+      state.updateDocument((doc) => ({
+        ...doc,
+        entities: doc.entities.filter((entity) => entity.id !== target.id),
+      }))
+    }
+
+    useCadStore.setState({
+      modifyTargetId: null,
+      statusMessage: `Offset by ${distance.toFixed(2)}`,
+    })
     return true
   }
 

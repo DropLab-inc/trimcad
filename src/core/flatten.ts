@@ -1,4 +1,4 @@
-import { polar } from './geometry'
+import { pointSegmentDistance, polar } from './geometry'
 import type { Vec2 } from './math/vec2'
 import type { CadEntity } from './types'
 
@@ -57,4 +57,27 @@ export const flattenEntity = (entity: CadEntity): Polyline[] => {
 export const pointsOfEntity = (entity: CadEntity): Vec2[] => {
   if (entity.type === 'text') return [entity.position]
   return flattenEntity(entity).flatMap((run) => run.points)
+}
+
+/**
+ * How far a point lies from an object. OFFSET's Through option needs this to work out the distance
+ * implied by the point that was picked.
+ */
+export const distanceToEntity = (point: Vec2, entity: CadEntity): number => {
+  // A circle has an exact answer, and it is the shape most likely to be offset through a point.
+  if (entity.type === 'circle') {
+    return Math.abs(Math.hypot(point.x - entity.center.x, point.y - entity.center.y) - entity.radius)
+  }
+  if (entity.type === 'text') return Math.hypot(point.x - entity.position.x, point.y - entity.position.y)
+
+  let best = Number.POSITIVE_INFINITY
+  for (const run of flattenEntity(entity)) {
+    const { points, closed } = run
+    const last = closed ? points.length : points.length - 1
+    for (let index = 0; index < last; index += 1) {
+      const distance = pointSegmentDistance(point, points[index], points[(index + 1) % points.length])
+      if (distance < best) best = distance
+    }
+  }
+  return Number.isFinite(best) ? best : 0
 }

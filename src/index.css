@@ -724,6 +724,28 @@ body.resizing-sidebar .sidebar-resizer {
   white-space: nowrap;
 }
 
+/* Bracketed options are clickable, the way AutoCAD has shown them since 2013. */
+.prompt-option {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #a5b4fc;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+.prompt-option:hover {
+  color: #fde68a;
+  text-decoration: underline solid;
+}
+
+/* F2 opens the taller scrollback. */
+.command-line.expanded .command-history {
+  height: 18rem;
+}
+
 .command-input-wrap {
   position: relative;
   flex: 1;

@@ -9,6 +9,8 @@ const context = (overrides: Partial<PromptContext> = {}): PromptContext => ({
   hasSelection: false,
   hasTarget: false,
   offsetDistance: 10,
+  offsetPending: false,
+  offsetThrough: false,
   polygonSides: 6,
   pickingEdges: false,
   edgeCount: null,
