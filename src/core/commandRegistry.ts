@@ -89,8 +89,8 @@ export const COMMANDS: CommandDef[] = [
   { name: 'SAVEAS', aliases: [], category: 'File', summary: 'Save the drawing under a new name' },
   { name: 'DXFOUT', aliases: ['EXPORT'], category: 'File', summary: 'Export the drawing as DXF' },
   { name: 'DXFIN', aliases: ['IMPORT'], category: 'File', summary: 'Import a DXF file' },
-  { name: 'PLOT', aliases: ['PRINT'], category: 'File', summary: 'Print to PDF, scaled to fit' },
-  { name: 'PLOT1', aliases: [], category: 'File', summary: 'Print to PDF at 1:1' },
+  { name: 'PLOT', aliases: ['PRINT'], category: 'File', summary: 'Open the Plot dialog' },
+  { name: 'PLOT1', aliases: [], category: 'File', summary: 'Open Plot preset to 1:1' },
 ]
 
 const BY_TOKEN = new Map<string, CommandDef>()

@@ -468,7 +468,7 @@ autocomplete list. Type `HELP` to print the whole table into the history panel.
 | Modify | `MOVE`/`M`, `COPY`/`CO`, `ROTATE`/`RO`, `SCALE`/`SC`, `MIRROR`/`MI`, `ARRAY`/`AR`, `ARRAYRECT`, `ARRAYPOLAR`, `OFFSET`/`O`, `TRIM`/`TR`, `EXTEND`/`EX`, `FILLET`/`F`, `CHAMFER`/`CHA`, `ERASE`/`E`, `JOIN`/`J`, `GROUP`/`G`, `EXPLODE`/`X`, `INSERT`/`I` |
 | Edit | `SELECT`/`SE`, `ALL`, `UNDO`/`U`, `REDO`/`RE` |
 | View | `ZOOM`/`Z`, `OSNAP`/`OS`, `ORTHO`/`OR`, `POLAR`/`PO`, `HELP` |
-| File | `DXFIN`, `DXFOUT`, `PLOT`/`PRINT`, `PLOT1` |
+| File | `DXFIN`, `DXFOUT`, `PLOT`/`PRINT` (opens the Plot dialog), `PLOT1` (Plot preset to 1:1) |
 
 ## Self-tests
 
@@ -509,6 +509,26 @@ to show on paper as black.
 ```bash
 npm run build
 ```
+
+## Plotting
+
+**Plot…** (Ctrl+P, or `PLOT` / `PRINT` at the command line) opens a dialog rather than downloading
+straight away. The options match what other 2D drafting software puts on its plot sheet:
+
+| Option | Choices |
+| --- | --- |
+| Paper size | ISO A4–A1, Letter, Legal, Tabloid |
+| Orientation | Landscape or portrait |
+| Margins | Millimetres of white border around the printable area |
+| What to plot | Extents (everything), Display (what is on screen), Window (two corners you pick), or Selection |
+| Scale | Fit to paper, 1:1 through 1:100, or a custom number of drawing units per millimetre of paper |
+| Center on paper | Places the chosen area in the middle of the printable region instead of the lower-left corner |
+
+Choosing **Window** and clicking **Select window…** puts the dialog aside so you can drag or
+click-click a rectangle on the drawing; Escape brings the dialog back without plotting. The
+preview on the right of the dialog shows how the sheet will look. `PLOT1` opens the same dialog
+already set to 1:1. The result is a vector PDF download; light colours that would vanish on white
+paper are plotted black, as before.
 
 ## Saving
 

@@ -8,17 +8,17 @@ import {
   pickFile,
   withExtension,
 } from '../core/fileIo'
-import { exportPdf } from '../core/print'
+import { openPrintDialog } from '../core/printSession'
 import { useCadStore } from '../core/store'
-
-export type PrintScale = '1:1' | 'fit'
+import type { PrintOptions } from '../core/print'
 
 export type FileActions = {
   newDrawing: () => void
   openDrawing: () => Promise<void>
   saveDrawing: () => void
   saveDrawingAs: () => void
-  print: (scale: PrintScale) => void
+  /** Opens the Plot dialog. Pass a patch to seed options (e.g. scale 1:1). */
+  print: (patch?: Partial<PrintOptions>) => void
 }
 
 /** "2 hatches, 1 dimension" — what another CAD program will not see in the saved file. */
@@ -87,10 +87,10 @@ export const useFileActions = (): FileActions =>
         if (typed) writeDrawing(withExtension(typed, DRAWING_EXTENSION))
       },
 
-      print: (scale) => {
-        const { doc, log } = useCadStore.getState()
-        exportPdf(doc, scale)
-        log('result', `Plotted at ${scale === '1:1' ? '1:1' : 'fit to page'}`)
+      print: (patch) => {
+        const { camera, selectedIds, log } = useCadStore.getState()
+        openPrintDialog({ camera, selectedIds, patch })
+        log('prompt', 'Plot')
       },
     }),
     [],

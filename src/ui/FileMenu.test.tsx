@@ -29,7 +29,7 @@ describe('the File menu', () => {
     const labels = screen
       .getAllByRole('menuitem')
       .map((item) => item.querySelector('.file-menu-label')?.textContent)
-    expect(labels).toEqual(['New', 'Open…', 'Save', 'Save As…', 'Print to PDF', 'Print at 1:1'])
+    expect(labels).toEqual(['New', 'Open…', 'Save', 'Save As…', 'Plot…'])
   })
 
   it('shows the shortcut beside the commands that have one', () => {
@@ -39,8 +39,7 @@ describe('the File menu', () => {
     expect(screen.getByRole('menuitem', { name: 'New' })).toHaveTextContent('Ctrl+N')
     expect(screen.getByRole('menuitem', { name: 'Save' })).toHaveTextContent('Ctrl+S')
     expect(screen.getByRole('menuitem', { name: 'Save As…' })).toHaveTextContent('Ctrl+Shift+S')
-    // Plotting at 1:1 has no accelerator of its own.
-    expect(screen.getByRole('menuitem', { name: 'Print at 1:1' })).not.toHaveTextContent('Ctrl')
+    expect(screen.getByRole('menuitem', { name: 'Plot…' })).toHaveTextContent('Ctrl+P')
   })
 
   it('closes again once a command is chosen', () => {

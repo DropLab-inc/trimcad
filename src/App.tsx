@@ -4,6 +4,7 @@ import { CanvasViewport } from './ui/CanvasViewport'
 import { CommandLine } from './ui/CommandLine'
 import { FileMenu } from './ui/FileMenu'
 import { PreferencesMenu } from './ui/PreferencesMenu'
+import { PrintDialog } from './ui/PrintDialog'
 import { LayerPanel } from './ui/LayerPanel'
 import { PropertiesPanel } from './ui/PropertiesPanel'
 import { QuickAccess } from './ui/QuickAccess'
@@ -57,6 +58,7 @@ function App() {
 
       <CommandLine />
       <StatusBar />
+      <PrintDialog />
     </div>
   )
 }

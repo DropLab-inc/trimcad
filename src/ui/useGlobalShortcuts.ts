@@ -40,7 +40,7 @@ export const useGlobalShortcuts = () => {
           return
         case 'p':
           event.preventDefault()
-          files.print('fit')
+          files.print()
           return
       }
 

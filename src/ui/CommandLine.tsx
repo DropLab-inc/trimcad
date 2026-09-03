@@ -38,9 +38,9 @@ export function CommandLine() {
     IMPORT: () => void files.openDrawing(),
     DXFOUT: files.saveDrawing,
     EXPORT: files.saveDrawing,
-    PLOT: () => files.print('fit'),
-    PRINT: () => files.print('fit'),
-    PLOT1: () => files.print('1:1'),
+    PLOT: () => files.print(),
+    PRINT: () => files.print(),
+    PLOT1: () => files.print({ scaleMode: '1:1' }),
   }
 
   const suggestions = useMemo(() => matchCommands(value).slice(0, 8), [value])

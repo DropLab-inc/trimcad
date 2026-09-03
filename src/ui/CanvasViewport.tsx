@@ -9,6 +9,13 @@ import {
 } from 'react'
 import { applyDrawTool, currentPrompt, previewTrimExtend, useCadStore } from '../core/store'
 import { usePreferences } from '../core/preferences'
+import { normalizeBounds } from '../core/print'
+import {
+  cancelPlotWindow,
+  finishPlotWindow,
+  setViewportSize,
+  usePrintSession,
+} from '../core/printSession'
 import { formatPrompt, matchKeyword } from '../core/prompts'
 import { applyOrtho, applyPolarTracking, findBestSnap, trackingAppliesTo } from '../core/snap'
 import { rectFromPoints, selectEntitiesInRect, selectionModeFor } from '../core/selection'
@@ -197,6 +204,8 @@ export function CanvasViewport() {
   const [typedState, setTypedState] = useState<TypedState>({ step: '', values: NO_VALUES, field: 0 })
   const [size, setSize] = useState({ width: 1000, height: 700 })
   const preferences = usePreferences()
+  const printSession = usePrintSession()
+  const pickingPlotWindow = printSession.pickingWindow
   /** The pick box, grip reach and snap aperture are set in screen pixels but used in drawing units. */
   const pickTolerance = preferences.pickBoxSize / camera.zoom
   /** Whether clicking one corner and then the other is an accepted way to draw a window out. */
@@ -235,11 +244,19 @@ export function CanvasViewport() {
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect
       if (!rect) return
-      setSize({ width: Math.max(320, rect.width), height: Math.max(240, rect.height) })
+      const next = { width: Math.max(320, rect.width), height: Math.max(240, rect.height) }
+      setSize(next)
+      setViewportSize(next.width, next.height)
     })
     observer.observe(frame)
     return () => observer.disconnect()
   }, [])
+
+  // Plot window picking tells the command line what it is waiting for.
+  useEffect(() => {
+    if (!pickingPlotWindow) return
+    setStatusMessage('Specify first corner of plot window:')
+  }, [pickingPlotWindow, setStatusMessage])
 
   // Typed values belong to a single step of a command, so anything captured for a previous step
   // is simply ignored rather than cleared from an effect.
@@ -301,6 +318,14 @@ export function CanvasViewport() {
         if (gripDrag || objectDrag) {
           setGripDrag(null)
           setObjectDrag(null)
+          return
+        }
+        // A plot window being picked is called off and the Plot dialog comes back.
+        if (pickingPlotWindow) {
+          setBoxLatched(false)
+          setBoxStart(null)
+          setBoxEnd(null)
+          cancelPlotWindow()
           return
         }
         // A window waiting for its second corner is called off, leaving the selection untouched.
@@ -387,6 +412,7 @@ export function CanvasViewport() {
     gripDrag,
     objectDrag,
     pickingEdges,
+    pickingPlotWindow,
     redo,
     repeatLastCommand,
     selectAll,
@@ -456,7 +482,14 @@ export function CanvasViewport() {
     const local = localPoint(event)
     // A window whose first corner is already down is waiting for its second click, and nothing
     // else may take that click: not a grip, not an object under it. Mouse up closes the window.
-    if (boxLatched && (activeTool === 'select' || pickingEdges)) {
+    if (boxLatched && (pickingPlotWindow || activeTool === 'select' || pickingEdges)) {
+      setBoxEnd(local)
+      return
+    }
+    // Plot window picking uses the same two-corner gesture as a selection window, but never
+    // takes hold of a grip or moves the selection.
+    if (pickingPlotWindow) {
+      setBoxStart(local)
       setBoxEnd(local)
       return
     }
@@ -597,6 +630,28 @@ export function CanvasViewport() {
       }
       setFenceStart(null)
       setFenceEnd(null)
+      return
+    }
+
+    if (pickingPlotWindow && boxStart && boxEnd) {
+      const dragged = Math.hypot(boxEnd.x - boxStart.x, boxEnd.y - boxStart.y)
+      const closePlotWindow = () => {
+        const start = screenToWorld(boxStart, camera)
+        const end = screenToWorld(boxEnd, camera)
+        finishPlotWindow(normalizeBounds(start, end))
+        setBoxLatched(false)
+        setBoxStart(null)
+        setBoxEnd(null)
+        setStatusMessage('Plot window set')
+      }
+      if (boxLatched) {
+        closePlotWindow()
+      } else if (dragged >= DRAG_THRESHOLD) {
+        closePlotWindow()
+      } else {
+        setBoxLatched(true)
+        setStatusMessage('Specify opposite corner of plot window:')
+      }
       return
     }
 

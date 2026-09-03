@@ -42,10 +42,7 @@ export function FileMenu() {
       { label: 'Save', icon: 'save', shortcut: 'Ctrl+S', run: actions.saveDrawing },
       { label: 'Save As…', icon: 'save-as', shortcut: 'Ctrl+Shift+S', run: actions.saveDrawingAs },
     ],
-    [
-      { label: 'Print to PDF', icon: 'print', shortcut: 'Ctrl+P', run: () => actions.print('fit') },
-      { label: 'Print at 1:1', icon: 'print', run: () => actions.print('1:1') },
-    ],
+    [{ label: 'Plot…', icon: 'print', shortcut: 'Ctrl+P', run: () => actions.print() }],
   ]
 
   return (
