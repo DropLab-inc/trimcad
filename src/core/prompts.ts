@@ -237,6 +237,8 @@ const promptsForTool = (ctx: PromptContext): Prompt[] => {
       return [point('Specify text insertion point')]
     case 'hatch':
       return [point('Pick an internal point of a closed area')]
+    case 'boundary':
+      return [point('Pick an internal point to trace')]
     case 'insert':
       return [point('Specify insertion point')]
     case 'dimension':

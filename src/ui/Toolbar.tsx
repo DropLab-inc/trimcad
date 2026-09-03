@@ -177,6 +177,38 @@ const modifyTools: ToolItem[] = [
     command: 'ARRAY',
     hint: 'Select objects first, then set the grid out or pick a centre to sweep around',
   },
+  {
+    tool: 'boundary',
+    label: 'Boundary',
+    icon: 'boundary',
+    command: 'BOUNDARY',
+    hint: 'Click inside an enclosed area to trace its outline as a polyline',
+  },
+]
+
+/**
+ * Buttons for commands that act on whatever is already selected. They run there and then instead
+ * of putting the canvas into a mode, so they never show as the active tool.
+ */
+const selectionCommands: { label: string; icon: IconName; command: string; hint: string }[] = [
+  {
+    label: 'Join',
+    icon: 'join',
+    command: 'JOIN',
+    hint: 'Select pieces that meet end to end, or lines along one straight, to make a single object',
+  },
+  {
+    label: 'Explode',
+    icon: 'explode',
+    command: 'EXPLODE',
+    hint: 'Break polylines into their segments and blocks into their contents',
+  },
+  {
+    label: 'Overkill',
+    icon: 'overkill',
+    command: 'OVERKILL',
+    hint: 'Delete duplicates and absorb overlapping lines into one another',
+  },
 ]
 
 /** Tooltip in AutoCAD's shape: what the button does, then how to type it. */
@@ -190,6 +222,7 @@ const tooltip = (item: { label: string; command: string; hint?: string }): strin
 export function Toolbar() {
   const activeTool = useCadStore((state) => state.activeTool)
   const setTool = useCadStore((state) => state.setTool)
+  const executeCommand = useCadStore((state) => state.executeCommand)
   const polygonSides = useCadStore((state) => state.polygonSides)
   const setPolygonSides = useCadStore((state) => state.setPolygonSides)
   const polygonFit = useCadStore((state) => state.polygonFit)
@@ -307,6 +340,18 @@ export function Toolbar() {
               type="button"
               className={`ribbon-btn ${item.tool === activeTool ? 'active' : ''}`}
               onClick={() => setTool(item.tool)}
+              title={tooltip(item)}
+            >
+              <Icon name={item.icon} />
+              <span>{item.label}</span>
+            </button>
+          ))}
+          {selectionCommands.map((item) => (
+            <button
+              key={item.command}
+              type="button"
+              className="ribbon-btn"
+              onClick={() => executeCommand(item.command)}
               title={tooltip(item)}
             >
               <Icon name={item.icon} />

@@ -68,6 +68,10 @@ export type IconName =
   | 'layer-delete'
   | 'theme-dark'
   | 'theme-light'
+  | 'join'
+  | 'explode'
+  | 'overkill'
+  | 'boundary'
 
 /** A small filled square, the way AutoCAD marks pick points and grips. */
 const grip = (x: number, y: number, key?: string) => (
@@ -497,6 +501,40 @@ const GLYPHS: Record<IconName, ReactElement> = {
     <g>
       <circle className="accent" cx={12} cy={12} r={4.4} />
       <path d="M12 2.4 L12 5 M12 19 L12 21.6 M2.4 12 L5 12 M19 12 L21.6 12 M5.2 5.2 L7 7 M17 17 L18.8 18.8 M18.8 5.2 L17 7 M7 17 L5.2 18.8" />
+    </g>
+  ),
+  // Two runs of line closing on the point they share, which is the corner JOIN makes.
+  join: (
+    <g>
+      <path d="M3 19 L9 7" />
+      <path d="M21 19 L15 7" />
+      <path className="accent" d="M9 7 L12 4 L15 7" />
+      {grip(12, 4)}
+    </g>
+  ),
+  // A shape coming apart, its pieces pulling away from where they met.
+  explode: (
+    <g>
+      <path className="accent" d="M4 8 L11 8" />
+      <path className="accent" d="M13 4 L13 11" />
+      <path d="M20 13 L20 20 L13 20" strokeDasharray="2 2" opacity={0.5} />
+      <path d="M4 8 L4 4 L11 4" opacity={0.5} strokeDasharray="2 2" />
+    </g>
+  ),
+  // One line laid over another, with the copy on top struck through.
+  overkill: (
+    <g>
+      <path d="M3 16 L17 16" />
+      <path className="accent" d="M7 8 L21 8" />
+      <path className="accent" d="M9 5 L13 11 M13 5 L9 11" />
+    </g>
+  ),
+  // An outline traced round an area, picked out from the objects that enclose it.
+  boundary: (
+    <g>
+      <path d="M2 6 L22 6 M2 18 L22 18" opacity={0.5} strokeDasharray="2 2" />
+      <path className="accent" d="M6 6 L18 6 L18 18 L6 18 Z" />
+      {grip(12, 12)}
     </g>
   ),
 }

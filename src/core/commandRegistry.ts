@@ -57,9 +57,12 @@ export const COMMANDS: CommandDef[] = [
   { name: 'FILLET', aliases: ['F'], category: 'Modify', summary: 'Round a corner with an arc', tool: 'fillet' },
   { name: 'CHAMFER', aliases: ['CHA'], category: 'Modify', summary: 'Bevel a corner with a straight cut', tool: 'chamfer' },
   { name: 'ERASE', aliases: ['E'], category: 'Modify', summary: 'Delete the selection' },
-  { name: 'JOIN', aliases: ['J'], category: 'Modify', summary: 'Join selected lines into a polyline' },
+  { name: 'JOIN', aliases: ['J'], category: 'Modify', summary: 'Make one object out of several that meet' },
+  { name: 'EXPLODE', aliases: ['X'], category: 'Modify', summary: 'Break objects into their pieces' },
+  { name: 'OVERKILL', aliases: ['OV'], category: 'Modify', summary: 'Delete duplicate and overlapping geometry' },
+  { name: 'BOUNDARY', aliases: ['BO'], category: 'Modify', summary: 'Trace a closed area as a polyline', tool: 'boundary' },
   { name: 'GROUP', aliases: ['G'], category: 'Modify', summary: 'Group the selection' },
-  { name: 'EXPLODE', aliases: ['X'], category: 'Modify', summary: 'Ungroup the selection' },
+  { name: 'UNGROUP', aliases: ['UNG'], category: 'Modify', summary: 'Break up the groups in the selection' },
   { name: 'INSERT', aliases: ['I'], category: 'Modify', summary: 'Place a block', tool: 'insert' },
 
   // Edit

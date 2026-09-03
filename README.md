@@ -6,7 +6,8 @@ Lightweight browser-based 2D drafting software inspired by AutoCAD workflows.
 
 - Draw: line, polyline, rectangle, circle (centre, 2P, 3P, tangent-tangent-radius), arc, ellipse,
   polygon (inscribed, circumscribed, by edge), spline, hatch, text, block insert
-- Modify: move, copy, rotate, scale, mirror, offset, delete, fillet, join, explode, break, rectangular/polar array
+- Modify: move, copy, rotate, scale, mirror, offset, delete, fillet, chamfer, join, explode,
+  overkill, boundary, rectangular/polar array
 - Drafting aids: OSNAP, polar tracking, grips for reshaping by hand, command line aliases,
   crosshair viewport, pan/zoom
 - Structure: layers, linetypes, lineweights, groups, blocks, document history (undo/redo)
@@ -203,10 +204,66 @@ You can also type coordinates into the command line:
 | Chamfer | Set a distance, click one line then another, and the corner is cut square across |
 | Mirror | Select objects first, then pick the two points of the mirror line |
 | Array | Select objects first, then set the grid out or pick a centre to sweep around |
+| Join | Select the pieces, and they become one object |
+| Explode | Select compound objects, and they come apart into their pieces |
+| Overkill | Select a region, and duplicate and overlapping geometry is cleaned out of it |
+| Boundary | Click inside an enclosed area to trace its outline as a polyline |
 
 Offset produces a true parallel outline, so offsetting a rectangle inwards gives a smaller
 rectangle rather than a diagonally shifted one. "Keep source" in the ribbon controls whether
 Mirror leaves the originals in place.
+
+### Putting objects together and taking them apart
+
+`JOIN`, `EXPLODE` and `OVERKILL` act on whatever is already selected and finish immediately, so
+there is nothing to pick on the canvas afterwards.
+
+**`JOIN` (`J`)** makes one object out of several, following AutoCAD's rules about what may go with
+what:
+
+| What you select | What you get |
+| --- | --- |
+| Lines along one straight | A single line spanning the lot, gaps between them closed up |
+| Arcs on one circle | A single arc, swept anticlockwise from the first one picked |
+| Arcs that come the whole way round | A circle |
+| Lines and open polylines that meet end to end | A polyline, closed if the chain returns to its start |
+
+The pieces do not have to be picked in order, and any of them may have been drawn backwards; the
+chain is threaded together from both ends until nothing else will attach. What comes out keeps the
+layer and colour of the first object picked, and takes its place in the drawing order.
+
+An arc will not be folded into a polyline. A polyline here stores only straight runs, so the arc
+would quietly flatten to a chord, and `JOIN` says so rather than changing the drawing behind your
+back.
+
+**`EXPLODE` (`X`)** breaks compound objects into their pieces: a polyline, rectangle or polygon
+into one line per segment, and a block insert into a copy of the block's contents, sized, turned
+and moved to sit exactly where the insert was. It goes one level down, as AutoCAD's does, so a
+polyline inside a block comes out whole. The pieces inherit the layer, colour, linetype and
+lineweight of what they came from, and take its place in the drawing order. A line, circle, arc,
+ellipse, spline or piece of text has nothing inside it, and `EXPLODE` says so instead of doing
+nothing quietly. Anything in the selection that belongs to a group is ungrouped at the same time,
+which is what this app's `EXPLODE` has always done; `UNGROUP` does only that part.
+
+**`OVERKILL` (`OV`)** cleans up the drawing debris that builds up in a file that has been copied,
+imported and edited a few too many times. It deletes objects that are copies of something already
+there, counting a line drawn back over itself as the same line, and absorbs straight pieces that
+overlap or meet end to end along the same line into a single one. Two collinear lines with a real
+gap between them are left alone, and lines on different layers are never merged into each other,
+since that would silently move geometry from one layer to the other. It reports what it removed,
+or says there was nothing to do. Like AutoCAD's, it works on a selection rather than the whole
+drawing — type `ALL` first to take everything in.
+
+### Tracing an area
+
+**`BOUNDARY` (`BO`)** asks for a point inside an enclosed area and traces its outline as a closed
+polyline, leaving the objects that enclose it exactly as they were. It reads the drawing the same
+way `HATCH` does, so an area bounded by several crossing objects works as well as a single closed
+shape, and picking inside the smaller of two nested areas traces the smaller one. The command
+stays running, so several areas can be traced one after another.
+
+What comes out is an ordinary polyline, so it can then be offset, dimensioned, filled or measured
+like anything else you drew by hand — which is the usual reason for wanting it.
 
 ### Arrays
 

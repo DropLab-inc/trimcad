@@ -32,6 +32,8 @@ import {
   cornerRadius,
   polygonOnEdge,
 } from './construct'
+import { joinSelection, overkill } from './combine'
+import { explodeSelection } from './explode'
 import { distanceToEntity } from './flatten'
 import { dragGrip, type Grip } from './grips'
 import { parseCoordinate } from './dynamicInput'
@@ -780,7 +782,7 @@ export const useCadStore = create<CadState>((set, get) => ({
   },
 }))
 
-const describeCount = (count: number): string => `${count} object${count === 1 ? '' : 's'}`
+const describeCount = (count: number, noun = 'object'): string => `${count} ${noun}${count === 1 ? '' : 's'}`
 
 /** Lower-left corner of the copied objects, used as the handle a paste is positioned by. */
 const clipboardAnchor = (entities: CadEntity[]): Vec2 => {
@@ -1265,6 +1267,121 @@ const applyTypedNumber = (state: CadStoreState, value: number): boolean => {
   return true
 }
 
+/** The objects the selection points at, in the order the drawing holds them. */
+const selectedEntities = (state: CadStoreState): CadEntity[] =>
+  state.doc.entities.filter((entity) => state.selectedIds.includes(entity.id))
+
+/**
+ * JOIN, which either produces one object or explains why the pieces do not belong together. The
+ * result takes the place of the first object joined, so it keeps its position in the drawing order.
+ */
+const runJoin = (state: CadStoreState) => {
+  const chosen = selectedEntities(state)
+  if (chosen.length === 0) {
+    state.log('error', 'Select objects before joining.')
+    return
+  }
+  const outcome = joinSelection(chosen)
+  if (!outcome.joined) {
+    state.log('error', outcome.reason)
+    state.setStatusMessage(outcome.reason)
+    return
+  }
+
+  const consumed = new Set(outcome.consumed)
+  let placed = false
+  state.updateDocument((doc) => ({
+    ...doc,
+    entities: doc.entities.flatMap((entity) => {
+      if (!consumed.has(entity.id)) return [entity]
+      if (placed) return []
+      placed = true
+      return [outcome.entity]
+    }),
+  }))
+  state.setSelection([outcome.entity.id])
+  state.log('result', outcome.note)
+  state.setStatusMessage(outcome.note)
+}
+
+/** EXPLODE, which also breaks up any groups the selection belongs to. */
+const runExplode = (state: CadStoreState) => {
+  if (state.selectedIds.length === 0) {
+    state.log('error', 'Select objects before exploding.')
+    return
+  }
+
+  const ids = new Set(state.selectedIds)
+  const result = explodeSelection(state.doc.entities, state.selectedIds, state.doc.blocks)
+  const groups = state.doc.groups.filter((group) => group.entityIds.some((id) => ids.has(id)))
+
+  if (result.consumed.length === 0 && groups.length === 0) {
+    const message = 'Nothing in the selection can be exploded.'
+    state.log('error', message)
+    state.setStatusMessage(message)
+    return
+  }
+
+  state.updateDocument((doc) => ({
+    ...doc,
+    entities: result.entities,
+    groups: doc.groups.filter((group) => !group.entityIds.some((id) => ids.has(id))),
+  }))
+  // The pieces are new objects, so the old selection would point at things that no longer exist.
+  state.setSelection([])
+
+  const parts = [
+    result.consumed.length > 0
+      ? `Exploded ${describeCount(result.consumed.length)} into ${describeCount(result.pieces, 'piece')}`
+      : '',
+    groups.length > 0 ? `Ungrouped ${describeCount(groups.length, 'group')}` : '',
+  ].filter(Boolean)
+  const message = parts.join(', ')
+  state.log('result', message)
+  state.setStatusMessage(message)
+}
+
+/** OVERKILL, which cleans up the selection rather than the whole drawing, as AutoCAD's does. */
+const runOverkill = (state: CadStoreState) => {
+  const chosen = selectedEntities(state)
+  if (chosen.length === 0) {
+    state.log('error', 'Select objects before running OVERKILL. Type ALL to take in the whole drawing.')
+    return
+  }
+
+  const result = overkill(chosen)
+  const removed = result.duplicates + result.merged
+  if (removed === 0) {
+    const message = 'Nothing to clean up: no duplicate or overlapping objects found.'
+    state.log('result', message)
+    state.setStatusMessage(message)
+    return
+  }
+
+  const ids = new Set(state.selectedIds)
+  let inserted = false
+  state.updateDocument((doc) => ({
+    ...doc,
+    entities: doc.entities.flatMap((entity) => {
+      if (!ids.has(entity.id)) return [entity]
+      // What survives is dropped in where the first of the chosen objects sat, so the cleaned-up
+      // geometry keeps its place in the drawing order rather than jumping to the front.
+      if (inserted) return []
+      inserted = true
+      return result.entities
+    }),
+  }))
+  state.setSelection(result.entities.map((entity) => entity.id))
+
+  const parts = [
+    result.duplicates > 0 ? `Deleted ${describeCount(result.duplicates, 'duplicate')}` : '',
+    result.merged > 0 ? `merged ${describeCount(result.merged)} into a neighbour` : '',
+  ].filter(Boolean)
+  const message = parts.join(', ')
+  state.log('result', message)
+  state.setStatusMessage(message)
+}
+
 /** Runs a command from the registry, echoing what it is waiting for next. */
 const runCommandDef = (state: CadStoreState, command: CommandDef, argument = '') => {
   useCadStore.setState({ lastCommand: command.name })
@@ -1375,15 +1492,29 @@ const runCommandDef = (state: CadStoreState, command: CommandDef, argument = '')
       state.log('result', `Grouped ${ids.length} object(s)`)
       return
     }
-    case 'EXPLODE': {
+    case 'UNGROUP': {
       const ids = new Set(state.selectedIds)
+      const affected = state.doc.groups.filter((group) => group.entityIds.some((id) => ids.has(id)))
+      if (affected.length === 0) {
+        state.log('error', 'Nothing in the selection belongs to a group.')
+        return
+      }
       state.updateDocument((doc) => ({
         ...doc,
         groups: doc.groups.filter((group) => !group.entityIds.some((id) => ids.has(id))),
       }))
-      state.log('result', 'Ungrouped')
+      state.log('result', `Ungrouped ${describeCount(affected.length, 'group')}`)
       return
     }
+    case 'JOIN':
+      runJoin(state)
+      return
+    case 'EXPLODE':
+      runExplode(state)
+      return
+    case 'OVERKILL':
+      runOverkill(state)
+      return
     case 'HELP':
       for (const entry of COMMANDS) {
         const aliases = entry.aliases.length > 0 ? ` (${entry.aliases.join(', ')})` : ''
@@ -1890,6 +2021,23 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
       scale: 1,
     })
     state.setStatusMessage('Hatch created')
+    return
+  }
+
+  if (activeTool === 'boundary') {
+    // BOUNDARY traces the same region HATCH would fill, but hands back the outline itself so it
+    // can be offset, measured or filled later. Existing outlines are ignored, or picking inside
+    // one already traced would just find its own edge again.
+    const candidates = state.doc.entities.filter(
+      (entity) => entity.type !== 'hatch' && isLayerVisible(layerOf(state.doc, entity)),
+    )
+    const boundary = findRegionBoundary(candidates, point) ?? findHatchBoundary(candidates, point)
+    if (!boundary) {
+      state.setStatusMessage('No enclosed area found at that point.')
+      return
+    }
+    addEntity({ id: uid(), type: 'polyline', layerId: currentLayerId, points: boundary, closed: true })
+    state.setStatusMessage(`Boundary traced through ${describeCount(boundary.length, 'point')}`)
     return
   }
 

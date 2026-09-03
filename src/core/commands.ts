@@ -268,15 +268,6 @@ export const offsetEntities = (entities: CadEntity[], ids: string[], distanceVal
   return output
 }
 
-export const joinEntities = (entities: CadEntity[], ids: string[], layerId: string): CadEntity[] => {
-  const selected = entities.filter((entity) => ids.includes(entity.id))
-  const lines = selected.filter((entity): entity is LineEntity => entity.type === 'line')
-  if (lines.length < 2) return entities
-  const points = [lines[0].start, ...lines.map((line) => line.end)]
-  const remainder = entities.filter((entity) => !ids.includes(entity.id))
-  return [...remainder, { id: uid(), type: 'polyline', layerId, points, closed: false }]
-}
-
 export const breakLine = (entities: CadEntity[], lineId: string, breakPoint: Vec2): CadEntity[] => {
   const line = entities.find((entity): entity is LineEntity => entity.id === lineId && entity.type === 'line')
   if (!line) return entities

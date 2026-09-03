@@ -196,6 +196,7 @@ export type ToolMode =
   | 'spline'
   | 'text'
   | 'hatch'
+  | 'boundary'
   | 'dimension'
   | 'insert'
   | 'offset'
