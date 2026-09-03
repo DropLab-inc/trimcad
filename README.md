@@ -93,8 +93,8 @@ forcing those onto an axis would flatten the shape to nothing.
 `CIRCLE` opens on a centre and a radius, and the options at that prompt pin the circle down other
 ways instead. `D` at the radius prompt reads the size across the circle rather than out from the
 middle, so a diameter taken off a drawing can be typed in as it was measured. While the command
-runs, the ribbon carries the same five constructions in a flyout, each drawn with the points it
-asks you to pick.
+runs, the ribbon carries the same five constructions in a dropdown, with a small icon beside it
+drawn with the points that construction asks you to pick.
 
 | Option | What it takes |
 | --- | --- |
@@ -124,9 +124,10 @@ choice is remembered for the next polygon.
 
 `E` takes the Edge route instead, where you draw one side and the rest of the shape follows from
 it, built to the left of the direction you drew. Edge is a one-off, so the next polygon goes back
-to being sized by its circle. All three sit in a ribbon flyout as well, drawn on a triangle rather
-than the hexagon the command defaults to: on a hexagon the corners and the flats are barely a pixel
-apart at icon size, which is the whole distinction the pictures have to make.
+to being sized by its circle. All three sit in a ribbon dropdown as well, with an icon beside it
+drawn on a triangle rather than the hexagon the command defaults to: on a hexagon the corners and
+the flats are barely a pixel apart at icon size, which is the whole distinction the picture has to
+make.
 
 ### Selecting objects
 

@@ -3,38 +3,34 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { useCadStore } from '../core/store'
 import { Toolbar } from './Toolbar'
 
-/** The flyout's face, which names the option currently in use. */
-const flyout = (title: string) => screen.queryByRole('button', { name: new RegExp(`^${title}`, 'i') })
-const menuItems = () => screen.queryAllByRole('menuitemradio')
-const openMenu = (title: string) => {
-  fireEvent.click(flyout(title)!)
-  return menuItems()
+/** The dropdown a ribbon field wraps, found through the field's tooltip. */
+const dropdown = (titleFragment: string): HTMLSelectElement | null => {
+  const field = screen
+    .queryAllByTitle(new RegExp(titleFragment, 'i'))
+    .find((element) => element.querySelector('select'))
+  return field?.querySelector('select') ?? null
 }
 
-describe('circle construction flyout', () => {
+const optionLabels = (select: HTMLSelectElement) => [...select.options].map((option) => option.textContent)
+
+/** The glyph shown beside a dropdown, which follows whichever option is chosen. */
+const glyphBeside = (select: HTMLSelectElement) => select.closest('label')!.querySelector('svg')!.innerHTML
+
+describe('circle construction dropdown', () => {
   beforeEach(() => {
     useCadStore.getState().setTool('select')
   })
 
   it('stays out of the way until CIRCLE is running', () => {
     render(<Toolbar />)
-    expect(flyout('Centre, radius')).toBeNull()
+    expect(dropdown('how the circle is pinned down')).toBeNull()
   })
 
-  it('takes only one button of ribbon width, showing the construction in use', () => {
+  it('lists every construction in the box, so they can all be seen at once', () => {
     useCadStore.getState().setTool('circle')
     render(<Toolbar />)
 
-    expect(flyout('Centre, radius')).not.toBeNull()
-    // The alternatives stay hidden until the flyout is opened.
-    expect(menuItems()).toHaveLength(0)
-  })
-
-  it('drops down every construction when opened', () => {
-    useCadStore.getState().setTool('circle')
-    render(<Toolbar />)
-
-    expect(openMenu('Centre, radius').map((item) => item.textContent)).toEqual([
+    expect(optionLabels(dropdown('how the circle is pinned down')!)).toEqual([
       'Centre, radius',
       'Centre, diameter',
       '2 point',
@@ -43,89 +39,81 @@ describe('circle construction flyout', () => {
     ])
   })
 
-  it('switches construction when one is chosen, and closes behind itself', () => {
-    useCadStore.getState().setTool('circle')
-    render(<Toolbar />)
-
-    fireEvent.click(openMenu('Centre, radius')[3])
-
-    expect(useCadStore.getState().circleMode).toBe('3p')
-    expect(menuItems()).toHaveLength(0)
-    // The face now names the construction that was chosen.
-    expect(flyout('3 point')).not.toBeNull()
-  })
-
-  it('marks which construction is in use when reopened', () => {
+  it('opens on the construction in use', () => {
     useCadStore.getState().setTool('circle')
     useCadStore.getState().setCircleMode('ttr')
     render(<Toolbar />)
 
-    const checked = openMenu('Tan, tan, radius').filter((item) => item.getAttribute('aria-checked') === 'true')
-    expect(checked).toHaveLength(1)
-    expect(checked[0].textContent).toBe('Tan, tan, radius')
+    expect(dropdown('how the circle is pinned down')!.value).toBe('ttr')
   })
 
-  it('closes on Escape without changing anything', () => {
+  it('switches construction when another is picked', () => {
     useCadStore.getState().setTool('circle')
     render(<Toolbar />)
-    openMenu('Centre, radius')
 
-    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.change(dropdown('how the circle is pinned down')!, { target: { value: '3p' } })
 
-    expect(menuItems()).toHaveLength(0)
-    expect(useCadStore.getState().circleMode).toBe('center')
+    expect(useCadStore.getState().circleMode).toBe('3p')
   })
 
-  it('closes when the pointer goes elsewhere', () => {
+  it('shows an icon beside the box that follows the choice', () => {
     useCadStore.getState().setTool('circle')
     render(<Toolbar />)
-    openMenu('Centre, radius')
+    const select = dropdown('how the circle is pinned down')!
+    const before = glyphBeside(select)
 
-    fireEvent.mouseDown(document.body)
+    fireEvent.change(select, { target: { value: 'ttr' } })
 
-    expect(menuItems()).toHaveLength(0)
+    expect(glyphBeside(dropdown('how the circle is pinned down')!)).not.toBe(before)
   })
 
   it('draws a different glyph for each construction, so they can be told apart', () => {
     useCadStore.getState().setTool('circle')
-    render(<Toolbar />)
+    const { rerender } = render(<Toolbar />)
 
-    const glyphs = openMenu('Centre, radius').map((item) => item.querySelector('svg')!.innerHTML)
-    expect(new Set(glyphs).size).toBe(glyphs.length)
+    const glyphs = new Set<string>()
+    for (const mode of ['center', 'diameter', '2p', '3p', 'ttr'] as const) {
+      useCadStore.getState().setCircleMode(mode)
+      rerender(<Toolbar />)
+      glyphs.add(glyphBeside(dropdown('how the circle is pinned down')!))
+    }
+    expect(glyphs.size).toBe(5)
   })
 })
 
-describe('polygon fit flyout', () => {
+describe('polygon fit dropdown', () => {
+  const fit = () => dropdown('corners or the flats|sit on the circle|sides sit against|single side')
+
   beforeEach(() => {
     useCadStore.getState().setTool('select')
     useCadStore.getState().setPolygonFit('inscribed')
   })
 
-  it('offers the three ways of sizing a polygon, each with its own icon', () => {
+  it('lists the three ways of sizing a polygon', () => {
     useCadStore.getState().setTool('polygon')
     render(<Toolbar />)
 
-    const items = openMenu('Inscribed')
-    expect(items.map((item) => item.textContent)).toEqual(['Inscribed', 'Circumscribed', 'By one edge'])
-    for (const item of items) expect(item.querySelector('svg')).not.toBeNull()
+    expect(optionLabels(fit()!)).toEqual(['Inscribed', 'Circumscribed', 'By one edge'])
+  })
+
+  it('switches the fit when another is picked', () => {
+    useCadStore.getState().setTool('polygon')
+    render(<Toolbar />)
+
+    fireEvent.change(fit()!, { target: { value: 'circumscribed' } })
+
+    expect(useCadStore.getState().polygonFit).toBe('circumscribed')
   })
 
   it('tells the inscribed and circumscribed glyphs apart', () => {
     useCadStore.getState().setTool('polygon')
-    render(<Toolbar />)
+    const { rerender } = render(<Toolbar />)
+    const inscribed = glyphBeside(fit()!)
 
-    const [inscribed, circumscribed] = openMenu('Inscribed').map((item) => item.querySelector('svg')!.innerHTML)
-    expect(inscribed).not.toBe(circumscribed)
-  })
+    useCadStore.getState().setPolygonFit('circumscribed')
+    rerender(<Toolbar />)
 
-  it('switches the fit when one is chosen', () => {
-    useCadStore.getState().setTool('polygon')
-    render(<Toolbar />)
-
-    fireEvent.click(openMenu('Inscribed')[1])
-
-    expect(useCadStore.getState().polygonFit).toBe('circumscribed')
-    expect(flyout('Circumscribed')).not.toBeNull()
+    expect(glyphBeside(fit()!)).not.toBe(inscribed)
   })
 })
 
@@ -156,6 +144,6 @@ describe('ribbon fields belong to the command that uses them', () => {
   it('keeps the circle constructions out of the polygon command', () => {
     useCadStore.getState().setTool('polygon')
     render(<Toolbar />)
-    expect(flyout('Centre, radius')).toBeNull()
+    expect(dropdown('how the circle is pinned down')).toBeNull()
   })
 })

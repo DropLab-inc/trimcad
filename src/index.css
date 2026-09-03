@@ -258,72 +258,10 @@ button:disabled .icon .accent {
   fill: #fde68a;
 }
 
-/* The ribbon flyout: one button wide, with the alternatives dropping down beneath it. */
-.option-menu {
-  position: relative;
-}
-
-.option-menu-face {
-  position: relative;
-  width: 74px;
-  padding-right: 0.7rem;
-}
-
-.option-menu-caret {
-  position: absolute;
-  right: 0.25rem;
-  bottom: 0.15rem;
-  font-size: 0.55rem;
-  line-height: 1;
-  color: #7f93b1;
-}
-
-.option-menu-list {
-  position: absolute;
-  top: calc(100% + 2px);
-  left: 0;
-  z-index: 40;
-  margin: 0;
-  padding: 0.15rem;
-  list-style: none;
-  min-width: 168px;
-  background: #101c30;
-  border: 1px solid #3f5a7f;
-  border-radius: 0.2rem;
-  box-shadow: 0 6px 16px rgb(0 0 0 / 45%);
-}
-
-.option-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  width: 100%;
-  padding: 0.25rem 0.35rem;
-  border: 1px solid transparent;
-  border-radius: 0.15rem;
-  background: transparent;
-  color: #dbeafe;
-  font-size: 0.68rem;
-  text-align: left;
-  cursor: pointer;
-}
-
-.option-menu-item:hover {
-  background: #243654;
-}
-
-.option-menu-item.active {
-  border-color: #f59e0b;
-  color: #fde68a;
-  background: #5f430f;
-}
-
-.option-menu-item.active .icon .accent {
-  stroke: #fde68a;
-}
-
-.option-menu-item.active .icon .accent[fill='currentColor'] {
-  fill: #fde68a;
+/* The glyph sitting beside a ribbon dropdown, showing at a glance which option is chosen. */
+.ribbon-field .icon {
+  width: 18px;
+  height: 18px;
 }
 
 .ribbon-select {

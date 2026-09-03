@@ -1,7 +1,6 @@
 import { useCadStore } from '../core/store'
 import { shortestAlias, resolveCommand } from '../core/commandRegistry'
 import { Icon, type IconName } from './Icon'
-import { OptionMenu, type OptionChoice } from './OptionMenu'
 import type { ArrayType, CircleMode, DimensionType, HatchPattern, PolygonFit, ToolMode } from '../core/types'
 
 type ToolItem = { tool: ToolMode; label: string; icon: IconName; command: string; hint?: string }
@@ -27,8 +26,15 @@ const groups: ToolGroup[] = [
   },
 ]
 
+/** One entry of a ribbon dropdown: the value, how it reads, the glyph beside the box, and a hint. */
+type Choice<T extends string> = { value: T; label: string; icon: IconName; hint: string }
+
+/** Whichever option is currently chosen, so the icon and tooltip can follow the dropdown. */
+const chosen = <T extends string>(choices: Choice<T>[], value: T): Choice<T> =>
+  choices.find((choice) => choice.value === value) ?? choices[0]
+
 /** The ways CIRCLE can be pinned down, offered while the command is running. */
-const circleModes: OptionChoice<CircleMode>[] = [
+const circleModes: Choice<CircleMode>[] = [
   {
     value: 'center',
     label: 'Centre, radius',
@@ -62,7 +68,7 @@ const circleModes: OptionChoice<CircleMode>[] = [
 ]
 
 /** How POLYGON is sized, offered while the command is running. */
-const polygonFits: OptionChoice<PolygonFit>[] = [
+const polygonFits: Choice<PolygonFit>[] = [
   {
     value: 'inscribed',
     label: 'Inscribed',
@@ -249,7 +255,17 @@ export function Toolbar() {
               </button>
             ))}
             {activeTool === 'circle' && (
-              <OptionMenu title="Circle by" value={circleMode} options={circleModes} onChange={setCircleMode} />
+              <label className="ribbon-field" title={`How the circle is pinned down\n${chosen(circleModes, circleMode).hint}`}>
+                <Icon name={chosen(circleModes, circleMode).icon} />
+                Circle by
+                <select value={circleMode} onChange={(event) => setCircleMode(event.target.value as CircleMode)}>
+                  {circleModes.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
             {activeTool === 'polygon' && (
               <label className="ribbon-field" title="Number of polygon sides">
@@ -264,7 +280,17 @@ export function Toolbar() {
               </label>
             )}
             {activeTool === 'polygon' && (
-              <OptionMenu title="Polygon fit" value={polygonFit} options={polygonFits} onChange={setPolygonFit} />
+              <label className="ribbon-field" title={chosen(polygonFits, polygonFit).hint}>
+                <Icon name={chosen(polygonFits, polygonFit).icon} />
+                Fit
+                <select value={polygonFit} onChange={(event) => setPolygonFit(event.target.value as PolygonFit)}>
+                  {polygonFits.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
           </div>
         </section>
