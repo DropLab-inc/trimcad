@@ -1,4 +1,4 @@
-import { uid, angleBetween, offsetCircle, offsetLine } from './geometry'
+import { uid, offsetCircle, offsetLine } from './geometry'
 import { add, mul, sub, type Vec2 } from './math/vec2'
 import type { CadEntity, CircleEntity, DrawingDocument, LineEntity } from './types'
 
@@ -163,6 +163,8 @@ export const scaleEntities = (entities: CadEntity[], ids: string[], origin: Vec2
           p2: add(origin, mul(sub(entity.p2, origin), factor)),
           p3: entity.p3 ? add(origin, mul(sub(entity.p3, origin), factor)) : undefined,
           placement: entity.placement ? add(origin, mul(sub(entity.placement, origin), factor)) : undefined,
+          // The label grows with the geometry, just as a text object's height does.
+          scale: (entity.scale ?? 1) * Math.abs(factor),
         }
       case 'insert':
         return { ...entity, position: add(origin, mul(sub(entity.position, origin), factor)), scale: entity.scale * factor }
@@ -264,34 +266,6 @@ export const offsetEntities = (entities: CadEntity[], ids: string[], distanceVal
     }
   }
   return output
-}
-
-export const createFillet = (layerId: string, a: LineEntity, b: LineEntity, radius: number): CadEntity | null => {
-  const center = lineIntersection(a.start, a.end, b.start, b.end)
-  if (!center) return null
-  const aAngle = angleBetween(center, a.end)
-  const bAngle = angleBetween(center, b.end)
-  return {
-    id: uid(),
-    type: 'arc',
-    layerId,
-    center,
-    radius: Math.max(0.01, radius),
-    startAngle: aAngle,
-    endAngle: bAngle,
-  }
-}
-
-const lineIntersection = (a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2): Vec2 | null => {
-  const d = (a1.x - a2.x) * (b1.y - b2.y) - (a1.y - a2.y) * (b1.x - b2.x)
-  if (Math.abs(d) < 1e-9) return null
-  const x =
-    ((a1.x * a2.y - a1.y * a2.x) * (b1.x - b2.x) - (a1.x - a2.x) * (b1.x * b2.y - b1.y * b2.x)) /
-    d
-  const y =
-    ((a1.x * a2.y - a1.y * a2.x) * (b1.y - b2.y) - (a1.y - a2.y) * (b1.x * b2.y - b1.y * b2.x)) /
-    d
-  return { x, y }
 }
 
 export const joinEntities = (entities: CadEntity[], ids: string[], layerId: string): CadEntity[] => {

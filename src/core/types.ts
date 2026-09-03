@@ -107,6 +107,12 @@ export type DimensionEntity = BaseEntity & {
   /** Where the dimension line sits, picked as the final click. */
   placement?: Vec2
   valueOverride?: string
+  /**
+   * AutoCAD's DIMSCALE, held per dimension rather than per drawing: it multiplies the drawing's
+   * text height and arrow size so one dimension can be sized for its own view. Absent means 1,
+   * which is what dimensions saved before this existed should measure.
+   */
+  scale?: number
 }
 
 export type InsertEntity = BaseEntity & {
@@ -179,6 +185,8 @@ export type ToolMode =
   | 'offset'
   | 'trim'
   | 'extend'
+  | 'fillet'
+  | 'chamfer'
   | 'mirror'
   | 'move'
   | 'copy'

@@ -40,6 +40,7 @@ export const COMMANDS: CommandDef[] = [
   { name: 'DIMRADIUS', aliases: ['DRA'], category: 'Annotate', summary: 'Radius dimension' },
   { name: 'DIMDIAMETER', aliases: ['DDI'], category: 'Annotate', summary: 'Diameter dimension' },
   { name: 'DIMANGULAR', aliases: ['DAN'], category: 'Annotate', summary: 'Angular dimension' },
+  { name: 'DIMSCALE', aliases: ['DSC'], category: 'Annotate', summary: 'Size of dimension text and arrows' },
 
   // Modify
   { name: 'MOVE', aliases: ['M'], category: 'Modify', summary: 'Move objects by a displacement', tool: 'move' },
@@ -50,6 +51,8 @@ export const COMMANDS: CommandDef[] = [
   { name: 'OFFSET', aliases: ['O'], category: 'Modify', summary: 'Parallel copy at a distance', tool: 'offset' },
   { name: 'TRIM', aliases: ['TR'], category: 'Modify', summary: 'Cut objects back to an edge', tool: 'trim' },
   { name: 'EXTEND', aliases: ['EX'], category: 'Modify', summary: 'Lengthen objects to an edge', tool: 'extend' },
+  { name: 'FILLET', aliases: ['F'], category: 'Modify', summary: 'Round a corner with an arc', tool: 'fillet' },
+  { name: 'CHAMFER', aliases: ['CHA'], category: 'Modify', summary: 'Bevel a corner with a straight cut', tool: 'chamfer' },
   { name: 'ERASE', aliases: ['E'], category: 'Modify', summary: 'Delete the selection' },
   { name: 'JOIN', aliases: ['J'], category: 'Modify', summary: 'Join selected lines into a polyline' },
   { name: 'GROUP', aliases: ['G'], category: 'Modify', summary: 'Group the selection' },

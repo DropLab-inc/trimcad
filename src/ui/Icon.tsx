@@ -22,6 +22,8 @@ export type IconName =
   | 'offset'
   | 'trim'
   | 'extend'
+  | 'fillet'
+  | 'chamfer'
   | 'mirror'
   | 'dim-linear'
   | 'dim-aligned'
@@ -166,6 +168,23 @@ const GLYPHS: Record<IconName, ReactElement> = {
       <path d="M20 3 L20 21" className="accent" />
       <path d="M3 12 L11 12" />
       <path className="accent" d="M11 12 L18 12 M15 9 L18 12 L15 15" strokeDasharray="2 2" />
+    </g>
+  ),
+  // The corner that is cut away is dashed; the rounded or bevelled replacement is picked out.
+  fillet: (
+    <g>
+      <path d="M20 20 L20 11" />
+      <path d="M4 4 L13 4" />
+      <path className="accent" d="M13 4 A 7 7 0 0 1 20 11" />
+      <path d="M13 4 L20 4 L20 11" strokeDasharray="2 2" opacity={0.5} />
+    </g>
+  ),
+  chamfer: (
+    <g>
+      <path d="M20 20 L20 11" />
+      <path d="M4 4 L13 4" />
+      <path className="accent" d="M13 4 L20 11" />
+      <path d="M13 4 L20 4 L20 11" strokeDasharray="2 2" opacity={0.5} />
     </g>
   ),
   mirror: (

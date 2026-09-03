@@ -1,10 +1,14 @@
 import { useCadStore } from '../core/store'
+import { dimensionScale } from './renderers'
+import type { DimensionEntity } from '../core/types'
 
 export function PropertiesPanel() {
   const doc = useCadStore((state) => state.doc)
   const selectedIds = useCadStore((state) => state.selectedIds)
   const updateDocument = useCadStore((state) => state.updateDocument)
+  const resizeDimensions = useCadStore((state) => state.resizeDimensions)
   const selected = doc.entities.filter((entity) => selectedIds.includes(entity.id))
+  const dimensions = selected.filter((entity): entity is DimensionEntity => entity.type === 'dimension')
 
   if (selected.length === 0) {
     return (
@@ -54,6 +58,20 @@ export function PropertiesPanel() {
           }}
         />
       </label>
+      {dimensions.length > 0 && (
+        <label title="Size of the text and arrows, as a multiple of the drawing's dimension style">
+          Dimension size
+          <input
+            type="number"
+            min={0.01}
+            step={0.25}
+            value={dimensionScale(dimensions[0])}
+            onChange={(event) => {
+              resizeDimensions(dimensions.map((entity) => entity.id), Number(event.target.value))
+            }}
+          />
+        </label>
+      )}
     </section>
   )
 }

@@ -95,6 +95,22 @@ describe('objects DXF has no shape for', () => {
     expect(reopened.entities.find((entity) => entity.type === 'dimension')).toMatchObject({ p2: { x: 5, y: 0 } })
   })
 
+  it('brings a dimension back at the size it was drawn', () => {
+    const doc = makeDefaultDocument()
+    const dim: CadEntity = {
+      id: 'd',
+      type: 'dimension',
+      layerId: doc.layers[0].id,
+      dimType: 'linear',
+      p1: { x: 0, y: 0 },
+      p2: { x: 5, y: 0 },
+      scale: 2.5,
+    }
+
+    const reopened = roundTrip({ ...doc, entities: [dim] })
+    expect(reopened.entities.find((entity) => entity.type === 'dimension')).toMatchObject({ scale: 2.5 })
+  })
+
   it('keeps groups together', () => {
     const doc = makeDefaultDocument()
     const a = createLine(doc.layers[0].id, { x: 0, y: 0 }, { x: 1, y: 0 })

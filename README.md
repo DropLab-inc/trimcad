@@ -130,6 +130,8 @@ You can also type coordinates into the command line:
 | Offset | Set a distance in the ribbon, click the object, then click the side to offset toward |
 | Trim | Click the part you want removed |
 | Extend | Click the end you want lengthened |
+| Fillet | Set a radius, click one line then another, and the corner is rounded off |
+| Chamfer | Set a distance, click one line then another, and the corner is cut square across |
 | Mirror | Select objects first, then pick the two points of the mirror line |
 
 Offset produces a true parallel outline, so offsetting a rectangle inwards gives a smaller
@@ -157,6 +159,44 @@ Trimming a full circle leaves an arc covering everything except the piece you pi
 whose ends already rest on edges, which is what you are left with after a first trim, has nothing
 left to cut, so picking it erases it.
 
+### Fillet and chamfer
+
+Both work the same way: click one straight edge, then another, and the corner between them is
+replaced. Fillet rounds it with an arc of the radius set in the ribbon; chamfer cuts straight
+across at the distance set there. `R` at the fillet prompt and `D` at the chamfer prompt set the
+size without leaving the command, and the current value is shown in angle brackets on the prompt.
+
+An edge is any straight run, so this covers **lines, polylines, rectangles and polygons**. Picking
+two sides of one rectangle rounds that corner of the rectangle; picking a rectangle side and a
+loose line joins the two.
+
+Fillet also takes **arcs and circles** on one side of the corner, as AutoCAD does. There are up to
+eight arcs of a given radius that touch both a straight edge and a circle, so the one nearest your
+two clicks wins: click the part of the circle you want the fillet to land on. A circle is left
+whole rather than trimmed, again following AutoCAD, so only the straight edge is cut back and the
+fillet bridges the gap; an arc is trimmed to the tangent point like any other edge. The radius has
+to be large enough to span the gap, and filleting two curves together is not supported yet.
+Chamfer stays straight-only, which is also how AutoCAD behaves.
+
+**Where you click on each edge decides which side survives**, so on two lines that cross you
+choose which of the four corners gets cut by picking the two arms that form it. The edges do not
+have to meet: like AutoCAD, they are extended to the corner they would make if they did, so a
+fillet closes an open corner as readily as it rounds a closed one.
+
+A size of zero squares the corner off instead of rounding or bevelling it, trimming and extending
+both edges to a sharp point. The command stays armed after each corner so a run of them can be
+worked through, and `Esc` leaves.
+
+Chamfering a rectangle keeps it a single object, because a bevel is just another vertex. A fillet
+cannot be, since a polyline draws a straight chord between its points and that chord would sit
+under the arc, so the outline is opened at the rounded corner and the arc closes the gap. The
+shape looks the same and stays fully editable; it is simply an outline plus an arc rather than one
+closed loop. Rounding a corner in the middle of an already-open polyline splits it into two runs
+for the same reason.
+
+Splines and ellipses are not supported by either command, and picking one says as much rather than
+guessing.
+
 ### Object snap
 
 The right-hand Object Snap panel toggles each running snap individually. Endpoint, midpoint,
@@ -172,6 +212,13 @@ Pick the dimension type in the ribbon first. Linear and aligned dimensions take 
 (the circle or arc, then the label location). Angular takes four (vertex, both sides, then the
 arc location). Dimensions are drawn with extension lines, arrowheads and a text label formatted
 using the drawing's dimension style.
+
+The **Size** box beside the dimension buttons sets how large the text and arrowheads are drawn, as
+a multiple of the drawing's dimension style, and the preview under the crosshair follows it as you
+place the dimension. Each dimension keeps the size it was drawn at, so a detail view can be
+annotated larger than the rest of the drawing. To change one afterwards, select it and edit
+**Dimension size** in the properties panel. `DIMSCALE 2` does the same from the command line, and
+applies to the selection if there is one.
 
 ### Hatching
 
@@ -200,8 +247,8 @@ autocomplete list. Type `HELP` to print the whole table into the history panel.
 | Group | Commands |
 | --- | --- |
 | Draw | `LINE`/`L`, `PLINE`/`PL`, `RECTANG`/`REC`, `CIRCLE`/`C`, `ARC`/`A`, `ELLIPSE`/`EL`, `POLYGON`/`POL`, `SPLINE`/`SPL`, `HATCH`/`H` |
-| Annotate | `TEXT`/`DT`, `DIM`/`D`, `DIMLINEAR`/`DLI`, `DIMALIGNED`/`DAL`, `DIMRADIUS`/`DRA`, `DIMDIAMETER`/`DDI`, `DIMANGULAR`/`DAN` |
-| Modify | `MOVE`/`M`, `COPY`/`CO`, `ROTATE`/`RO`, `SCALE`/`SC`, `MIRROR`/`MI`, `OFFSET`/`O`, `TRIM`/`TR`, `EXTEND`/`EX`, `ERASE`/`E`, `JOIN`/`J`, `GROUP`/`G`, `EXPLODE`/`X`, `INSERT`/`I` |
+| Annotate | `TEXT`/`DT`, `DIM`/`D`, `DIMLINEAR`/`DLI`, `DIMALIGNED`/`DAL`, `DIMRADIUS`/`DRA`, `DIMDIAMETER`/`DDI`, `DIMANGULAR`/`DAN`, `DIMSCALE`/`DSC` |
+| Modify | `MOVE`/`M`, `COPY`/`CO`, `ROTATE`/`RO`, `SCALE`/`SC`, `MIRROR`/`MI`, `OFFSET`/`O`, `TRIM`/`TR`, `EXTEND`/`EX`, `FILLET`/`F`, `CHAMFER`/`CHA`, `ERASE`/`E`, `JOIN`/`J`, `GROUP`/`G`, `EXPLODE`/`X`, `INSERT`/`I` |
 | Edit | `SELECT`/`SE`, `ALL`, `UNDO`/`U`, `REDO`/`RE` |
 | View | `ZOOM`/`Z`, `OSNAP`/`OS`, `ORTHO`/`OR`, `POLAR`/`PO`, `HELP` |
 | File | `DXFIN`, `DXFOUT`, `PLOT`/`PRINT`, `PLOT1` |

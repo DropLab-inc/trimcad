@@ -40,6 +40,10 @@ export type PromptContext = {
   offsetPending: boolean
   /** OFFSET's Through option is on, so the copy passes through a picked point. */
   offsetThrough: boolean
+  filletRadius: number
+  chamferDistance: number
+  /** FILLET or CHAMFER is waiting for a typed radius or distance. */
+  cornerPending: boolean
   polygonSides: number
   /** TRIM and EXTEND are collecting their cutting or boundary edges. */
   pickingEdges: boolean
@@ -160,6 +164,29 @@ const promptsForTool = (ctx: PromptContext): Prompt[] => {
     case 'trim':
     case 'extend':
       return trimExtendPrompts(ctx)
+    case 'fillet':
+    case 'chamfer': {
+      // Both open at the pick, with the size reachable through an option, the way AutoCAD does.
+      const rounding = ctx.tool === 'fillet'
+      const size = rounding ? ctx.filletRadius : ctx.chamferDistance
+      if (ctx.cornerPending) {
+        return [
+          {
+            ...point(rounding ? 'Specify fillet radius' : 'Specify chamfer distance'),
+            kind: 'number',
+            defaultValue: String(size),
+          },
+        ]
+      }
+      const option: Keyword = rounding ? { key: 'R', label: 'Radius' } : { key: 'D', label: 'Distance' }
+      return [
+        {
+          ...entity('Select first object', [option]),
+          defaultValue: `${rounding ? 'Radius' : 'Dist'} = ${size}`,
+        },
+        entity('Select second object'),
+      ]
+    }
     case 'mirror':
       if (!ctx.hasSelection) return [selection('Select objects to mirror')]
       return [

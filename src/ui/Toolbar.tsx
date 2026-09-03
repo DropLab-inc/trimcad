@@ -87,6 +87,20 @@ const modifyTools: ToolItem[] = [
     hint: 'Click the end to lengthen, drag a fence across many, or hold Shift to trim',
   },
   {
+    tool: 'fillet',
+    label: 'Fillet',
+    icon: 'fillet',
+    command: 'FILLET',
+    hint: 'Click one line then another; the corner between them is rounded off',
+  },
+  {
+    tool: 'chamfer',
+    label: 'Chamfer',
+    icon: 'chamfer',
+    command: 'CHAMFER',
+    hint: 'Click one line then another; the corner between them is cut square across',
+  },
+  {
     tool: 'mirror',
     label: 'Mirror',
     icon: 'mirror',
@@ -110,10 +124,16 @@ export function Toolbar() {
   const setPolygonSides = useCadStore((state) => state.setPolygonSides)
   const dimensionType = useCadStore((state) => state.dimensionType)
   const setDimensionType = useCadStore((state) => state.setDimensionType)
+  const dimScale = useCadStore((state) => state.dimScale)
+  const setDimScale = useCadStore((state) => state.setDimScale)
   const hatchPattern = useCadStore((state) => state.hatchPattern)
   const setHatchPattern = useCadStore((state) => state.setHatchPattern)
   const offsetDistance = useCadStore((state) => state.offsetDistance)
   const setOffsetDistance = useCadStore((state) => state.setOffsetDistance)
+  const filletRadius = useCadStore((state) => state.filletRadius)
+  const setFilletRadius = useCadStore((state) => state.setFilletRadius)
+  const chamferDistance = useCadStore((state) => state.chamferDistance)
+  const setChamferDistance = useCadStore((state) => state.setChamferDistance)
   const mirrorKeepSource = useCadStore((state) => state.mirrorKeepSource)
   const toggleMirrorKeepSource = useCadStore((state) => state.toggleMirrorKeepSource)
   const edgeIds = useCadStore((state) => state.edgeIds)
@@ -194,6 +214,30 @@ export function Toolbar() {
             Keep source
             <input type="checkbox" checked={mirrorKeepSource} onChange={toggleMirrorKeepSource} />
           </label>
+          {activeTool === 'fillet' && (
+            <label className="ribbon-field" title="Radius of the arc that rounds the corner. Zero squares it off.">
+              Radius
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={filletRadius}
+                onChange={(event) => setFilletRadius(Number(event.target.value))}
+              />
+            </label>
+          )}
+          {activeTool === 'chamfer' && (
+            <label className="ribbon-field" title="How far back along each line the corner is cut. Zero squares it off.">
+              Chamfer
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={chamferDistance}
+                onChange={(event) => setChamferDistance(Number(event.target.value))}
+              />
+            </label>
+          )}
           {editingEdges && (
             <label className="ribbon-field" title="Which objects act as cutting or boundary edges">
               Edges
@@ -224,6 +268,19 @@ export function Toolbar() {
               <span>{item.label}</span>
             </button>
           ))}
+          <label
+            className="ribbon-field"
+            title="Size of the text and arrows on new dimensions, as a multiple of the drawing's dimension style (DIMSCALE)"
+          >
+            Size
+            <input
+              type="number"
+              min={0.01}
+              step={0.25}
+              value={dimScale}
+              onChange={(event) => setDimScale(Number(event.target.value))}
+            />
+          </label>
         </div>
       </section>
 

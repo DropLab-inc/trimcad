@@ -20,7 +20,7 @@ import {
 import { isTransformTool, transformedBy } from '../core/commands'
 import { editableEntities, lineweightPixels, visibleEntities as visibleOnLayers } from '../core/layers'
 import { getEntityAnchorPoints, isPointNearEntity, mirrorEntity } from '../core/geometry'
-import { offsetEntity } from '../core/modify'
+import { canFillet, chamferCorner, filletCorner, hasStraightSegments, offsetEntity } from '../core/modify'
 import type { DimensionEntity, SnapMode } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
 import { COMMAND_INPUT_ID } from './CommandLine'
@@ -130,8 +130,11 @@ export function CanvasViewport() {
   const draftPoints = useCadStore((state) => state.draftPoints)
   const polygonSides = useCadStore((state) => state.polygonSides)
   const dimensionType = useCadStore((state) => state.dimensionType)
+  const dimScale = useCadStore((state) => state.dimScale)
   const modifyTargetId = useCadStore((state) => state.modifyTargetId)
   const offsetDistance = useCadStore((state) => state.offsetDistance)
+  const filletRadius = useCadStore((state) => state.filletRadius)
+  const chamferDistance = useCadStore((state) => state.chamferDistance)
   const edgeIds = useCadStore((state) => state.edgeIds)
   const pickingEdges = useCadStore((state) => state.pickingEdges)
   const finishEdgeSelection = useCadStore((state) => state.finishEdgeSelection)
@@ -570,6 +573,39 @@ export function CanvasViewport() {
       return result ? renderEntity(result, ghost) : null
     }
 
+    // Once one line is chosen it is picked out in green, and hovering the second shows the corner
+    // that would result, so the radius can be judged before committing to it.
+    if ((activeTool === 'fillet' || activeTool === 'chamfer') && modifyTargetId && draftPoints.length === 1) {
+      const first = doc.entities.find((entity) => entity.id === modifyTargetId)
+      if (!first) return null
+
+      const eligible = activeTool === 'fillet' ? canFillet : hasStraightSegments
+      const second = [...editableEntities(doc)]
+        .reverse()
+        .find((entity) => eligible(entity) && isPointNearEntity(cursorWorld, entity, 8 / camera.zoom))
+      const picks = second
+        ? ([
+            { entity: first, point: draftPoints[0] },
+            { entity: second, point: cursorWorld },
+          ] as const)
+        : null
+      const result = picks
+        ? activeTool === 'fillet'
+          ? filletCorner(picks[0], picks[1], filletRadius)
+          : chamferCorner(picks[0], picks[1], chamferDistance, chamferDistance)
+        : null
+
+      return (
+        <g>
+          <g>{renderEntity(first, { ...ghost, color: '#4ade80', dash: undefined })}</g>
+          {result && (
+            // Fresh ids every frame would remount the preview, so they are pinned by position.
+            <g>{result.pieces.map((piece, index) => renderEntity({ ...piece, id: `corner-preview-${index}` }, ghost))}</g>
+          )}
+        </g>
+      )
+    }
+
     // MOVE, COPY, ROTATE and SCALE drag a ghost of the selection so you can see where it lands.
     if (isTransformTool(activeTool) && draftPoints.length === 1 && selectedIds.length > 0) {
       const base = draftPoints[0]
@@ -614,7 +650,18 @@ export function CanvasViewport() {
     }
 
     return null
-  }, [activeTool, cursorWorld, doc.dimStyle, doc.entities, draftPoints, modifyTargetId, offsetDistance, selectedIds])
+  }, [
+    activeTool,
+    camera.zoom,
+    chamferDistance,
+    cursorWorld,
+    doc,
+    draftPoints,
+    filletRadius,
+    modifyTargetId,
+    offsetDistance,
+    selectedIds,
+  ])
 
   const preview = useMemo(() => {
     const cursorWorld = commandPoint
@@ -703,6 +750,7 @@ export function CanvasViewport() {
             p2: points[1],
             p3: points[2],
             placement: cursorWorld,
+            scale: dimScale,
           }
           return renderDimension(dimension, doc.dimStyle, '#f59e0b', 'preview', true)
         }
@@ -717,13 +765,14 @@ export function CanvasViewport() {
           p1: draftPoints[0],
           p2: draftPoints[1],
           placement: cursorWorld,
+          scale: dimScale,
         }
         return renderDimension(dimension, doc.dimStyle, '#f59e0b', 'preview', true)
       }
       default:
         return null
     }
-  }, [activeTool, commandPoint, dimensionType, doc.dimStyle, draftPoints, polygonSides])
+  }, [activeTool, commandPoint, dimScale, dimensionType, doc.dimStyle, draftPoints, polygonSides])
 
   const grips = useMemo(() => {
     if (selectedIds.length === 0) return []

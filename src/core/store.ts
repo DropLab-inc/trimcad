@@ -25,7 +25,16 @@ import {
 import { findHatchBoundary, getEntityAnchorPoints, isPointNearEntity, mirrorEntity, uid } from './geometry'
 import { distanceToEntity } from './flatten'
 import { parseCoordinate } from './dynamicInput'
-import { extendResult, fenceHits, offsetEntity, trimResult } from './modify'
+import {
+  canFillet,
+  chamferCorner,
+  extendResult,
+  fenceHits,
+  filletCorner,
+  hasStraightSegments,
+  offsetEntity,
+  trimResult,
+} from './modify'
 import { COMMANDS, resolveCommand, type CommandDef } from './commandRegistry'
 import { formatPrompt, matchKeyword, promptFor, type Keyword, type Prompt, type PromptContext } from './prompts'
 import { applySelectionModifier, expandSelectionToGroups, type SelectionModifier } from './selection'
@@ -99,8 +108,16 @@ type CadState = {
   lwDisplay: boolean
   polygonSides: number
   dimensionType: DimensionType
+  /** Size given to the next dimension, as a multiple of the drawing's dimension style. */
+  dimScale: number
   hatchPattern: HatchPattern
   offsetDistance: number
+  /** Radius FILLET rounds a corner with. Zero squares the corner off instead. */
+  filletRadius: number
+  /** How far back along each line CHAMFER cuts. Zero squares the corner off instead. */
+  chamferDistance: number
+  /** FILLET or CHAMFER is waiting for a typed radius or distance. */
+  cornerPending: boolean
   mirrorKeepSource: boolean
   modifyTargetId: string | null
   /** Cutting or boundary edges for TRIM and EXTEND; null means every object counts. */
@@ -128,6 +145,12 @@ type CadState = {
   toggleMirrorKeepSource: () => void
   setPolygonSides: (sides: number) => void
   setDimensionType: (dimType: DimensionType) => void
+  /** Sets the size the next dimension will be drawn at. Existing ones keep their own. */
+  setDimScale: (scale: number) => void
+  setFilletRadius: (radius: number) => void
+  setChamferDistance: (distance: number) => void
+  /** Resizes dimensions that are already drawn, as the properties panel does. */
+  resizeDimensions: (ids: string[], scale: number) => void
   setHatchPattern: (pattern: HatchPattern) => void
   toggleSnapMode: (mode: SnapMode) => void
   finishDraft: () => void
@@ -173,6 +196,14 @@ type CadState = {
   pasteClipboard: () => void
 }
 
+/**
+ * Dimension sizes are a multiplier, so zero would erase the text and a negative would mirror the
+ * arrowheads. Anything that is not a positive number falls back to full size, which is also what
+ * an emptied input box sends while it is being retyped. The ceiling is wide enough for a site plan.
+ */
+const clampDimScale = (scale: number): number =>
+  Number.isFinite(scale) && scale > 0 ? Math.min(1000, scale) : 1
+
 const autosaveDoc = (doc: DrawingDocument) => {
   try {
     saveAutosave(doc)
@@ -202,8 +233,12 @@ export const useCadStore = create<CadState>((set, get) => ({
   lwDisplay: false,
   polygonSides: 6,
   dimensionType: 'linear',
+  dimScale: 1,
   hatchPattern: 'ansi31',
   offsetDistance: 10,
+  filletRadius: 10,
+  chamferDistance: 10,
+  cornerPending: false,
   mirrorKeepSource: true,
   modifyTargetId: null,
   edgeIds: null,
@@ -258,6 +293,21 @@ export const useCadStore = create<CadState>((set, get) => ({
   toggleMirrorKeepSource: () => set((state) => ({ mirrorKeepSource: !state.mirrorKeepSource })),
   setPolygonSides: (polygonSides) => set({ polygonSides: Math.max(3, Math.round(polygonSides)) }),
   setDimensionType: (dimensionType) => set({ dimensionType, draftPoints: [], activeTool: 'dimension' }),
+  setDimScale: (scale) => set({ dimScale: clampDimScale(scale) }),
+  // A corner may legitimately be squared off with zero, so only negatives and gaps are rejected.
+  setFilletRadius: (radius) => set({ filletRadius: Number.isFinite(radius) ? Math.abs(radius) : 0 }),
+  setChamferDistance: (distance) =>
+    set({ chamferDistance: Number.isFinite(distance) ? Math.abs(distance) : 0 }),
+  resizeDimensions: (ids, scale) => {
+    const size = clampDimScale(scale)
+    const wanted = new Set(ids)
+    get().updateDocument((doc) => ({
+      ...doc,
+      entities: doc.entities.map((entity) =>
+        entity.type === 'dimension' && wanted.has(entity.id) ? { ...entity, scale: size } : entity,
+      ),
+    }))
+  },
   setHatchPattern: (hatchPattern) => set({ hatchPattern }),
   toggleSnapMode: (mode) =>
     set((state) => ({
@@ -302,6 +352,7 @@ export const useCadStore = create<CadState>((set, get) => ({
       modifyTargetId: null,
       edgeIds: null,
       pickingEdges: false,
+      cornerPending: false,
       statusMessage: 'Ready',
     }),
   cancelCommand: () => {
@@ -312,6 +363,7 @@ export const useCadStore = create<CadState>((set, get) => ({
       modifyTargetId: null,
       edgeIds: null,
       pickingEdges: false,
+      cornerPending: false,
       commandInput: '',
       statusMessage: '*Cancel*',
     })
@@ -326,6 +378,8 @@ export const useCadStore = create<CadState>((set, get) => ({
       // OFFSET opens by asking for its distance, the way AutoCAD does.
       offsetPending: tool === 'offset',
       offsetThrough: false,
+      // FILLET and CHAMFER go straight to picking; the size is changed by its own option.
+      cornerPending: false,
       statusMessage: `Tool: ${tool.toUpperCase()}`,
     }),
   setActiveLayerId: (activeLayerId) => set({ activeLayerId }),
@@ -408,9 +462,11 @@ export const useCadStore = create<CadState>((set, get) => ({
     const value = Number(raw)
     if (Number.isFinite(value) && applyTypedNumber(state, value)) return
 
-    const command = resolveCommand(cmd)
+    // Settings commands take their value on the same line, as `DIMSCALE 2`.
+    const [head, ...rest] = cmd.split(/\s+/)
+    const command = resolveCommand(head)
     if (command) {
-      runCommandDef(state, command)
+      runCommandDef(state, command, rest.join(' '))
       return
     }
 
@@ -682,6 +738,94 @@ const runTrimExtend = (state: CadStoreState, point: Vec2, swapped: boolean) => {
   state.setStatusMessage(result.remaining.length === 0 ? 'Erased' : 'Trimmed')
 }
 
+/* ------------------------------------------------------ fillet and chamfer */
+
+/**
+ * FILLET and CHAMFER are the same two picks: choose one line, choose another, and the corner
+ * between them is replaced by an arc or a bevel. The side of each line that was clicked is the
+ * side that survives, so clicking either arm of a crossing picks which quarter gets cut.
+ *
+ * The command stays armed once a corner is done, so a run of them can be worked through without
+ * restarting. Escape leaves, as it does everywhere else.
+ */
+const runCorner = (state: CadStoreState, point: Vec2) => {
+  const rounding = state.activeTool === 'fillet'
+  const target = pickEntity(state, point)
+  if (!target) {
+    state.setStatusMessage('No object found at that point.')
+    return
+  }
+  const usable = rounding ? canFillet(target) : hasStraightSegments(target)
+  if (!usable) {
+    state.setStatusMessage(
+      rounding
+        ? 'Fillet needs a line, polyline, arc or circle.'
+        : 'Chamfer needs a straight edge. Use fillet for arcs and circles.',
+    )
+    return
+  }
+
+  const firstPick = state.draftPoints[0]
+  if (!state.modifyTargetId || !firstPick) {
+    useCadStore.setState({ modifyTargetId: target.id, draftPoints: [point] })
+    state.setStatusMessage('Select second object:')
+    return
+  }
+
+  const first = state.doc.entities.find((entity) => entity.id === state.modifyTargetId)
+  const forget = () => useCadStore.setState({ modifyTargetId: null, draftPoints: [] })
+
+  if (!first) {
+    forget()
+    state.setStatusMessage('That object is no longer there.')
+    return
+  }
+
+  const result = rounding
+    ? filletCorner({ entity: first, point: firstPick }, { entity: target, point }, state.filletRadius)
+    : chamferCorner(
+        { entity: first, point: firstPick },
+        { entity: target, point },
+        state.chamferDistance,
+        state.chamferDistance,
+      )
+
+  if (!result) {
+    forget()
+    const bothCurved = rounding && !hasStraightSegments(first) && !hasStraightSegments(target)
+    state.setStatusMessage(
+      bothCurved
+        ? 'Fillet needs at least one straight edge; two curves are not supported yet.'
+        : first.id === target.id
+          ? 'Pick two edges that meet at a corner.'
+          : rounding
+            ? 'Those edges cannot be filleted at this radius.'
+            : 'Those edges cannot be chamfered at this distance.',
+    )
+    return
+  }
+
+  // The replacements take the place of the first object they stand in for, so the drawing order
+  // of everything around them is left alone.
+  const replaced = new Set(result.replacedIds)
+  state.updateDocument((doc) => {
+    let planted = false
+    const entities = doc.entities.flatMap((entity) => {
+      if (!replaced.has(entity.id)) return [entity]
+      if (planted) return []
+      planted = true
+      return result.pieces
+    })
+    return { ...doc, entities }
+  })
+
+  forget()
+  const size = rounding ? state.filletRadius : state.chamferDistance
+  state.setStatusMessage(
+    size === 0 ? 'Corner squared off' : rounding ? `Filleted at radius ${size}` : `Chamfered at ${size}`,
+  )
+}
+
 /**
  * Trims or extends everything a dragged fence line crosses, in one undo step.
  *
@@ -837,6 +981,20 @@ const applyTypedNumber = (state: CadStoreState, value: number): boolean => {
     return true
   }
 
+  if (state.cornerPending && (state.activeTool === 'fillet' || state.activeTool === 'chamfer')) {
+    if (value < 0) {
+      state.log('error', 'The size cannot be negative.')
+      return true
+    }
+    const rounding = state.activeTool === 'fillet'
+    if (rounding) state.setFilletRadius(value)
+    else state.setChamferDistance(value)
+    useCadStore.setState({ cornerPending: false, draftPoints: [] })
+    state.log('result', rounding ? `Fillet radius ${value}` : `Chamfer distance ${value}`)
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return true
+  }
+
   if (applyTransformValue(state, value)) return true
 
   const base = state.draftPoints.at(-1)
@@ -852,7 +1010,7 @@ const applyTypedNumber = (state: CadStoreState, value: number): boolean => {
 }
 
 /** Runs a command from the registry, echoing what it is waiting for next. */
-const runCommandDef = (state: CadStoreState, command: CommandDef) => {
+const runCommandDef = (state: CadStoreState, command: CommandDef, argument = '') => {
   useCadStore.setState({ lastCommand: command.name })
 
   if (command.tool) {
@@ -877,6 +1035,30 @@ const runCommandDef = (state: CadStoreState, command: CommandDef) => {
       }
       state.setDimensionType(mapped[dimType] ?? 'linear')
       state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    }
+    case 'DIMSCALE': {
+      if (!argument) {
+        state.log('result', `Dimension size is ${state.dimScale}. Type DIMSCALE followed by a size to change it.`)
+        return
+      }
+      const size = Number(argument)
+      if (!Number.isFinite(size) || size <= 0) {
+        state.log('error', 'The dimension size must be a number greater than zero.')
+        return
+      }
+      state.setDimScale(size)
+      const applied = useCadStore.getState().dimScale
+      // Changing a property with objects selected edits them, as the properties palette does.
+      const chosen = state.selectedIds.filter(
+        (id) => state.doc.entities.find((entity) => entity.id === id)?.type === 'dimension',
+      )
+      if (chosen.length > 0) {
+        state.resizeDimensions(chosen, applied)
+        state.log('result', `Dimension size ${applied}, applied to ${chosen.length} dimension(s)`)
+        return
+      }
+      state.log('result', `Dimension size ${applied}`)
       return
     }
     case 'ERASE':
@@ -966,6 +1148,9 @@ export const promptContextFor = (state: CadStoreState, swapped = false): PromptC
   offsetDistance: state.offsetDistance,
   offsetPending: state.offsetPending,
   offsetThrough: state.offsetThrough,
+  filletRadius: state.filletRadius,
+  chamferDistance: state.chamferDistance,
+  cornerPending: state.cornerPending,
   polygonSides: state.polygonSides,
   pickingEdges: state.pickingEdges,
   edgeCount: state.edgeIds === null ? null : state.edgeIds.length,
@@ -993,6 +1178,12 @@ const runKeyword = (state: CadStoreState, keyword: Keyword) => {
       return
     case 'Fence':
       state.setStatusMessage('Drag a fence line across the objects to edit.')
+      return
+    case 'Radius':
+    case 'Distance':
+      // The pick starts over, so a size typed midway through does not half-apply.
+      useCadStore.setState({ cornerPending: true, modifyTargetId: null, draftPoints: [] })
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
       return
     case 'Undo':
       state.undo()
@@ -1074,6 +1265,11 @@ const applyModifyTool = (state: CadStoreState, point: Vec2, swapped: boolean): b
 
   if (activeTool === 'trim' || activeTool === 'extend') {
     runTrimExtend(state, point, swapped)
+    return true
+  }
+
+  if (activeTool === 'fillet' || activeTool === 'chamfer') {
+    runCorner(state, point)
     return true
   }
 
@@ -1252,7 +1448,7 @@ const applyDimensionTool = (
   point: Vec2,
   layerId: string,
 ) => {
-  const { dimensionType, draftPoints, addDraftPoint, addEntity, clearDraft } = state
+  const { dimensionType, dimScale, draftPoints, addDraftPoint, addEntity, clearDraft } = state
 
   if (dimensionType === 'radial' || dimensionType === 'diameter') {
     if (draftPoints.length === 0) {
@@ -1275,6 +1471,7 @@ const applyDimensionTool = (
       p1: draftPoints[0],
       p2: draftPoints[1],
       placement: point,
+      scale: dimScale,
     })
     clearDraft()
     return
@@ -1294,6 +1491,7 @@ const applyDimensionTool = (
       p2: draftPoints[1],
       p3: draftPoints[2],
       placement: point,
+      scale: dimScale,
     })
     clearDraft()
     return
@@ -1311,6 +1509,7 @@ const applyDimensionTool = (
     p1: draftPoints[0],
     p2: draftPoints[1],
     placement: point,
+    scale: dimScale,
   })
   clearDraft()
 }

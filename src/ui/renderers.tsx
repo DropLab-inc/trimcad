@@ -29,11 +29,19 @@ export type DimensionGeometry = {
 }
 
 /**
+ * How much a dimension enlarges the drawing's dimension style. Dimensions drawn before the size
+ * was adjustable have none, and must keep measuring the same as they always did.
+ */
+export const dimensionScale = (dimension: DimensionEntity): number =>
+  dimension.scale && dimension.scale > 0 ? dimension.scale : 1
+
+/**
  * Resolves the drawn geometry for a dimension. `placement` is the point the user picked for the
  * dimension line, which is what makes dimensions behave like AutoCAD rather than a bare line.
  */
 export const dimensionGeometry = (dimension: DimensionEntity): DimensionGeometry => {
   const placement = dimension.placement ?? dimension.p2
+  const scale = dimensionScale(dimension)
   const empty: DimensionGeometry = {
     extensions: [],
     line: null,
@@ -99,7 +107,8 @@ export const dimensionGeometry = (dimension: DimensionEntity): DimensionGeometry
       extensions: [],
       line: { a: start, b: edge },
       arc: null,
-      textPosition: add(edge, mul(direction, 2)),
+      // The label sits just beyond the leader, so the gap has to grow with the text.
+      textPosition: add(edge, mul(direction, 2 * scale)),
       textAngleDeg: (angle * 180) / Math.PI,
       arrows:
         dimension.dimType === 'diameter'
@@ -159,6 +168,9 @@ export const renderDimension = (
 ): ReactElement => {
   const geometry = dimensionGeometry(dimension)
   const label = makeDimensionLabel(dimension, dimStyle.precision, dimStyle.suffix)
+  const scale = dimensionScale(dimension)
+  const textHeight = dimStyle.textHeight * scale
+  const arrowSize = dimStyle.arrowSize * scale
   const stroke = preview ? '#f59e0b' : color
   const dash = preview ? '6 4' : undefined
   let textAngle = geometry.textAngleDeg
@@ -202,14 +214,14 @@ export const renderDimension = (
         />
       )}
       {geometry.arrows.map((arrow, index) => (
-        <polygon key={`arrow-${index}`} points={arrowPoints(arrow.tip, arrow.angle, dimStyle.arrowSize)} fill={stroke} />
+        <polygon key={`arrow-${index}`} points={arrowPoints(arrow.tip, arrow.angle, arrowSize)} fill={stroke} />
       ))}
       <text
         transform={`translate(${geometry.textPosition.x}, ${geometry.textPosition.y}) rotate(${textAngle})`}
-        dy={-dimStyle.textHeight * 0.35}
+        dy={-textHeight * 0.35}
         textAnchor="middle"
         fill={stroke}
-        fontSize={dimStyle.textHeight}
+        fontSize={textHeight}
       >
         {label}
       </text>
