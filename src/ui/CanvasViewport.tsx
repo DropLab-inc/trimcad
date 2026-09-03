@@ -202,6 +202,12 @@ export function CanvasViewport() {
   /** Whether clicking one corner and then the other is an accepted way to draw a window out. */
   const clickWindows = preferences.windowSelection !== 'drag'
   /**
+   * What a pick does to what is already chosen. With "use Shift to add" off, every pick adds, as
+   * AutoCAD's PICKADD does; Ctrl still takes things back out either way.
+   */
+  const selectionModifier = (event: { shiftKey: boolean; ctrlKey: boolean }) =>
+    event.ctrlKey ? 'remove' : event.shiftKey || !preferences.shiftToAdd ? 'add' : 'replace'
+  /**
    * How far each arm of the crosshair reaches, from AutoCAD's CURSORSIZE. At 100 it spans the whole
    * viewport, which is the full-screen crosshair; below that it becomes a cross around the cursor.
    */
@@ -571,7 +577,7 @@ export function CanvasViewport() {
       } else {
         // A press that went nowhere was a plain click, so it picks in the usual way rather than
         // quietly doing nothing just because it landed on something already chosen.
-        const modifier = event.shiftKey ? 'add' : event.ctrlKey ? 'remove' : 'replace'
+        const modifier = selectionModifier(event)
         const hit = [...pickableEntities]
           .reverse()
           .find((entity) => isPointNearEntity(objectDrag.from, entity, pickTolerance))
@@ -595,7 +601,7 @@ export function CanvasViewport() {
     }
 
     if ((activeTool === 'select' || pickingEdges) && boxStart && boxEnd) {
-      const modifier = event.shiftKey || !preferences.shiftToAdd ? 'add' : event.ctrlKey ? 'remove' : 'replace'
+      const modifier = selectionModifier(event)
       const dragged = Math.hypot(boxEnd.x - boxStart.x, boxEnd.y - boxStart.y)
       const closeWindow = () => {
         const start = screenToWorld(boxStart, camera)

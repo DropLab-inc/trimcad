@@ -418,7 +418,7 @@ describe('rectangular selection', () => {
 })
 
 describe('drawing a selection window out with two clicks', () => {
-  const click = (svg: SVGSVGElement, at: Vec2, options: { shiftKey?: boolean } = {}) => {
+  const click = (svg: SVGSVGElement, at: Vec2, options: { shiftKey?: boolean; ctrlKey?: boolean } = {}) => {
     fireEvent.mouseDown(svg, { clientX: at.x, clientY: at.y, button: 0, ...options })
     fireEvent.mouseUp(svg, { clientX: at.x, clientY: at.y, button: 0, ...options })
   }
@@ -551,6 +551,30 @@ describe('drawing a selection window out with two clicks', () => {
     moveTo(svg, { x: 300, y: 300 })
 
     expect(useCadStore.getState().statusMessage).toBe('Nothing selected')
+  })
+
+  it('makes every pick add to the selection when Shift is not required', () => {
+    const first = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const second = createLine(layerId(), { x: 100, y: 300 }, { x: 400, y: 300 })
+    const { svg } = canvas([first, second])
+    act(() => setPreference('shiftToAdd', false))
+
+    click(svg, { x: 250, y: 100 })
+    click(svg, { x: 250, y: 300 })
+
+    expect(useCadStore.getState().selectedIds).toHaveLength(2)
+  })
+
+  it('still lets Ctrl take something back out when every pick adds', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { svg } = canvas([line])
+    act(() => setPreference('shiftToAdd', false))
+
+    // Clear of the midpoint grip, which a press would otherwise take hold of instead.
+    click(svg, { x: 200, y: 100 })
+    click(svg, { x: 200, y: 100 }, { ctrlKey: true })
+
+    expect(useCadStore.getState().selectedIds).toEqual([])
   })
 
   it('puts an open window away when a command starts, so it cannot swallow the first point', () => {
