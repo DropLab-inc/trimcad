@@ -28,7 +28,7 @@ function App() {
         <div className="titlebar">
           <h1 className="wordmark">
             <span className="wordmark-logo" role="img" aria-label="DropLab" />
-            <span className="wordmark-suffix">Cad</span>
+            <span className="wordmark-suffix">CAD</span>
           </h1>
           <FileMenu />
           <QuickAccess />
