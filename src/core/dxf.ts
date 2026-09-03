@@ -33,9 +33,39 @@ export const exportDocumentToDxf = (document: DrawingDocument): string => {
     addEntity(drawing, entity)
   }
 
+  const body = drawing.toDxfString()
   // JSON.stringify escapes newlines, so the whole document stays on the single line a comment needs.
-  const embedded = JSON.stringify({ fingerprint: fingerprintOf(document.entities), document })
-  return `999\n${EMBED_TAG}${embedded}\n${drawing.toDxfString()}`
+  const embedded = JSON.stringify({ fingerprint: fingerprintOfDxf(body), document })
+  return `999\n${EMBED_TAG}${embedded}\n${body}`
+}
+
+/**
+ * Fingerprints the DXF that was actually written, rather than the document in memory.
+ *
+ * Not every shape has an exact DXF form. A spline is written as control points and read back as the
+ * curve those points describe, and an ellipse comes back with its longer radius first. Fingerprinting
+ * the original would therefore never match on reload, and the embedded document — the only place
+ * hatches, dimensions and groups are kept — would be thrown away every time one of those was in the
+ * drawing. Taking both fingerprints through the same pipeline makes a match mean what it should:
+ * that nothing outside this app has touched the file.
+ */
+const fingerprintOfDxf = (dxf: string): string => {
+  try {
+    return fingerprintOf(entitiesFromDxf(dxf))
+  } catch {
+    // An unreadable file just means the embedded copy is not trusted, and the DXF itself is used.
+    return ''
+  }
+}
+
+const entitiesFromDxf = (content: string, layerIdFor: (name: unknown) => string = () => ''): CadEntity[] => {
+  const parsed = new DxfParser().parseSync(content) as any
+  const entities: CadEntity[] = []
+  for (const raw of (parsed?.entities ?? []) as any[]) {
+    const entity = readEntity(raw, layerIdFor(raw.layer))
+    if (entity) entities.push(entity)
+  }
+  return entities
 }
 
 /**
@@ -124,9 +154,27 @@ const addEntity = (drawing: any, entity: CadEntity) => {
         (entity.endAngle * 180) / Math.PI,
       )
       return
-    case 'ellipse':
-      drawing.drawEllipse(entity.center.x, entity.center.y, entity.rx, entity.ry, (entity.rotation * 180) / Math.PI)
+    case 'ellipse': {
+      /**
+       * DXF does not describe an ellipse by two radii and a rotation. It gives the endpoint of the
+       * major axis relative to the centre, and the ratio of the minor axis to it, which must be no
+       * greater than one. So the longer radius always leads, and if that is `ry` the axis is a
+       * quarter turn on from the stored rotation.
+       */
+      const major = Math.max(entity.rx, entity.ry)
+      const minor = Math.min(entity.rx, entity.ry)
+      const angle = entity.rx >= entity.ry ? entity.rotation : entity.rotation + Math.PI / 2
+      drawing.drawEllipse(
+        entity.center.x,
+        entity.center.y,
+        Math.cos(angle) * major,
+        Math.sin(angle) * major,
+        major === 0 ? 0 : minor / major,
+        0,
+        Math.PI * 2,
+      )
       return
+    }
     case 'polyline':
       drawing.drawPolyline(
         entity.points.map((point) => [point.x, point.y]),
@@ -158,11 +206,7 @@ export const importDocumentFromDxf = (content: string, base: DrawingDocument): D
   const layerIdFor = (name: unknown): string =>
     (typeof name === 'string' ? byName.get(name.toUpperCase()) : undefined) ?? fallbackLayerId
 
-  const entities: CadEntity[] = []
-  for (const raw of (parsed?.entities ?? []) as any[]) {
-    const entity = readEntity(raw, layerIdFor(raw.layer))
-    if (entity) entities.push(entity)
-  }
+  const entities = entitiesFromDxf(content, layerIdFor)
 
   // A file this app wrote carries the whole drawing, including everything DXF has no room for.
   const embedded = readEmbedded(content, entities)

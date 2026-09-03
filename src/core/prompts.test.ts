@@ -17,6 +17,8 @@ const context = (overrides: Partial<PromptContext> = {}): PromptContext => ({
   arrayType: 'rect',
   arrayRows: 3,
   arrayColumns: 4,
+  arrayRowSpacing: 20,
+  arrayColumnSpacing: 20,
   arrayCount: 6,
   arrayFillAngle: 360,
   arrayPending: null,

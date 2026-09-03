@@ -138,6 +138,8 @@ export function CanvasViewport() {
   const arrayType = useCadStore((state) => state.arrayType)
   const arrayRows = useCadStore((state) => state.arrayRows)
   const arrayColumns = useCadStore((state) => state.arrayColumns)
+  const arrayRowSpacing = useCadStore((state) => state.arrayRowSpacing)
+  const arrayColumnSpacing = useCadStore((state) => state.arrayColumnSpacing)
   const arrayCount = useCadStore((state) => state.arrayCount)
   const arrayFillAngle = useCadStore((state) => state.arrayFillAngle)
   const arrayRotateItems = useCadStore((state) => state.arrayRotateItems)
@@ -727,7 +729,18 @@ export function CanvasViewport() {
           </g>
         )
       }
-      if (draftPoints.length !== 1) return null
+      // Before a base point is picked the grid stands on the typed spacing, so the numbers in the
+      // ribbon can be judged against the drawing rather than guessed at.
+      if (draftPoints.length === 0) {
+        const copies = rectangularArrayCopies(sources, {
+          rows: arrayRows,
+          columns: arrayColumns,
+          rowSpacing: arrayRowSpacing,
+          columnSpacing: arrayColumnSpacing,
+        })
+        return <g>{copies.map((entity) => renderEntity(entity, ghost))}</g>
+      }
+
       const base = draftPoints[0]
       const copies = rectangularArrayCopies(sources, {
         rows: arrayRows,
@@ -756,10 +769,12 @@ export function CanvasViewport() {
   }, [
     activeTool,
     arrayColumns,
+    arrayColumnSpacing,
     arrayCount,
     arrayFillAngle,
     arrayRotateItems,
     arrayRows,
+    arrayRowSpacing,
     arrayType,
     camera.zoom,
     chamferDistance,

@@ -212,6 +212,8 @@ export function Toolbar() {
   const setArrayType = useCadStore((state) => state.setArrayType)
   const arrayRows = useCadStore((state) => state.arrayRows)
   const arrayColumns = useCadStore((state) => state.arrayColumns)
+  const arrayRowSpacing = useCadStore((state) => state.arrayRowSpacing)
+  const arrayColumnSpacing = useCadStore((state) => state.arrayColumnSpacing)
   const arrayCount = useCadStore((state) => state.arrayCount)
   const arrayFillAngle = useCadStore((state) => state.arrayFillAngle)
   const setArrayOption = useCadStore((state) => state.setArrayOption)
@@ -378,6 +380,22 @@ export function Toolbar() {
                   max={200}
                   value={arrayColumns}
                   onChange={(event) => setArrayOption('columns', Number(event.target.value))}
+                />
+              </label>
+              <label className="ribbon-field" title="Distance from one row to the next. Negative builds downwards.">
+                Row spacing
+                <input
+                  type="number"
+                  value={arrayRowSpacing}
+                  onChange={(event) => setArrayOption('rowSpacing', Number(event.target.value))}
+                />
+              </label>
+              <label className="ribbon-field" title="Distance from one column to the next. Negative builds leftwards.">
+                Col spacing
+                <input
+                  type="number"
+                  value={arrayColumnSpacing}
+                  onChange={(event) => setArrayOption('columnSpacing', Number(event.target.value))}
                 />
               </label>
             </>

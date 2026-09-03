@@ -189,12 +189,17 @@ the two, and `ARRAYRECT` and `ARRAYPOLAR` start the command with the choice alre
 whole array previews under the crosshair before you commit to it, and arrives as a single undo
 step so a misjudged count costs one keystroke to take back.
 
-A **rectangular** array takes its spacing the way Move takes a displacement: pick a base point,
-then pick where the neighbouring item goes. This means the gap can be snapped off existing
-geometry instead of guessed at, and the two axes can be set in one gesture, since the horizontal
-part of that displacement spaces the columns and the vertical part spaces the rows. Dragging back
-past the base point gives a negative spacing, which builds the grid down and to the left. Rows and
-columns come from the ribbon, or from `R` and `COL` at the prompt.
+A **rectangular** array is defined by four numbers: rows, columns, row spacing and column spacing.
+All four sit in the ribbon, or come from `R`, `COL`, `RS` and `CS` at the prompt, and the grid is
+drawn as a preview against the selection as soon as the command starts, so the numbers can be
+judged against the drawing rather than guessed at. Press Enter to build it. A negative spacing
+builds the grid down or to the left instead.
+
+When the gap is better taken off the drawing than typed, pick a base point and then pick where the
+neighbouring item goes, the way Move takes a displacement. The horizontal part of that displacement
+spaces the columns and the vertical part spaces the rows, so both axes are set in one gesture and
+either can be snapped to existing geometry. The picked spacing is written back into the ribbon, so
+the same grid can be repeated without measuring it again.
 
 A **polar** array needs only its centre. The item count includes the original, so six items over a
 full turn sit sixty degrees apart. The fill angle behaves as AutoCAD's does: a partial sweep puts
@@ -369,6 +374,24 @@ to show on paper as black.
 ```bash
 npm run build
 ```
+
+## Saving
+
+DXF is the drawing's own save format. Layers, colours and geometry are written as real DXF, so the
+file opens anywhere.
+
+DXF has no room for some of what the app holds: hatches, dimensions and groups have no equivalent,
+and a layer's lineweight and its frozen and locked flags have nowhere to go. So the whole document
+is written a second time into a comment, which other programs skip over and this one reads back to
+restore the drawing exactly as it was.
+
+The comment is only trusted if the DXF geometry still matches it, so a file edited elsewhere is
+read from its DXF rather than from a stale copy. That check compares two fingerprints taken through
+the same pipeline — both from DXF as parsed — because not every shape has an exact DXF form. A
+spline is written as control points and read back as the curve they describe, and DXF insists an
+ellipse leads with its longer radius. Fingerprinting the in-memory document instead would never
+match on reload, and the embedded copy would be discarded every time a drawing contained one of
+those.
 
 ## Notes
 

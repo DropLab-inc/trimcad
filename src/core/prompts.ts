@@ -1,7 +1,7 @@
 import type { ArrayType, CircleMode, DimensionType, PolygonFit, ToolMode } from './types'
 
 /** One of ARRAY's counts or angles, named so a typed number knows where to land. */
-export type ArrayOption = 'rows' | 'columns' | 'count' | 'fillAngle'
+export type ArrayOption = 'rows' | 'columns' | 'rowSpacing' | 'columnSpacing' | 'count' | 'fillAngle'
 
 /**
  * Prompts shown at the command line and under the crosshair.
@@ -57,6 +57,8 @@ export type PromptContext = {
   arrayType: ArrayType
   arrayRows: number
   arrayColumns: number
+  arrayRowSpacing: number
+  arrayColumnSpacing: number
   arrayCount: number
   arrayFillAngle: number
   /** Which of ARRAY's counts is waiting to be typed, or null while it wants a point. */
@@ -77,6 +79,8 @@ const selection = (text: string, keywords: Keyword[] = []): Prompt => ({ text, k
 const ARRAY_OPTION_PROMPTS: Record<ArrayOption, string> = {
   rows: 'Enter the number of rows',
   columns: 'Enter the number of columns',
+  rowSpacing: 'Enter the distance between rows',
+  columnSpacing: 'Enter the distance between columns',
   count: 'Enter the number of items in the array',
   fillAngle: 'Specify the angle to fill, in degrees',
 }
@@ -199,11 +203,13 @@ const promptsForTool = (ctx: PromptContext): Prompt[] => {
       }
       return [
         {
-          ...point('Specify base point for the spacing', [
+          ...point('Press Enter to build the grid, or pick a base point to set the spacing by eye', [
             { key: 'R', label: 'Rows' },
             { key: 'COL', label: 'Columns' },
+            { key: 'RS', label: 'Row spacing' },
+            { key: 'CS', label: 'Column spacing' },
           ]),
-          defaultValue: `${ctx.arrayRows} rows by ${ctx.arrayColumns} columns`,
+          defaultValue: `${ctx.arrayRows} by ${ctx.arrayColumns} at ${ctx.arrayRowSpacing} by ${ctx.arrayColumnSpacing}`,
         },
         point('Specify where the neighbouring item goes'),
       ]

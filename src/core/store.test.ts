@@ -278,9 +278,12 @@ describe('ARRAY', () => {
   beforeEach(() => {
     resetDrawing()
     useCadStore.getState().setTool('select')
+    useCadStore.getState().setSelection([])
     useCadStore.getState().setArrayType('rect')
     useCadStore.getState().setArrayOption('rows', 2)
     useCadStore.getState().setArrayOption('columns', 3)
+    useCadStore.getState().setArrayOption('rowSpacing', 20)
+    useCadStore.getState().setArrayOption('columnSpacing', 20)
   })
 
   it('asks for a selection before it will array anything', () => {
@@ -306,6 +309,75 @@ describe('ARRAY', () => {
     expect(places).toContainEqual({ x: 20, y: 0 })
     expect(places).toContainEqual({ x: 0, y: 5 })
     expect(places).toContainEqual({ x: 20, y: 5 })
+  })
+
+  it('builds the grid from the typed spacing when Enter is pressed instead of picking', () => {
+    selectOneCircle()
+    useCadStore.getState().setTool('array')
+    useCadStore.getState().setArrayOption('rowSpacing', 5)
+    useCadStore.getState().setArrayOption('columnSpacing', 10)
+
+    useCadStore.getState().finishDraft()
+
+    expect(useCadStore.getState().doc.entities).toHaveLength(6)
+    const places = centres()
+    expect(places).toContainEqual({ x: 10, y: 0 })
+    expect(places).toContainEqual({ x: 20, y: 0 })
+    expect(places).toContainEqual({ x: 0, y: 5 })
+    expect(places).toContainEqual({ x: 20, y: 5 })
+  })
+
+  it('takes a negative spacing to mean the grid runs down and to the left', () => {
+    selectOneCircle()
+    useCadStore.getState().setTool('array')
+    useCadStore.getState().setArrayOption('rows', 2)
+    useCadStore.getState().setArrayOption('columns', 2)
+    useCadStore.getState().setArrayOption('rowSpacing', -4)
+    useCadStore.getState().setArrayOption('columnSpacing', -6)
+
+    useCadStore.getState().finishDraft()
+
+    expect(centres()).toContainEqual({ x: -6, y: -4 })
+  })
+
+  it('will not build a grid that has no spacing at all', () => {
+    selectOneCircle()
+    useCadStore.getState().setTool('array')
+    useCadStore.getState().setArrayOption('rowSpacing', 0)
+    useCadStore.getState().setArrayOption('columnSpacing', 0)
+
+    useCadStore.getState().finishDraft()
+
+    expect(useCadStore.getState().doc.entities).toHaveLength(1)
+    expect(useCadStore.getState().statusMessage).toMatch(/spacing/i)
+  })
+
+  it('asks for a selection when Enter is pressed with nothing chosen', () => {
+    useCadStore.getState().setTool('array')
+    useCadStore.getState().finishDraft()
+
+    expect(useCadStore.getState().statusMessage).toMatch(/select objects/i)
+  })
+
+  it('remembers a spacing picked by eye, so the same grid can be repeated', () => {
+    selectOneCircle()
+    useCadStore.getState().setTool('array')
+    applyDrawTool({ x: 0, y: 0 })
+    applyDrawTool({ x: 12, y: 7 })
+
+    expect(useCadStore.getState().arrayColumnSpacing).toBe(12)
+    expect(useCadStore.getState().arrayRowSpacing).toBe(7)
+  })
+
+  it('reads typed spacings from the command line', () => {
+    useCadStore.getState().setTool('array')
+    useCadStore.getState().applyKeyword({ key: 'RS', label: 'Row spacing' })
+    useCadStore.getState().executeCommand('8')
+    useCadStore.getState().applyKeyword({ key: 'CS', label: 'Column spacing' })
+    useCadStore.getState().executeCommand('9')
+
+    expect(useCadStore.getState().arrayRowSpacing).toBe(8)
+    expect(useCadStore.getState().arrayColumnSpacing).toBe(9)
   })
 
   it('refuses a spacing of nothing, which would stack every copy on the original', () => {

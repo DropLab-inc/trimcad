@@ -139,6 +139,9 @@ type CadState = {
   arrayType: ArrayType
   arrayRows: number
   arrayColumns: number
+  /** Centre-to-centre distance between rows and between columns, in drawing units. */
+  arrayRowSpacing: number
+  arrayColumnSpacing: number
   /** How many items a polar array holds, counting the original. */
   arrayCount: number
   /** How much of a turn a polar array spans, in degrees. */
@@ -189,7 +192,7 @@ type CadState = {
   setCircleMode: (mode: CircleMode) => void
   setArrayType: (type: ArrayType) => void
   /** Changes one of ARRAY's counts or angles, keeping it inside a sensible range. */
-  setArrayOption: (option: 'rows' | 'columns' | 'count' | 'fillAngle', value: number) => void
+  setArrayOption: (option: ArrayOption, value: number) => void
   toggleArrayRotateItems: () => void
   setDimensionType: (dimType: DimensionType) => void
   /** Sets the size the next dimension will be drawn at. Existing ones keep their own. */
@@ -297,6 +300,8 @@ export const useCadStore = create<CadState>((set, get) => ({
   arrayType: 'rect' as ArrayType,
   arrayRows: 3,
   arrayColumns: 4,
+  arrayRowSpacing: 20,
+  arrayColumnSpacing: 20,
   arrayCount: 6,
   arrayFillAngle: 360,
   arrayRotateItems: true,
@@ -373,6 +378,11 @@ export const useCadStore = create<CadState>((set, get) => ({
         return set({ arrayRows: Math.max(1, Math.round(value)) })
       case 'columns':
         return set({ arrayColumns: Math.max(1, Math.round(value)) })
+      // A negative spacing is meaningful: it builds the grid down or to the left instead.
+      case 'rowSpacing':
+        return set({ arrayRowSpacing: value })
+      case 'columnSpacing':
+        return set({ arrayColumnSpacing: value })
       case 'count':
         return set({ arrayCount: Math.max(1, Math.round(value)) })
       // A sweep may run either way round, but more than a full turn just repeats itself.
@@ -407,6 +417,7 @@ export const useCadStore = create<CadState>((set, get) => ({
   finishDraft: () => {
     const state = get()
     const { activeTool, draftPoints } = state
+    if (finishArray(state)) return
     const layerId = state.activeLayerId || state.doc.layers[0].id
     // LINE has already committed each segment as it was drawn, so it only needs clearing.
     if (activeTool === 'polyline' && draftPoints.length >= 2) {
@@ -1175,14 +1186,14 @@ const applyTypedNumber = (state: CadStoreState, value: number): boolean => {
     state.setArrayOption(option, value)
     useCadStore.setState({ arrayPending: null })
     const now = useCadStore.getState()
-    const shown =
-      option === 'rows'
-        ? `${now.arrayRows} rows`
-        : option === 'columns'
-          ? `${now.arrayColumns} columns`
-          : option === 'count'
-            ? `${now.arrayCount} items`
-            : `Fill angle ${now.arrayFillAngle}\u00b0`
+    const shown = {
+      rows: `${now.arrayRows} rows`,
+      columns: `${now.arrayColumns} columns`,
+      rowSpacing: `Row spacing ${now.arrayRowSpacing}`,
+      columnSpacing: `Column spacing ${now.arrayColumnSpacing}`,
+      count: `${now.arrayCount} items`,
+      fillAngle: `Fill angle ${now.arrayFillAngle}\u00b0`,
+    }[option]
     state.log('result', shown)
     state.log('prompt', formatPrompt(currentPrompt(now)))
     return true
@@ -1377,6 +1388,8 @@ export const promptContextFor = (state: CadStoreState, swapped = false): PromptC
   arrayType: state.arrayType,
   arrayRows: state.arrayRows,
   arrayColumns: state.arrayColumns,
+  arrayRowSpacing: state.arrayRowSpacing,
+  arrayColumnSpacing: state.arrayColumnSpacing,
   arrayCount: state.arrayCount,
   arrayFillAngle: state.arrayFillAngle,
   arrayPending: state.arrayPending,
@@ -1437,16 +1450,18 @@ const runKeyword = (state: CadStoreState, keyword: Keyword) => {
       return
     case 'Rows':
     case 'Columns':
+    case 'Row spacing':
+    case 'Column spacing':
     case 'Items':
     case 'Angle to fill': {
-      const option: ArrayOption =
-        keyword.label === 'Rows'
-          ? 'rows'
-          : keyword.label === 'Columns'
-            ? 'columns'
-            : keyword.label === 'Items'
-              ? 'count'
-              : 'fillAngle'
+      const option: ArrayOption = {
+        Rows: 'rows',
+        Columns: 'columns',
+        'Row spacing': 'rowSpacing',
+        'Column spacing': 'columnSpacing',
+        Items: 'count',
+        'Angle to fill': 'fillAngle',
+      }[keyword.label] as ArrayOption
       useCadStore.setState({ arrayPending: option })
       state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
       return
@@ -1647,24 +1662,64 @@ const runArray = (state: CadStoreState, point: Vec2) => {
     return
   }
 
-  const base = state.draftPoints[0]
-  const spacing = sub(point, base)
+  const spacing = sub(point, state.draftPoints[0])
   if (Math.abs(spacing.x) < 1e-9 && Math.abs(spacing.y) < 1e-9) {
     state.setStatusMessage('The two points are in the same place, which leaves no room between items.')
     return
   }
 
+  // Picking the spacing writes it back, so the ribbon shows what was just built and can repeat it.
+  useCadStore.setState({ arrayRowSpacing: spacing.y, arrayColumnSpacing: spacing.x })
+  buildGrid(state, commit, spacing.y, spacing.x)
+}
+
+const buildGrid = (
+  state: CadStoreState,
+  commit: (make: (sources: CadEntity[]) => CadEntity[], describe: (added: number) => string) => void,
+  rowSpacing: number,
+  columnSpacing: number,
+) => {
   const { arrayRows, arrayColumns } = state
   commit(
     (sources) =>
-      rectangularArrayCopies(sources, {
-        rows: arrayRows,
-        columns: arrayColumns,
-        rowSpacing: spacing.y,
-        columnSpacing: spacing.x,
-      }),
+      rectangularArrayCopies(sources, { rows: arrayRows, columns: arrayColumns, rowSpacing, columnSpacing }),
     (added) => `Array of ${arrayRows} by ${arrayColumns}, ${added} copies added.`,
   )
+}
+
+/**
+ * Enter builds the grid straight from the typed row and column spacing, which is the quicker route
+ * when the spacing is a known dimension rather than something to judge by eye.
+ */
+export const finishArray = (state: CadStoreState): boolean => {
+  if (state.activeTool !== 'array' || state.arrayType !== 'rect' || state.draftPoints.length > 0) return false
+  if (state.selectedIds.length === 0) {
+    state.setStatusMessage('Select objects before arraying them.')
+    return true
+  }
+  if (state.arrayRowSpacing === 0 && state.arrayColumnSpacing === 0) {
+    state.setStatusMessage('Set a row or column spacing, or the copies would all land on the original.')
+    return true
+  }
+
+  const selected = new Set(state.selectedIds)
+  buildGrid(
+    state,
+    (make, describe) => {
+      let added = 0
+      state.updateDocument((doc) => {
+        const copies = make(doc.entities.filter((entity) => selected.has(entity.id)))
+        added = copies.length
+        return { ...doc, entities: [...doc.entities, ...copies] }
+      })
+      state.clearDraft()
+      state.endCommand()
+      state.setStatusMessage(describe(added))
+    },
+    state.arrayRowSpacing,
+    state.arrayColumnSpacing,
+  )
+  return true
 }
 
 export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) => {
