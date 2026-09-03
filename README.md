@@ -7,7 +7,8 @@ Lightweight browser-based 2D drafting software inspired by AutoCAD workflows.
 - Draw: line, polyline, rectangle, circle (centre, 2P, 3P, tangent-tangent-radius), arc, ellipse,
   polygon (inscribed, circumscribed, by edge), spline, hatch, text, block insert
 - Modify: move, copy, rotate, scale, mirror, offset, delete, fillet, join, explode, break, rectangular/polar array
-- Drafting aids: OSNAP, polar tracking, command line aliases, crosshair viewport, pan/zoom
+- Drafting aids: OSNAP, polar tracking, grips for reshaping by hand, command line aliases,
+  crosshair viewport, pan/zoom
 - Structure: layers, linetypes, lineweights, groups, blocks, document history (undo/redo)
 - Data I/O: JSON document model, DXF import/export subset, PDF print at drawing scale
 - Reliability: autosave + recovery prompt
@@ -141,6 +142,31 @@ With the Select tool, click an object to pick it, or drag a box across the drawi
 
 Hold `Shift` while picking to add to the selection and `Ctrl` to remove from it. Picking any
 member of a group selects the whole group. `Esc` clears the selection.
+
+### Grips
+
+Anything selected shows small squares on the points that define it, as AutoCAD does. Press one
+and drag to reshape the object, with a dashed preview of the result following the cursor and the
+grip under the cursor filling in to show what a press would take hold of. Releasing commits the
+change as a single undo step; `Esc` during the drag abandons it.
+
+| Object | Grips | What dragging one does |
+| --- | --- | --- |
+| Line | Both ends and the middle | An end stretches that end; the middle carries the whole line |
+| Polyline, rectangle, polygon | Every vertex | Moves that vertex, so a rectangle can be pulled out of square |
+| Circle | Centre and four quadrants | The centre moves it; a quadrant sets the radius |
+| Arc | Centre, both ends, and the point halfway along | An end swings round the centre; the halfway point sets the radius |
+| Ellipse | Centre and the ends of both axes | Each axis grip sets its own axis, ignoring sideways drift so the ellipse keeps its rotation |
+| Spline | Every control point | Bends the curve |
+| Dimension | The measured points and where the dimension line sits | Re-measures, or slides the dimension line |
+| Hatch | Every boundary point | Reshapes the filled area |
+
+Pressing on a selected object away from any grip drags the whole selection instead, and pressing
+on empty space still opens a selection window, so the three gestures do not collide. Grip drags
+snap to other objects but never to the object being dragged, which would otherwise fold a corner
+onto its own neighbour. Dragging a whole object tracks ortho and polar but does not object-snap,
+since there is no base point for a snap to measure from. A press that goes nowhere is treated as
+a plain click and picks in the usual way. Objects on a locked layer show no grips.
 
 ### Dynamic input
 

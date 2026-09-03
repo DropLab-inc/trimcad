@@ -17,6 +17,7 @@ import { DRAWING_EXTENSION } from './fileIo'
 import {
   countEntitiesOnLayer,
   editableEntities,
+  isLayerEditable,
   isLayerVisible,
   layerOf,
   makeLayer,
@@ -32,6 +33,7 @@ import {
   polygonOnEdge,
 } from './construct'
 import { distanceToEntity } from './flatten'
+import { dragGrip, type Grip } from './grips'
 import { parseCoordinate } from './dynamicInput'
 import {
   canFillet,
@@ -240,6 +242,10 @@ type CadState = {
   updateLayer: (id: string, patch: Partial<Layer>) => void
   /** Removes a layer and everything drawn on it. Layer 0 and the current layer stay. */
   deleteLayer: (id: string) => void
+  /** Commits a grip drag: one object reshaped by one of its handles, as a single undo step. */
+  stretchGrip: (entityId: string, grip: Grip, point: Vec2) => void
+  /** Commits a drag of the whole selection, as a single undo step. */
+  moveSelectionBy: (delta: Vec2) => void
   copySelection: () => void
   cutSelection: () => void
   /** Drops the clipboard at the crosshair, keeping the copied objects' relative spacing. */
@@ -706,6 +712,29 @@ export const useCadStore = create<CadState>((set, get) => ({
       entities: doc.entities.filter((entity) => entity.layerId !== id),
     }))
     state.setStatusMessage(`Deleted layer ${layer?.name}`)
+  },
+  stretchGrip: (entityId, grip, point) => {
+    const state = get()
+    const target = state.doc.entities.find((entity) => entity.id === entityId)
+    if (!target) return
+    // A locked layer shows its grips but will not budge, which is what AutoCAD does.
+    if (!isLayerEditable(layerOf(state.doc, target))) {
+      state.setStatusMessage('That object is on a locked layer.')
+      return
+    }
+    state.updateDocument((doc) => ({
+      ...doc,
+      entities: doc.entities.map((entity) => (entity.id === entityId ? dragGrip(entity, grip, point) : entity)),
+    }))
+    state.setStatusMessage(`Stretched ${target.type}`)
+  },
+  moveSelectionBy: (delta) => {
+    const state = get()
+    const editable = new Set(editableEntities(state.doc).map((entity) => entity.id))
+    const ids = state.selectedIds.filter((id) => editable.has(id))
+    if (ids.length === 0) return
+    state.updateDocument((doc) => ({ ...doc, entities: moveEntities(doc.entities, ids, delta) }))
+    state.setStatusMessage(`Moved ${describeCount(ids.length)}`)
   },
   copySelection: () => {
     const state = get()

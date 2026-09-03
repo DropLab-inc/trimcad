@@ -19,10 +19,11 @@ import {
 } from '../core/dynamicInput'
 import { isTransformTool, transformedBy } from '../core/commands'
 import { editableEntities, lineweightPixels, visibleEntities as visibleOnLayers } from '../core/layers'
-import { getEntityAnchorPoints, isPointNearEntity, mirrorEntity } from '../core/geometry'
+import { isPointNearEntity, mirrorEntity, moveEntity } from '../core/geometry'
 import { canFillet, chamferCorner, filletCorner, hasStraightSegments, offsetEntity } from '../core/modify'
 import { canBeTangent, circleOnDiameter, circleThroughPoints, cornerRadius, polygonOnEdge } from '../core/construct'
 import { polarArrayCopies, rectangularArrayCopies } from '../core/array'
+import { dragGrip, entityGrips, findGripAt, type Grip } from '../core/grips'
 import type { CadEntity, DimensionEntity, PolylineEntity, SnapMode } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
 import { COMMAND_INPUT_ID } from './CommandLine'
@@ -49,6 +50,15 @@ const worldToScreen = (point: Vec2, camera: Camera): Vec2 => ({
 
 /** Below this drag distance a press-and-release counts as a pick rather than a fence. */
 const FENCE_THRESHOLD = 5
+
+/** How near the cursor has to be, in screen pixels, to take hold of a grip. */
+const GRIP_PICK_RADIUS = 8
+
+/** How wide a grip square is drawn, in screen pixels, whatever the zoom. */
+const GRIP_SIZE = 7
+
+/** How far a press has to travel before it counts as dragging the selection rather than picking. */
+const DRAG_THRESHOLD = 4
 
 /** AutoCAD draws a distinct glyph per snap type; this keeps the marker readable at a glance. */
 const SnapGlyph = ({ mode, at, color }: { mode: SnapMode; at: Vec2; color: string }) => {
@@ -162,6 +172,8 @@ export function CanvasViewport() {
   const repeatLastCommand = useCadStore((state) => state.repeatLastCommand)
   const publishCursorWorld = useCadStore((state) => state.setCursorWorld)
   const orthoEnabled = useCadStore((state) => state.orthoEnabled)
+  const stretchGrip = useCadStore((state) => state.stretchGrip)
+  const moveSelectionBy = useCadStore((state) => state.moveSelectionBy)
 
   const frameRef = useRef<HTMLDivElement | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
@@ -177,6 +189,11 @@ export function CanvasViewport() {
   const [fenceStart, setFenceStart] = useState<Vec2 | null>(null)
   const [fenceEnd, setFenceEnd] = useState<Vec2 | null>(null)
   const [hoverId, setHoverId] = useState<string | null>(null)
+  /** A grip being dragged: which object it belongs to, which handle it is, and where it is now. */
+  const [gripDrag, setGripDrag] = useState<{ entityId: string; grip: Grip; to: Vec2 } | null>(null)
+  /** A press on an already-selected object, which becomes a move once the cursor travels. */
+  const [objectDrag, setObjectDrag] = useState<{ from: Vec2; to: Vec2 } | null>(null)
+  const [hoverGrip, setHoverGrip] = useState<{ entityId: string; grip: Grip } | null>(null)
   const [typedState, setTypedState] = useState<TypedState>({ step: '', values: NO_VALUES, field: 0 })
   const [size, setSize] = useState({ width: 1000, height: 700 })
 
@@ -189,6 +206,12 @@ export function CanvasViewport() {
 
   /** What a click may actually pick: locked layers stay on screen but refuse selection. */
   const pickableEntities = useMemo(() => editableEntities(doc), [doc])
+
+  /** The objects showing grips, and so the only ones that can be reshaped by hand. */
+  const selectedEntities = useMemo(
+    () => pickableEntities.filter((entity) => selectedIds.includes(entity.id)),
+    [pickableEntities, selectedIds],
+  )
 
   useEffect(() => {
     const frame = frameRef.current
@@ -258,6 +281,12 @@ export function CanvasViewport() {
 
       if (event.key === 'Escape') {
         clearTyped()
+        // A drag in progress is abandoned first, leaving the shape as it was and the selection alone.
+        if (gripDrag || objectDrag) {
+          setGripDrag(null)
+          setObjectDrag(null)
+          return
+        }
         // Escape leaves whatever command is running and drops back to the selection prompt.
         // Pressing it again from there clears the selection, as AutoCAD does.
         if (activeTool !== 'select' || draftPoints.length > 0 || pickingEdges) cancelCommand()
@@ -330,6 +359,8 @@ export function CanvasViewport() {
     fieldIndex,
     finishDraft,
     finishEdgeSelection,
+    gripDrag,
+    objectDrag,
     pickingEdges,
     redo,
     repeatLastCommand,
@@ -341,9 +372,12 @@ export function CanvasViewport() {
     undo,
   ])
 
-  const resolvePoint = (screenPoint: Vec2): { point: Vec2; snap: SnapMode | null; tracking: string | null } => {
+  const resolvePoint = (
+    screenPoint: Vec2,
+    options?: { ignoreId?: string; from?: Vec2; osnap?: boolean },
+  ): { point: Vec2; snap: SnapMode | null; tracking: string | null } => {
     const raw = screenToWorld(screenPoint, camera)
-    const basePoint = draftPoints.at(-1)
+    const basePoint = options?.from ?? draftPoints.at(-1)
 
     // FILLET and CHAMFER read a click as "this edge, on this side" rather than as a position, so
     // pulling it onto a nearby vertex throws away the one thing being asked. On a polygon, whose
@@ -351,13 +385,20 @@ export function CanvasViewport() {
     // command would give up on a corner that is perfectly good.
     const picksAnEdge = activeTool === 'fillet' || activeTool === 'chamfer'
 
-    if (osnapEnabled && !picksAnEdge) {
-      const snap = findBestSnap(raw, visibleEntities, snapModes, 12 / camera.zoom, basePoint)
+    if (osnapEnabled && !picksAnEdge && options?.osnap !== false) {
+      // A shape being reshaped is left out of the candidates, or a dragged corner would keep
+      // catching on the very object it belongs to instead of on what it is being lined up with.
+      const candidates = options?.ignoreId
+        ? visibleEntities.filter((entity) => entity.id !== options.ignoreId)
+        : visibleEntities
+      const snap = findBestSnap(raw, candidates, snapModes, 12 / camera.zoom, basePoint)
       if (snap) {
         return { point: snap.point, snap: snap.mode, tracking: null }
       }
     }
-    if (!basePoint || !trackingAppliesTo(activeTool)) {
+    // A drag tracks from where it began, so ortho and polar apply to it even with no draft running.
+    const tracks = options?.from ? true : trackingAppliesTo(activeTool)
+    if (!basePoint || !tracks) {
       return { point: raw, snap: null, tracking: null }
     }
     // Shift forces ortho on temporarily; the status bar toggle latches it on.
@@ -388,6 +429,23 @@ export function CanvasViewport() {
     }
     if (event.button !== 0) return
     const local = localPoint(event)
+    if (activeTool === 'select' && !pickingEdges) {
+      // Pressing on a grip or on something already picked reshapes or drags it; anywhere else
+      // still starts a selection window, so the two never get in each other's way.
+      const world = screenToWorld(local, camera)
+      const held = findGripAt(world, selectedEntities, GRIP_PICK_RADIUS / camera.zoom)
+      if (held) {
+        setGripDrag({ entityId: held.entity.id, grip: held.grip, to: held.grip.point })
+        return
+      }
+      const onSelection = selectedEntities.some((entity) =>
+        isPointNearEntity(world, entity, 8 / camera.zoom),
+      )
+      if (onSelection) {
+        setObjectDrag({ from: world, to: world })
+        return
+      }
+    }
     if (activeTool === 'select' || pickingEdges) {
       setBoxStart(local)
       setBoxEnd(local)
@@ -407,6 +465,28 @@ export function CanvasViewport() {
     setCursorScreen(local)
     if (boxStart) setBoxEnd(local)
     if (fenceStart) setFenceEnd(local)
+
+    if (gripDrag) {
+      const { point, snap, tracking } = resolvePoint(local, {
+        ignoreId: gripDrag.entityId,
+        from: gripDrag.grip.point,
+      })
+      setGripDrag({ ...gripDrag, to: point })
+      setCursorWorld(point)
+      setActiveSnap(snap)
+      setTrackingLabel(tracking)
+      return
+    }
+    if (objectDrag) {
+      // Dragging a whole object has no base point to measure a snap from, so only ortho and polar
+      // apply; otherwise the shape would jump as the cursor passed over unrelated geometry.
+      const { point, snap, tracking } = resolvePoint(local, { from: objectDrag.from, osnap: false })
+      setObjectDrag({ ...objectDrag, to: point })
+      setCursorWorld(point)
+      setActiveSnap(snap)
+      setTrackingLabel(tracking)
+      return
+    }
     if (panning && lastMouse) {
       setCamera({ x: camera.x + (event.clientX - lastMouse.x), y: camera.y + (event.clientY - lastMouse.y) })
       setLastMouse({ x: event.clientX, y: event.clientY })
@@ -424,6 +504,13 @@ export function CanvasViewport() {
     } else if (hoverId) {
       setHoverId(null)
     }
+
+    // A grip swells under the cursor so it is clear the press will take hold of it.
+    const overGrip =
+      activeTool === 'select' && !pickingEdges
+        ? findGripAt(screenToWorld(local, camera), selectedEntities, GRIP_PICK_RADIUS / camera.zoom)
+        : null
+    setHoverGrip(overGrip ? { entityId: overGrip.entity.id, grip: overGrip.grip } : null)
   }
 
   // The store needs the crosshair position so a typed distance knows which way to go.
@@ -434,6 +521,32 @@ export function CanvasViewport() {
   const handleMouseUp = (event: MouseEvent<SVGSVGElement>) => {
     setPanning(false)
     setLastMouse(null)
+
+    if (gripDrag) {
+      const travelled = Math.hypot(gripDrag.to.x - gripDrag.grip.point.x, gripDrag.to.y - gripDrag.grip.point.y)
+      // A press that never moved was someone clicking on a grip, which should not disturb the shape.
+      if (travelled > 0) stretchGrip(gripDrag.entityId, gripDrag.grip, gripDrag.to)
+      setGripDrag(null)
+      return
+    }
+
+    if (objectDrag) {
+      const delta = { x: objectDrag.to.x - objectDrag.from.x, y: objectDrag.to.y - objectDrag.from.y }
+      if (Math.hypot(delta.x, delta.y) * camera.zoom >= DRAG_THRESHOLD) {
+        moveSelectionBy(delta)
+      } else {
+        // A press that went nowhere was a plain click, so it picks in the usual way rather than
+        // quietly doing nothing just because it landed on something already chosen.
+        const modifier = event.shiftKey ? 'add' : event.ctrlKey ? 'remove' : 'replace'
+        const hit = [...pickableEntities]
+          .reverse()
+          .find((entity) => isPointNearEntity(objectDrag.from, entity, 8 / camera.zoom))
+        applySelection(hit ? [hit.id] : [], hit ? modifier : 'replace')
+        setStatusMessage(hit ? `Selected ${hit.type}` : 'Nothing selected')
+      }
+      setObjectDrag(null)
+      return
+    }
 
     if (fenceStart && fenceEnd) {
       const dragged = Math.hypot(fenceEnd.x - fenceStart.x, fenceEnd.y - fenceStart.y)
@@ -477,6 +590,9 @@ export function CanvasViewport() {
     setBoxEnd(null)
     setFenceStart(null)
     setFenceEnd(null)
+    setGripDrag(null)
+    setObjectDrag(null)
+    setHoverGrip(null)
     setHoverId(null)
     setCursorScreen(null)
     setCursorWorld(null)
@@ -929,26 +1045,55 @@ export function CanvasViewport() {
   ])
 
   const grips = useMemo(() => {
-    if (selectedIds.length === 0) return []
-    const gripSize = 4 / camera.zoom
-    return visibleEntities
-      .filter((entity) => selectedIds.includes(entity.id))
-      .flatMap((entity) =>
-        getEntityAnchorPoints(entity).map((point, index) => (
+    if (selectedEntities.length === 0) return []
+    const gripSize = GRIP_SIZE / camera.zoom
+    // The grip under the cursor, or the one being dragged, fills with the selection colour so it
+    // is obvious which handle a press has taken hold of.
+    const held = gripDrag ?? hoverGrip
+    const isHot = (entityId: string, grip: Grip) =>
+      held !== null && held.entityId === entityId && held.grip.kind === grip.kind && held.grip.index === grip.index
+    return selectedEntities.flatMap((entity) =>
+      entityGrips(entity).map((grip, index) => {
+        const hot = isHot(entity.id, grip)
+        return (
           <rect
             key={`${entity.id}-grip-${index}`}
-            x={point.x - gripSize / 2}
-            y={point.y - gripSize / 2}
+            data-grip={grip.kind}
+            x={grip.point.x - gripSize / 2}
+            y={grip.point.y - gripSize / 2}
             width={gripSize}
             height={gripSize}
-            fill={palette.handle}
+            fill={hot ? palette.selection : palette.handle}
             stroke={palette.handleEdge}
             strokeWidth={0.5}
             vectorEffect="non-scaling-stroke"
           />
-        )),
+        )
+      }),
+    )
+  }, [camera.zoom, gripDrag, hoverGrip, palette, selectedEntities])
+
+  /** What the drag in progress would leave behind, drawn over the unchanged original. */
+  const dragPreview = useMemo(() => {
+    const ghost = { selected: false, color: palette.preview, dash: '6 4', dimStyle: doc.dimStyle, palette }
+    if (gripDrag) {
+      const target = selectedEntities.find((entity) => entity.id === gripDrag.entityId)
+      if (!target) return null
+      return <g>{renderEntity(dragGrip(target, gripDrag.grip, gripDrag.to), ghost)}</g>
+    }
+    if (objectDrag) {
+      const delta = { x: objectDrag.to.x - objectDrag.from.x, y: objectDrag.to.y - objectDrag.from.y }
+      if (delta.x === 0 && delta.y === 0) return null
+      return (
+        <g>
+          {selectedEntities.map((entity) => (
+            <g key={entity.id}>{renderEntity(moveEntity(entity, delta), ghost)}</g>
+          ))}
+        </g>
       )
-  }, [camera.zoom, selectedIds, visibleEntities])
+    }
+    return null
+  }, [doc.dimStyle, gripDrag, objectDrag, palette, selectedEntities])
 
   const snapScreen = cursorWorld ? worldToScreen(cursorWorld, camera) : null
 
@@ -1019,6 +1164,7 @@ export function CanvasViewport() {
           })}
 
           {grips}
+          {dragPreview}
           {trimExtendPreview}
           {tangentHighlight}
           {modifyPreview}

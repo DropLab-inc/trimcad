@@ -160,7 +160,14 @@ export const moveEntity = (entity: CadEntity, delta: Vec2): CadEntity => {
     case 'text':
       return { ...entity, position: shift(entity.position) }
     case 'dimension':
-      return { ...entity, p1: shift(entity.p1), p2: shift(entity.p2), p3: entity.p3 ? shift(entity.p3) : undefined }
+      // The placement travels too, or the dimension line stays where the old text was.
+      return {
+        ...entity,
+        p1: shift(entity.p1),
+        p2: shift(entity.p2),
+        p3: entity.p3 ? shift(entity.p3) : undefined,
+        placement: entity.placement ? shift(entity.placement) : undefined,
+      }
     case 'insert':
       return { ...entity, position: shift(entity.position) }
   }

@@ -413,3 +413,196 @@ describe('rectangular selection', () => {
     expect(container.querySelector(`[stroke="${dark.windowSelect}"]`)).toBeNull()
   })
 })
+
+describe('dragging grips and selected objects', () => {
+  /** Selects the given objects and hands back the rendered canvas. */
+  const showing = (entities: CadEntity[], chosen: CadEntity[]) => {
+    seed(entities)
+    const state = useCadStore.getState()
+    state.setTool('select')
+    act(() => state.setSelection(chosen.map((entity) => entity.id)))
+    const { container } = render(<CanvasViewport />)
+    return { container, svg: container.querySelector('svg')! }
+  }
+
+  const pressDragRelease = (svg: SVGSVGElement, from: Vec2, to: Vec2) => {
+    fireEvent.mouseDown(svg, { clientX: from.x, clientY: from.y, button: 0 })
+    fireEvent.mouseMove(svg, { clientX: to.x, clientY: to.y })
+    fireEvent.mouseUp(svg, { clientX: to.x, clientY: to.y, button: 0 })
+  }
+
+  const entityById = (id: string) => useCadStore.getState().doc.entities.find((entity) => entity.id === id)!
+
+  beforeEach(() => {
+    seed([])
+    useCadStore.getState().setTool('select')
+  })
+
+  it('puts a grip on each end of a selected line and one in the middle', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+
+    const { container } = showing([line], [line])
+
+    expect(container.querySelectorAll('[data-grip]')).toHaveLength(3)
+  })
+
+  it('shows no grips until something is selected', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+
+    const { container } = showing([line], [])
+
+    expect(container.querySelectorAll('[data-grip]')).toHaveLength(0)
+  })
+
+  it('drags a line endpoint without disturbing the other end', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { svg } = showing([line], [line])
+
+    pressDragRelease(svg, { x: 400, y: 100 }, { x: 400, y: 220 })
+
+    const after = entityById(line.id)
+    expect(after.type === 'line' && after.end).toEqual({ x: 400, y: 220 })
+    expect(after.type === 'line' && after.start).toEqual({ x: 100, y: 100 })
+  })
+
+  it('drags a rectangle corner and leaves the rest of the outline in place', () => {
+    const rect = createRect(layerId(), { x: 60, y: 60 }, { x: 120, y: 120 }) as PolylineEntity
+    const { svg } = showing([rect], [rect])
+
+    pressDragRelease(svg, { x: 120, y: 120 }, { x: 200, y: 180 })
+
+    const after = entityById(rect.id) as PolylineEntity
+    expect(after.points).toContainEqual({ x: 200, y: 180 })
+    expect(after.points).toContainEqual({ x: 60, y: 60 })
+    expect(after.points).toHaveLength(4)
+  })
+
+  it('resizes a circle by its quadrant grip', () => {
+    const circle = createCircle(layerId(), { x: 250, y: 250 }, 80)
+    const { svg } = showing([circle], [circle])
+
+    pressDragRelease(svg, { x: 330, y: 250 }, { x: 400, y: 250 })
+
+    const after = entityById(circle.id)
+    expect(after.type === 'circle' && after.radius).toBeCloseTo(150, 6)
+    expect(after.type === 'circle' && after.center).toEqual({ x: 250, y: 250 })
+  })
+
+  it('leaves the shape alone when a grip is clicked but not dragged', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { svg } = showing([line], [line])
+
+    pressDragRelease(svg, { x: 400, y: 100 }, { x: 400, y: 100 })
+
+    const after = entityById(line.id)
+    expect(after.type === 'line' && after.end).toEqual({ x: 400, y: 100 })
+  })
+
+  it('takes hold of a grip rather than starting a selection window', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { container, svg } = showing([line], [line])
+
+    fireEvent.mouseDown(svg, { clientX: 400, clientY: 100, button: 0 })
+    fireEvent.mouseMove(svg, { clientX: 500, clientY: 300 })
+
+    expect(container.querySelector(`[stroke="${dark.windowSelect}"]`)).toBeNull()
+  })
+
+  it('previews the new shape while a grip is being dragged', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { container, svg } = showing([line], [line])
+
+    fireEvent.mouseDown(svg, { clientX: 400, clientY: 100, button: 0 })
+    fireEvent.mouseMove(svg, { clientX: 400, clientY: 220 })
+
+    expect(container.querySelector(`[stroke="${dark.preview}"]`)).not.toBeNull()
+  })
+
+  it('drags a whole object when the press lands on it away from any grip', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { svg } = showing([line], [line])
+
+    pressDragRelease(svg, { x: 200, y: 100 }, { x: 200, y: 160 })
+
+    const after = entityById(line.id)
+    expect(after.type === 'line' && after.start).toEqual({ x: 100, y: 160 })
+    expect(after.type === 'line' && after.end).toEqual({ x: 400, y: 160 })
+  })
+
+  it('drags every selected object together', () => {
+    const first = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const second = createCircle(layerId(), { x: 600, y: 400 }, 50)
+    const { svg } = showing([first, second], [first, second])
+
+    pressDragRelease(svg, { x: 200, y: 100 }, { x: 200, y: 160 })
+
+    const circle = entityById(second.id)
+    expect(circle.type === 'circle' && circle.center).toEqual({ x: 600, y: 460 })
+  })
+
+  it('still opens a selection window when the press lands on empty space', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { container, svg } = showing([line], [line])
+
+    fireEvent.mouseDown(svg, { clientX: 700, clientY: 500, button: 0 })
+    fireEvent.mouseMove(svg, { clientX: 900, clientY: 650 })
+
+    expect(container.querySelector(`[stroke="${dark.windowSelect}"]`)).not.toBeNull()
+  })
+
+  it('leaves an unselected object alone, since only grips on show can be grabbed', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { svg } = showing([line], [])
+
+    pressDragRelease(svg, { x: 200, y: 100 }, { x: 200, y: 160 })
+
+    const after = entityById(line.id)
+    expect(after.type === 'line' && after.start).toEqual({ x: 100, y: 100 })
+  })
+
+  it('narrows the selection to what was clicked, even if it was already selected', () => {
+    const first = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const second = createCircle(layerId(), { x: 600, y: 400 }, 50)
+    const { svg } = showing([first, second], [first, second])
+
+    pressDragRelease(svg, { x: 200, y: 100 }, { x: 200, y: 100 })
+
+    expect(useCadStore.getState().selectedIds).toEqual([first.id])
+  })
+
+  it('clears the selection when the click lands on nothing', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { svg } = showing([line], [line])
+
+    pressDragRelease(svg, { x: 800, y: 600 }, { x: 800, y: 600 })
+
+    expect(useCadStore.getState().selectedIds).toEqual([])
+  })
+
+  it('abandons a drag on Escape, leaving the shape as it was', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { svg } = showing([line], [line])
+
+    fireEvent.mouseDown(svg, { clientX: 400, clientY: 100, button: 0 })
+    fireEvent.mouseMove(svg, { clientX: 400, clientY: 220 })
+    act(() => {
+      fireEvent.keyDown(window, { key: 'Escape' })
+    })
+    fireEvent.mouseUp(svg, { clientX: 400, clientY: 220, button: 0 })
+
+    const after = entityById(line.id)
+    expect(after.type === 'line' && after.end).toEqual({ x: 400, y: 100 })
+    expect(useCadStore.getState().selectedIds).toEqual([line.id])
+  })
+
+  it('undoes a grip drag in one step', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { svg } = showing([line], [line])
+
+    pressDragRelease(svg, { x: 400, y: 100 }, { x: 400, y: 220 })
+    act(() => useCadStore.getState().undo())
+
+    const after = entityById(line.id)
+    expect(after.type === 'line' && after.end).toEqual({ x: 400, y: 100 })
+  })
+})
