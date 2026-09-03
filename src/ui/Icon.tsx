@@ -30,6 +30,9 @@ export type IconName =
   | 'circle-2p'
   | 'circle-3p'
   | 'circle-ttr'
+  | 'polygon-inscribed'
+  | 'polygon-circumscribed'
+  | 'polygon-edge'
   | 'array-rect'
   | 'array-polar'
   | 'dim-linear'
@@ -160,6 +163,32 @@ const GLYPHS: Record<IconName, ReactElement> = {
   polygon: (
     <g>
       <path d="M12 3 L20 7.5 L20 16.5 L12 21 L4 16.5 L4 7.5 Z" />
+    </g>
+  ),
+  /*
+   * The polygon fits, each showing where the shape meets the circle that sizes it. They are drawn
+   * on a triangle rather than the hexagon POLYGON defaults to: a hexagon's corners and flats sit
+   * barely a pixel apart at this size, which is the whole distinction these icons have to make,
+   * whereas a triangle's are twice the distance from the middle.
+   */
+  'polygon-inscribed': (
+    <g>
+      <circle className="accent" cx={12} cy={12} r={9} strokeDasharray="2 2" />
+      <path d="M12 3 L19.8 16.5 L4.2 16.5 Z" />
+    </g>
+  ),
+  'polygon-circumscribed': (
+    <g>
+      <circle className="accent" cx={12} cy={12} r={4.5} strokeDasharray="2 2" />
+      <path d="M12 3 L19.8 16.5 L4.2 16.5 Z" />
+    </g>
+  ),
+  'polygon-edge': (
+    <g>
+      <path d="M12 3 L19.8 16.5 L4.2 16.5 Z" strokeDasharray="2 2" opacity={0.45} />
+      <path className="accent" d="M4.2 16.5 L19.8 16.5" />
+      {grip(4.2, 16.5)}
+      {grip(19.8, 16.5)}
     </g>
   ),
   spline: (

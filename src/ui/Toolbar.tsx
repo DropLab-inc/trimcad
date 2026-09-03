@@ -1,6 +1,7 @@
 import { useCadStore } from '../core/store'
 import { shortestAlias, resolveCommand } from '../core/commandRegistry'
 import { Icon, type IconName } from './Icon'
+import { OptionMenu, type OptionChoice } from './OptionMenu'
 import type { ArrayType, CircleMode, DimensionType, HatchPattern, PolygonFit, ToolMode } from '../core/types'
 
 type ToolItem = { tool: ToolMode; label: string; icon: IconName; command: string; hint?: string }
@@ -26,37 +27,59 @@ const groups: ToolGroup[] = [
   },
 ]
 
-/** The ways CIRCLE can be pinned down, shown while the command is running. */
-const circleModes: Array<{ mode: CircleMode; label: string; icon: IconName; hint: string }> = [
+/** The ways CIRCLE can be pinned down, offered while the command is running. */
+const circleModes: OptionChoice<CircleMode>[] = [
   {
-    mode: 'center',
+    value: 'center',
     label: 'Centre, radius',
     icon: 'circle-center-radius',
     hint: 'Pick the centre, then a point at the radius',
   },
   {
-    mode: 'diameter',
+    value: 'diameter',
     label: 'Centre, diameter',
     icon: 'circle-center-diameter',
     hint: 'Pick the centre, then give the size across the circle rather than out from the middle',
   },
   {
-    mode: '2p',
+    value: '2p',
     label: '2 point',
     icon: 'circle-2p',
     hint: 'Pick two points, taken as opposite ends of a diameter',
   },
   {
-    mode: '3p',
+    value: '3p',
     label: '3 point',
     icon: 'circle-3p',
     hint: 'Pick three points on the rim, which one circle passes through',
   },
   {
-    mode: 'ttr',
+    value: 'ttr',
     label: 'Tan, tan, radius',
     icon: 'circle-ttr',
     hint: 'Click two objects to sit tangent to, then give the radius',
+  },
+]
+
+/** How POLYGON is sized, offered while the command is running. */
+const polygonFits: OptionChoice<PolygonFit>[] = [
+  {
+    value: 'inscribed',
+    label: 'Inscribed',
+    icon: 'polygon-inscribed',
+    hint: 'The corners sit on the circle, so the radius you pick reaches a corner',
+  },
+  {
+    value: 'circumscribed',
+    label: 'Circumscribed',
+    icon: 'polygon-circumscribed',
+    hint: 'The sides sit against the circle, so the radius you pick reaches the middle of a side',
+  },
+  {
+    value: 'edge',
+    label: 'By one edge',
+    icon: 'polygon-edge',
+    hint: 'Draw a single side and let the rest of the shape follow from it',
   },
 ]
 
@@ -225,19 +248,9 @@ export function Toolbar() {
                 <span>{item.label}</span>
               </button>
             ))}
-            {activeTool === 'circle' &&
-              circleModes.map((item) => (
-                <button
-                  key={item.mode}
-                  type="button"
-                  className={`ribbon-btn ${circleMode === item.mode ? 'active' : ''}`}
-                  onClick={() => setCircleMode(item.mode)}
-                  title={`${item.label}\n${item.hint}`}
-                >
-                  <Icon name={item.icon} />
-                  <span>{item.label}</span>
-                </button>
-              ))}
+            {activeTool === 'circle' && (
+              <OptionMenu title="Circle by" value={circleMode} options={circleModes} onChange={setCircleMode} />
+            )}
             {activeTool === 'polygon' && (
               <label className="ribbon-field" title="Number of polygon sides">
                 Sides
@@ -251,14 +264,7 @@ export function Toolbar() {
               </label>
             )}
             {activeTool === 'polygon' && (
-              <label className="ribbon-field" title="Whether the corners or the flats sit on the radius you pick">
-                Fit
-                <select value={polygonFit} onChange={(event) => setPolygonFit(event.target.value as PolygonFit)}>
-                  <option value="inscribed">Inscribed in circle</option>
-                  <option value="circumscribed">Circumscribed about circle</option>
-                  <option value="edge">By one edge</option>
-                </select>
-              </label>
+              <OptionMenu title="Polygon fit" value={polygonFit} options={polygonFits} onChange={setPolygonFit} />
             )}
           </div>
         </section>
