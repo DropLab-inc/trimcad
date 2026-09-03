@@ -28,6 +28,7 @@ import type { Vec2 } from '../core/math/vec2'
 import { COMMAND_INPUT_ID } from './CommandLine'
 import { HatchDefs } from './HatchDefs'
 import { renderDimension, renderEntity, splinePath } from './renderers'
+import { readableOnCanvas, useCanvasPalette } from './theme'
 
 type Camera = { x: number; y: number; zoom: number }
 
@@ -50,10 +51,9 @@ const worldToScreen = (point: Vec2, camera: Camera): Vec2 => ({
 const FENCE_THRESHOLD = 5
 
 /** AutoCAD draws a distinct glyph per snap type; this keeps the marker readable at a glance. */
-const SnapGlyph = ({ mode, at }: { mode: SnapMode; at: Vec2 }) => {
+const SnapGlyph = ({ mode, at, color }: { mode: SnapMode; at: Vec2; color: string }) => {
   const size = 7
-  const stroke = '#00f5d4'
-  const props = { stroke, strokeWidth: 1.6, fill: 'none' }
+  const props = { stroke: color, strokeWidth: 1.6, fill: 'none' }
   switch (mode) {
     case 'endpoint':
       return <rect x={at.x - size} y={at.y - size} width={size * 2} height={size * 2} {...props} />
@@ -115,6 +115,7 @@ const arcPreviewPath = (center: Vec2, radius: number, startAngle: number, endAng
 }
 
 export function CanvasViewport() {
+  const palette = useCanvasPalette()
   const doc = useCadStore((state) => state.doc)
   const selectedIds = useCadStore((state) => state.selectedIds)
   const activeTool = useCadStore((state) => state.activeTool)
@@ -518,7 +519,7 @@ export function CanvasViewport() {
           y1={startY}
           x2={x}
           y2={endY}
-          stroke={isMajor ? 'rgba(148,187,233,0.16)' : 'rgba(148,187,233,0.07)'}
+          stroke={isMajor ? palette.gridMajor : palette.gridMinor}
           strokeWidth={isMajor ? 1 : 0.6}
           vectorEffect="non-scaling-stroke"
         />,
@@ -533,7 +534,7 @@ export function CanvasViewport() {
           y1={y}
           x2={endX}
           y2={y}
-          stroke={isMajor ? 'rgba(148,187,233,0.16)' : 'rgba(148,187,233,0.07)'}
+          stroke={isMajor ? palette.gridMajor : palette.gridMinor}
           strokeWidth={isMajor ? 1 : 0.6}
           vectorEffect="non-scaling-stroke"
         />,
@@ -554,10 +555,11 @@ export function CanvasViewport() {
       <g opacity={0.95}>
         {renderEntity(result.ghost, {
           selected: false,
-          color: result.extending ? '#4ade80' : '#f87171',
+          color: result.extending ? palette.confirm : palette.reject,
           dash: result.extending ? undefined : '5 4',
           width: 3,
           dimStyle: doc.dimStyle,
+          palette,
         })}
       </g>
     )
@@ -573,7 +575,7 @@ export function CanvasViewport() {
         y1={fenceStart.y}
         x2={fenceEnd.x}
         y2={fenceEnd.y}
-        stroke={swapped === (activeTool === 'trim') ? '#4ade80' : '#f87171'}
+        stroke={swapped === (activeTool === 'trim') ? palette.confirm : palette.reject}
         strokeWidth={1.5}
         strokeDasharray="7 4"
       />
@@ -611,12 +613,12 @@ export function CanvasViewport() {
     return (
       <g>
         {hovered && (
-          <g>{renderEntity(hovered, { selected: false, color: '#f59e0b', dash: '6 4', width: 3, dimStyle: doc.dimStyle })}</g>
+          <g>{renderEntity(hovered, { selected: false, color: palette.preview, dash: '6 4', width: 3, dimStyle: doc.dimStyle, palette })}</g>
         )}
         {chosen.map(({ pick, entity }) => (
           <g key={entity.id}>
-            {renderEntity(entity, { selected: false, color: '#4ade80', width: 3, dimStyle: doc.dimStyle })}
-            <circle cx={pick.point.x} cy={pick.point.y} r={5 / camera.zoom} fill="#4ade80" />
+            {renderEntity(entity, { selected: false, color: palette.confirm, width: 3, dimStyle: doc.dimStyle, palette })}
+            <circle cx={pick.point.x} cy={pick.point.y} r={5 / camera.zoom} fill={palette.confirm} />
           </g>
         ))}
       </g>
@@ -625,7 +627,7 @@ export function CanvasViewport() {
 
   const modifyPreview = useMemo(() => {
     if (!cursorWorld) return null
-    const ghost = { selected: false, color: '#f59e0b', dash: '6 4', dimStyle: doc.dimStyle }
+    const ghost = { selected: false, color: palette.preview, dash: '6 4', dimStyle: doc.dimStyle, palette }
 
     if (activeTool === 'offset' && modifyTargetId) {
       const target = doc.entities.find((entity) => entity.id === modifyTargetId)
@@ -657,7 +659,7 @@ export function CanvasViewport() {
 
       return (
         <g>
-          <g>{renderEntity(first, { ...ghost, color: '#4ade80', dash: undefined })}</g>
+          <g>{renderEntity(first, { ...ghost, color: palette.confirm, dash: undefined })}</g>
           {result && (
             // Fresh ids every frame would remount the preview, so they are pinned by position.
             <g>{result.pieces.map((piece, index) => renderEntity({ ...piece, id: `corner-preview-${index}` }, ghost))}</g>
@@ -678,7 +680,7 @@ export function CanvasViewport() {
             y1={base.y}
             x2={cursorWorld.x}
             y2={cursorWorld.y}
-            stroke="#f59e0b"
+            stroke={palette.preview}
             strokeWidth={1}
             strokeDasharray="4 4"
             vectorEffect="non-scaling-stroke"
@@ -697,7 +699,7 @@ export function CanvasViewport() {
             y1={axisStart.y}
             x2={cursorWorld.x}
             y2={cursorWorld.y}
-            stroke="#f59e0b"
+            stroke={palette.preview}
             strokeWidth={1}
             strokeDasharray="8 4"
             vectorEffect="non-scaling-stroke"
@@ -720,7 +722,7 @@ export function CanvasViewport() {
         })
         return (
           <g>
-            <circle cx={cursorWorld.x} cy={cursorWorld.y} r={4 / camera.zoom} fill="#f59e0b" />
+            <circle cx={cursorWorld.x} cy={cursorWorld.y} r={4 / camera.zoom} fill={palette.preview} />
             {copies.map((entity) => renderEntity(entity, ghost))}
           </g>
         )
@@ -740,7 +742,7 @@ export function CanvasViewport() {
             y1={base.y}
             x2={cursorWorld.x}
             y2={cursorWorld.y}
-            stroke="#f59e0b"
+            stroke={palette.preview}
             strokeWidth={1}
             strokeDasharray="4 4"
             vectorEffect="non-scaling-stroke"
@@ -774,7 +776,7 @@ export function CanvasViewport() {
     const cursorWorld = commandPoint
     if (!cursorWorld || draftPoints.length === 0) return null
     const style = {
-      stroke: '#f59e0b',
+      stroke: palette.preview,
       strokeWidth: 1,
       strokeDasharray: '6 4',
       fill: 'none',
@@ -879,7 +881,7 @@ export function CanvasViewport() {
             placement: cursorWorld,
             scale: dimScale,
           }
-          return renderDimension(dimension, doc.dimStyle, '#f59e0b', 'preview', true)
+          return renderDimension(dimension, doc.dimStyle, palette.preview, 'preview', true)
         }
         if (draftPoints.length < 2) {
           return <line x1={first.x} y1={first.y} x2={cursorWorld.x} y2={cursorWorld.y} {...style} />
@@ -894,7 +896,7 @@ export function CanvasViewport() {
           placement: cursorWorld,
           scale: dimScale,
         }
-        return renderDimension(dimension, doc.dimStyle, '#f59e0b', 'preview', true)
+        return renderDimension(dimension, doc.dimStyle, palette.preview, 'preview', true)
       }
       default:
         return null
@@ -924,8 +926,8 @@ export function CanvasViewport() {
             y={point.y - gripSize / 2}
             width={gripSize}
             height={gripSize}
-            fill="#38bdf8"
-            stroke="#0b1220"
+            fill={palette.handle}
+            stroke={palette.handleEdge}
             strokeWidth={0.5}
             vectorEffect="non-scaling-stroke"
           />
@@ -945,8 +947,8 @@ export function CanvasViewport() {
         y={Math.min(boxStart.y, boxEnd.y)}
         width={Math.abs(boxEnd.x - boxStart.x)}
         height={Math.abs(boxEnd.y - boxStart.y)}
-        fill={isWindow ? 'rgba(59,130,246,0.14)' : 'rgba(34,197,94,0.14)'}
-        stroke={isWindow ? '#3b82f6' : '#22c55e'}
+        fill={isWindow ? palette.windowFill : palette.crossingFill}
+        stroke={isWindow ? palette.windowSelect : palette.crossingSelect}
         strokeWidth={1}
         strokeDasharray={isWindow ? undefined : '6 4'}
       />
@@ -978,12 +980,12 @@ export function CanvasViewport() {
         }}
       >
         <HatchDefs />
-        <rect x={0} y={0} width={width} height={height} fill="#0d1524" />
+        <rect x={0} y={0} width={width} height={height} fill={palette.background} />
 
         <g transform={`translate(${camera.x}, ${camera.y}) scale(${camera.zoom})`}>
           {grid}
-          <line x1={-1e5} y1={0} x2={1e5} y2={0} stroke="rgba(239,68,68,0.35)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          <line x1={0} y1={-1e5} x2={0} y2={1e5} stroke="rgba(34,197,94,0.35)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          <line x1={-1e5} y1={0} x2={1e5} y2={0} stroke={palette.axisX} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          <line x1={0} y1={-1e5} x2={0} y2={1e5} stroke={palette.axisY} strokeWidth={1} vectorEffect="non-scaling-stroke" />
 
           {visibleEntities.map((entity) => {
             const layer = doc.layers.find((candidate) => candidate.id === entity.layerId)
@@ -993,10 +995,11 @@ export function CanvasViewport() {
             const hovered = !selected && entity.id === hoverId
             return renderEntity(entity, {
               selected,
-              color: entity.color ?? layer?.color ?? '#7cc6ff',
+              color: readableOnCanvas(entity.color ?? layer?.color ?? palette.fallbackEntity, palette),
               dash: linetype?.pattern.length ? linetype.pattern.join(' ') : undefined,
               width: hovered ? 2.5 : lwDisplay ? lineweightPixels(layer?.lineweight) : undefined,
               dimStyle: doc.dimStyle,
+              palette,
             })
           })}
 
@@ -1012,27 +1015,27 @@ export function CanvasViewport() {
 
         {cursorScreen && snapScreen && (
           <g pointerEvents="none">
-            <line x1={0} y1={snapScreen.y} x2={width} y2={snapScreen.y} stroke="rgba(226,232,240,0.35)" strokeWidth={1} />
-            <line x1={snapScreen.x} y1={0} x2={snapScreen.x} y2={height} stroke="rgba(226,232,240,0.35)" strokeWidth={1} />
+            <line x1={0} y1={snapScreen.y} x2={width} y2={snapScreen.y} stroke={palette.crosshair} strokeWidth={1} />
+            <line x1={snapScreen.x} y1={0} x2={snapScreen.x} y2={height} stroke={palette.crosshair} strokeWidth={1} />
             <rect
               x={snapScreen.x - 5}
               y={snapScreen.y - 5}
               width={10}
               height={10}
               fill="none"
-              stroke="rgba(226,232,240,0.6)"
+              stroke={palette.crosshair}
               strokeWidth={1}
             />
             {activeSnap && (
               <>
-                <SnapGlyph mode={activeSnap} at={snapScreen} />
-                <text x={snapScreen.x + 14} y={snapScreen.y - 12} fill="#00f5d4" fontSize={11}>
+                <SnapGlyph mode={activeSnap} at={snapScreen} color={palette.snap} />
+                <text x={snapScreen.x + 14} y={snapScreen.y - 12} fill={palette.snap} fontSize={11}>
                   {activeSnap}
                 </text>
               </>
             )}
             {!activeSnap && trackingLabel && (
-              <text x={snapScreen.x + 14} y={snapScreen.y - 12} fill="#a5b4fc" fontSize={11}>
+              <text x={snapScreen.x + 14} y={snapScreen.y - 12} fill={palette.snap} fontSize={11}>
                 {trackingLabel}
               </text>
             )}
@@ -1048,18 +1051,18 @@ export function CanvasViewport() {
                     width={140}
                     height={19}
                     rx={3}
-                    fill="rgba(8,15,28,0.92)"
-                    stroke={isActive ? '#fbbf24' : 'rgba(148,163,184,0.45)'}
+                    fill={palette.tooltipBackground}
+                    stroke={isActive ? palette.typed : palette.hint}
                     strokeWidth={1}
                   />
-                  <text x={snapScreen.x + 21} y={top + 13} fill="#94a3b8" fontSize={11}>
+                  <text x={snapScreen.x + 21} y={top + 13} fill={palette.hint} fontSize={11}>
                     {field.label}
                   </text>
                   <text
                     x={snapScreen.x + 147}
                     y={top + 13}
                     textAnchor="end"
-                    fill={typed ? '#fbbf24' : '#e2e8f0'}
+                    fill={typed ? palette.typed : palette.hint}
                     fontSize={11}
                   >
                     {`${typed ? field.typed : field.tracked.toFixed(2)}${field.suffix ?? ''}`}

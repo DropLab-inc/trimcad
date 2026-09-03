@@ -66,6 +66,8 @@ export type IconName =
   | 'plot-off'
   | 'layer-add'
   | 'layer-delete'
+  | 'theme-dark'
+  | 'theme-light'
 
 /** A small filled square, the way AutoCAD marks pick points and grips. */
 const grip = (x: number, y: number, key?: string) => (
@@ -484,6 +486,17 @@ const GLYPHS: Record<IconName, ReactElement> = {
       <path d="M12 3 L21 8 L12 13 L3 8 Z" />
       <path d="M3 13 L12 18 L15 16.3" />
       <path className="accent" d="M16.4 15.9 L20.6 20.1 M20.6 15.9 L16.4 20.1" />
+    </g>
+  ),
+  'theme-dark': (
+    <g>
+      <path className="accent" d="M20 14.4 A8.4 8.4 0 1 1 9.6 4 A6.6 6.6 0 0 0 20 14.4 Z" />
+    </g>
+  ),
+  'theme-light': (
+    <g>
+      <circle className="accent" cx={12} cy={12} r={4.4} />
+      <path d="M12 2.4 L12 5 M12 19 L12 21.6 M2.4 12 L5 12 M19 12 L21.6 12 M5.2 5.2 L7 7 M17 17 L18.8 18.8 M18.8 5.2 L17 7 M7 17 L5.2 18.8" />
     </g>
   ),
 }

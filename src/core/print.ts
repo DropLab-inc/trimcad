@@ -27,8 +27,9 @@ const hexToRgb = (hex: string): [number, number, number] => {
 }
 
 /**
- * Paper is white and the drawing area is dark, so a colour light enough to be invisible on the page
- * is plotted black. This is what AutoCAD does with white geometry under its usual plot style.
+ * Paper is always white, whichever theme the drawing was made in, so a colour light enough to be
+ * invisible on the page is plotted black. This is what AutoCAD does with white geometry under its
+ * usual plot style, and it is what makes the default white layer plot at all.
  */
 const plotColor = (hex: string): [number, number, number] => {
   const [r, g, b] = hexToRgb(hex)

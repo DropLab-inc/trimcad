@@ -4,7 +4,7 @@ import type { Vec2 } from './math/vec2'
 import type { CadEntity, DrawingDocument, Layer } from './types'
 import { makeDefaultDocument } from './document'
 import { ellipticalArcPoints, expandBulges, sampleBSpline } from './dxfCurves'
-import { makeLayer, normalizeLayer } from './layers'
+import { DEFAULT_LAYER_COLOR, makeLayer, normalizeLayer } from './layers'
 import { uid } from './geometry'
 
 /** Marks the comment line carrying the full drawing. DXF readers ignore group code 999. */
@@ -340,5 +340,5 @@ const fromAci = (index: unknown): string => {
     // Anything outside the small palette arrives as a packed RGB value.
     if (index > 255) return `#${(index & 0xffffff).toString(16).padStart(6, '0')}`
   }
-  return '#7cc6ff'
+  return DEFAULT_LAYER_COLOR
 }

@@ -5,6 +5,10 @@ import { useCadStore } from '../core/store'
 import type { Vec2 } from '../core/math/vec2'
 import type { CadEntity, PolylineEntity } from '../core/types'
 import { CanvasViewport } from './CanvasViewport'
+import { canvasPalettes } from './theme'
+
+/** Tests read colours from the palette, so a theme change does not need every assertion rewritten. */
+const dark = canvasPalettes.dark
 
 /**
  * jsdom reports a zero-origin bounding box for the SVG, so client coordinates map straight to
@@ -21,7 +25,7 @@ const seed = (entities: CadEntity[]) => {
 
 const layerId = () => useCadStore.getState().doc.layers[0].id
 
-const snapGlyph = (container: HTMLElement) => container.querySelector('[stroke="#00f5d4"]')
+const snapGlyph = (container: HTMLElement) => container.querySelector(`[stroke="${dark.snap}"]`)
 
 describe('snap marker placement', () => {
   beforeEach(() => {
@@ -177,7 +181,7 @@ describe('picking edges for FILLET', () => {
 describe('picking tangent objects for a Ttr circle', () => {
   const click = (svg: Element, at: Vec2) => fireEvent.mouseDown(svg, { clientX: at.x, clientY: at.y, button: 0 })
   /** The green used to mark an object as chosen. */
-  const chosen = (svg: Element) => svg.querySelectorAll('[stroke="#4ade80"]')
+  const chosen = (svg: Element) => svg.querySelectorAll(`[stroke="${dark.confirm}"]`)
 
   const armed = () => {
     seed([
@@ -215,7 +219,7 @@ describe('picking tangent objects for a Ttr circle', () => {
     expect(useCadStore.getState().circlePending).toBe(true)
     // Two objects in green, each with its own marker where it was clicked.
     expect(chosen(svg).length).toBeGreaterThanOrEqual(2)
-    expect(svg.querySelectorAll('[fill="#4ade80"]')).toHaveLength(2)
+    expect(svg.querySelectorAll(`[fill="${dark.confirm}"]`)).toHaveLength(2)
   })
 
   it('drops the marks once the circle is drawn', () => {
@@ -329,7 +333,7 @@ describe('rectangular selection', () => {
     const { container } = render(<CanvasViewport />)
     drag(container, { x: 50, y: 50 }, { x: 250, y: 200 })
 
-    const box = container.querySelector('[stroke="#3b82f6"]')
+    const box = container.querySelector(`[stroke="${dark.windowSelect}"]`)
     expect(box).not.toBeNull()
     expect(box!.getAttribute('stroke-dasharray')).toBeNull()
     expect(Number(box!.getAttribute('width'))).toBe(200)
@@ -339,7 +343,7 @@ describe('rectangular selection', () => {
     const { container } = render(<CanvasViewport />)
     drag(container, { x: 250, y: 200 }, { x: 50, y: 50 })
 
-    const box = container.querySelector('[stroke="#22c55e"]')
+    const box = container.querySelector(`[stroke="${dark.crossingSelect}"]`)
     expect(box).not.toBeNull()
     expect(box!.getAttribute('stroke-dasharray')).toBe('6 4')
   })
@@ -406,6 +410,6 @@ describe('rectangular selection', () => {
     const svg = drag(container, { x: 50, y: 50 }, { x: 250, y: 200 })
     fireEvent.mouseUp(svg, { clientX: 250, clientY: 200, button: 0 })
 
-    expect(container.querySelector('[stroke="#3b82f6"]')).toBeNull()
+    expect(container.querySelector(`[stroke="${dark.windowSelect}"]`)).toBeNull()
   })
 })

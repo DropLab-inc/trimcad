@@ -1,3 +1,4 @@
+import { DEFAULT_LAYER_COLOR } from '../core/layers'
 import { useCadStore } from '../core/store'
 import { dimensionScale } from './renderers'
 import type { DimensionEntity } from '../core/types'
@@ -28,7 +29,7 @@ export function PropertiesPanel() {
         Color
         <input
           type="color"
-          value={first.color ?? '#7cc6ff'}
+          value={first.color ?? DEFAULT_LAYER_COLOR}
           onChange={(event) => {
             updateDocument((draft) => ({
               ...draft,

@@ -11,6 +11,7 @@ Lightweight browser-based 2D drafting software inspired by AutoCAD workflows.
 - Structure: layers, linetypes, lineweights, groups, blocks, document history (undo/redo)
 - Data I/O: JSON document model, DXF import/export subset, PDF print at drawing scale
 - Reliability: autosave + recovery prompt
+- Appearance: DropLab branding, with a dark and a light theme
 
 ## Project structure
 
@@ -339,6 +340,29 @@ Coverage output:
 
 - terminal summary (text)
 - HTML report in `coverage/index.html`
+
+## Themes and branding
+
+The interface uses DropLab's own palette from [droplab.co](https://droplab.co): a dark teal ink
+(`#0c161d`) with a cyan accent (`#35c8d2`), set in Space Grotesk and IBM Plex Sans.
+
+There is a dark and a light theme, switched with the sun/moon button at the right of the title bar.
+The first visit follows the operating system's own light/dark setting; after that your choice is
+remembered. `index.html` settles the theme before the first paint, so a light-mode visitor never
+sees a dark flash.
+
+Two things make this work rather than just recolour:
+
+- **Interface colours** all come from the CSS custom properties at the top of `src/index.css`. The
+  light theme is the same file with one block of values swapped, keyed off `[data-theme='light']`.
+- **Canvas colours** live in `src/ui/theme.ts` instead, because the drawing area is painted by hand
+  in SVG rather than by the stylesheet. `useCanvasPalette()` gives any component the right set.
+
+New layers are created on AutoCAD's colour 7, which is drawn white on the dark theme and black on
+the light one, so a drawing stays readable either way round without storing anything
+theme-specific in the file. Only plain white and plain black flip like this; every other layer
+colour is drawn exactly as specified. Printing applies the same idea, plotting anything too light
+to show on paper as black.
 
 ## Build
 

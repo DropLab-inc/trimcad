@@ -2,11 +2,12 @@ import type { ReactElement } from 'react'
 import { angularSweep, makeDimensionLabel, polar } from '../core/geometry'
 import { add, mul, normalize, sub, type Vec2 } from '../core/math/vec2'
 import type { CadEntity, DimensionEntity, DimStyle, HatchPattern } from '../core/types'
+import type { CanvasPalette } from './theme'
 
 export const HATCH_PATTERNS: HatchPattern[] = ['ansi31', 'ansi37', 'dots', 'solid']
 
-const hatchFill = (pattern: HatchPattern = 'ansi31'): string =>
-  pattern === 'solid' ? 'rgba(136,192,255,0.35)' : `url(#hatch-${pattern})`
+const hatchFill = (pattern: HatchPattern = 'ansi31', solid: string): string =>
+  pattern === 'solid' ? solid : `url(#hatch-${pattern})`
 
 const arcPath = (center: Vec2, radius: number, startAngle: number, endAngle: number): string => {
   const start = polar(center, radius, startAngle)
@@ -171,7 +172,7 @@ export const renderDimension = (
   const scale = dimensionScale(dimension)
   const textHeight = dimStyle.textHeight * scale
   const arrowSize = dimStyle.arrowSize * scale
-  const stroke = preview ? '#f59e0b' : color
+  const stroke = color
   const dash = preview ? '6 4' : undefined
   let textAngle = geometry.textAngleDeg
   if (textAngle > 90 || textAngle < -90) textAngle += 180
@@ -231,10 +232,17 @@ export const renderDimension = (
 
 export const renderEntity = (
   entity: CadEntity,
-  options: { selected: boolean; color: string; dash?: string; dimStyle: DimStyle; width?: number },
+  options: {
+    selected: boolean
+    color: string
+    dash?: string
+    dimStyle: DimStyle
+    width?: number
+    palette: CanvasPalette
+  },
 ): ReactElement | null => {
-  const { selected, color, dash, dimStyle, width } = options
-  const stroke = selected ? '#ffd166' : color
+  const { selected, color, dash, dimStyle, width, palette } = options
+  const stroke = selected ? palette.selection : color
   const common = {
     stroke,
     strokeWidth: width ?? (selected ? 2 : 1),
@@ -275,8 +283,8 @@ export const renderEntity = (
         <polygon
           key={entity.id}
           points={entity.boundary.map((point) => `${point.x},${point.y}`).join(' ')}
-          fill={hatchFill(entity.pattern)}
-          stroke={selected ? '#ffd166' : 'none'}
+          fill={hatchFill(entity.pattern, palette.hatchSolid)}
+          stroke={selected ? palette.selection : 'none'}
           strokeWidth={1}
           vectorEffect="non-scaling-stroke"
         />
@@ -288,7 +296,7 @@ export const renderEntity = (
         </text>
       )
     case 'dimension':
-      return renderDimension(entity, dimStyle, selected ? '#ffd166' : '#f9c74f', entity.id)
+      return renderDimension(entity, dimStyle, selected ? palette.selection : palette.dimension, entity.id)
     case 'insert':
       return (
         <g

@@ -8,6 +8,7 @@ import { PropertiesPanel } from './ui/PropertiesPanel'
 import { QuickAccess } from './ui/QuickAccess'
 import { SnapPanel } from './ui/SnapPanel'
 import { StatusBar } from './ui/StatusBar'
+import { ThemeToggle } from './ui/ThemeToggle'
 import { Toolbar } from './ui/Toolbar'
 import { useGlobalShortcuts } from './ui/useGlobalShortcuts'
 import { useSidebarWidth } from './ui/useSidebarWidth'
@@ -25,9 +26,13 @@ function App() {
     <div className="app-shell">
       <header className="topbar">
         <div className="titlebar">
-          <h1>DropLabCad</h1>
+          <h1 className="wordmark">
+            <span className="wordmark-logo" role="img" aria-label="DropLab" />
+            <span className="wordmark-suffix">Cad</span>
+          </h1>
           <FileMenu />
           <QuickAccess />
+          <ThemeToggle />
         </div>
         <Toolbar />
       </header>

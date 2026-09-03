@@ -1,5 +1,5 @@
 import { uid } from './geometry'
-import { makeLayer } from './layers'
+import { DEFAULT_LAYER_COLOR, makeLayer } from './layers'
 import type { CadEntity, DimStyle, DrawingDocument, Layer, Linetype } from './types'
 
 type Snapshot = {
@@ -131,7 +131,7 @@ export class DocumentController {
     this.selectedIds = this.selectedIds.filter((id) => !set.has(id))
   }
 
-  addLayer(name: string, color = '#7cc6ff') {
+  addLayer(name: string, color = DEFAULT_LAYER_COLOR) {
     this.mutate((draft) => {
       draft.layers.push(makeLayer(uid(), name, draft.linetypes[0].id, color))
     })

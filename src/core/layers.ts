@@ -16,6 +16,13 @@ export const LAYER_COLORS: Array<{ name: string; hex: string }> = [
   { name: 'Light grey', hex: '#c0c0c0' },
 ]
 
+/**
+ * New layers start on AutoCAD's colour 7, which is drawn white on a dark background and black on a
+ * light one. That keeps a drawing readable in either theme without storing anything theme-specific
+ * in the file.
+ */
+export const DEFAULT_LAYER_COLOR = '#ffffff'
+
 /** The standard plotted widths, in millimetres. */
 export const LINEWEIGHTS = [0, 0.05, 0.09, 0.13, 0.18, 0.25, 0.3, 0.35, 0.4, 0.5, 0.6, 0.7, 0.8, 1, 1.2, 1.4, 2]
 
@@ -34,7 +41,7 @@ export const lineweightPixels = (mm: number | undefined): number => {
 }
 
 /** Everything a layer needs beyond a name, so every place that makes one agrees. */
-export const makeLayer = (id: string, name: string, linetypeId: string, color = '#7cc6ff'): Layer => ({
+export const makeLayer = (id: string, name: string, linetypeId: string, color = DEFAULT_LAYER_COLOR): Layer => ({
   id,
   name,
   color,
@@ -53,7 +60,7 @@ export const makeLayer = (id: string, name: string, linetypeId: string, color = 
 export const normalizeLayer = (layer: Partial<Layer>, fallbackLinetypeId: string): Layer => ({
   id: layer.id ?? crypto.randomUUID(),
   name: layer.name ?? '0',
-  color: layer.color ?? '#7cc6ff',
+  color: layer.color ?? DEFAULT_LAYER_COLOR,
   linetypeId: layer.linetypeId ?? fallbackLinetypeId,
   lineweight: typeof layer.lineweight === 'number' ? layer.lineweight : 0.25,
   visible: layer.visible !== false,
