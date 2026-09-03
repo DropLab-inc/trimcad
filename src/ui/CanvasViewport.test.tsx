@@ -174,6 +174,78 @@ describe('picking edges for FILLET', () => {
   })
 })
 
+describe('ARRAY through the canvas', () => {
+  const entities = () => useCadStore.getState().doc.entities
+  const circles = () => entities().filter((entity) => entity.type === 'circle')
+  const click = (svg: Element, at: Vec2) => fireEvent.mouseDown(svg, { clientX: at.x, clientY: at.y, button: 0 })
+
+  /** One circle in the drawing, selected, with ARRAY running against it. */
+  const armed = () => {
+    const source = createCircle(layerId(), { x: 100, y: 100 }, 10)
+    seed([source])
+    useCadStore.getState().setSelection([source.id])
+    useCadStore.getState().executeCommand('ARRAY')
+    const { container } = render(<CanvasViewport />)
+    return container.querySelector('svg')!
+  }
+
+  beforeEach(() => {
+    seed([])
+    useCadStore.getState().setArrayType('rect')
+    useCadStore.getState().setArrayOption('rows', 2)
+    useCadStore.getState().setArrayOption('columns', 3)
+  })
+
+  it('keeps the selection when the command starts, so there is something to repeat', () => {
+    armed()
+    expect(useCadStore.getState().selectedIds).toHaveLength(1)
+    expect(useCadStore.getState().activeTool).toBe('array')
+  })
+
+  it('lays out a grid from a base point and the neighbouring item', () => {
+    const svg = armed()
+
+    click(svg, { x: 100, y: 100 })
+    expect(circles()).toHaveLength(1)
+    click(svg, { x: 160, y: 140 })
+
+    expect(circles()).toHaveLength(6)
+  })
+
+  it('previews the grid before the second click commits it', () => {
+    const svg = armed()
+    click(svg, { x: 100, y: 100 })
+    fireEvent.mouseMove(svg, { clientX: 160, clientY: 140 })
+
+    // The preview draws the copies as ghosts, so more circles are on screen than in the drawing.
+    expect(circles()).toHaveLength(1)
+    expect(svg.querySelectorAll('circle').length).toBeGreaterThan(1)
+  })
+
+  it('sweeps a ring from the single point a polar array is given', () => {
+    const svg = armed()
+    useCadStore.getState().setArrayType('polar')
+    useCadStore.getState().setArrayOption('count', 4)
+    useCadStore.getState().setArrayOption('fillAngle', 360)
+
+    click(svg, { x: 300, y: 100 })
+
+    expect(circles()).toHaveLength(4)
+  })
+
+  it('says what is missing when nothing is selected', () => {
+    seed([createCircle(layerId(), { x: 100, y: 100 }, 10)])
+    useCadStore.getState().setSelection([])
+    useCadStore.getState().executeCommand('ARRAY')
+    const { container } = render(<CanvasViewport />)
+
+    click(container.querySelector('svg')!, { x: 100, y: 100 })
+
+    expect(circles()).toHaveLength(1)
+    expect(useCadStore.getState().statusMessage).toMatch(/select objects/i)
+  })
+})
+
 describe('rectangular selection', () => {
   beforeEach(() => {
     seed([])
