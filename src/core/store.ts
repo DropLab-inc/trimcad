@@ -32,8 +32,9 @@ import {
   cornerRadius,
   polygonOnEdge,
 } from './construct'
-import { joinSelection, overkill } from './combine'
+import { joinSelection, overkill, type CombineOptions } from './combine'
 import { explodeSelection } from './explode'
+import { getPreferences } from './preferences'
 import { distanceToEntity } from './flatten'
 import { dragGrip, type Grip } from './grips'
 import { parseCoordinate } from './dynamicInput'
@@ -274,6 +275,7 @@ const perCommandOptions = {
 }
 
 const autosaveDoc = (doc: DrawingDocument) => {
+  if (!getPreferences().autosave) return
   try {
     saveAutosave(doc)
   } catch {
@@ -621,6 +623,7 @@ export const useCadStore = create<CadState>((set, get) => ({
     set({ doc, selectedIds: controller.getSelection(), statusMessage: `Deleted ${ids.length} entit${ids.length === 1 ? 'y' : 'ies'}` })
   },
   maybeRecoverAutosave: () => {
+    if (!getPreferences().autosave) return
     const decision = decideRecovery(loadAutosave(), currentSessionId())
     if (decision.kind === 'none') return
 
@@ -799,7 +802,7 @@ type CadStoreState = ReturnType<typeof useCadStore.getState>
 const pickEntity = (state: CadStoreState, point: Vec2): CadEntity | undefined =>
   [...editableEntities(state.doc)]
     .reverse()
-    .find((entity) => isPointNearEntity(point, entity, 8 / state.camera.zoom))
+    .find((entity) => isPointNearEntity(point, entity, getPreferences().pickBoxSize / state.camera.zoom))
 
 /* ------------------------------------------------------- trim and extend */
 
@@ -1073,7 +1076,7 @@ const applyFenceEdit = (state: CadStoreState, from: Vec2, to: Vec2, swapped: boo
   }
 
   const edges = edgesFor(state)
-  const tolerance = 8 / state.camera.zoom
+  const tolerance = getPreferences().pickBoxSize / state.camera.zoom
   const replacements = new Map<string, CadEntity[]>()
   let changed = 0
 
@@ -1271,6 +1274,12 @@ const applyTypedNumber = (state: CadStoreState, value: number): boolean => {
 const selectedEntities = (state: CadStoreState): CadEntity[] =>
   state.doc.entities.filter((entity) => state.selectedIds.includes(entity.id))
 
+/** How JOIN and OVERKILL should read the drawing, taken from the preferences. */
+const combineOptions = (): CombineOptions => {
+  const preferences = getPreferences()
+  return { tolerance: preferences.geometryTolerance, polylineSegments: preferences.polylineSegments }
+}
+
 /**
  * JOIN, which either produces one object or explains why the pieces do not belong together. The
  * result takes the place of the first object joined, so it keeps its position in the drawing order.
@@ -1281,7 +1290,7 @@ const runJoin = (state: CadStoreState) => {
     state.log('error', 'Select objects before joining.')
     return
   }
-  const outcome = joinSelection(chosen)
+  const outcome = joinSelection(chosen, combineOptions())
   if (!outcome.joined) {
     state.log('error', outcome.reason)
     state.setStatusMessage(outcome.reason)
@@ -1349,7 +1358,7 @@ const runOverkill = (state: CadStoreState) => {
     return
   }
 
-  const result = overkill(chosen)
+  const result = overkill(chosen, combineOptions())
   const removed = result.duplicates + result.merged
   if (removed === 0) {
     const message = 'Nothing to clean up: no duplicate or overlapping objects found.'
@@ -2055,7 +2064,7 @@ const applyDimensionTool = (
 
   if (dimensionType === 'radial' || dimensionType === 'diameter') {
     if (draftPoints.length === 0) {
-      const tolerance = 8 / state.camera.zoom
+      const tolerance = getPreferences().pickBoxSize / state.camera.zoom
       const target = [...state.doc.entities]
         .reverse()
         .find((entity) => (entity.type === 'circle' || entity.type === 'arc') && isPointNearEntity(point, entity, tolerance))

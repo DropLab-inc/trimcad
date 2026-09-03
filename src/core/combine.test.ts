@@ -187,6 +187,98 @@ describe('JOIN', () => {
   })
 })
 
+describe('reading polylines as the lines they are drawn from', () => {
+  const segments = { polylineSegments: true }
+  const rect = (id: string, x1: number, y1: number, x2: number, y2: number): PolylineEntity => ({
+    ...(createRect('L', { x: x1, y: y1 }, { x: x2, y: y2 }) as PolylineEntity),
+    id,
+  })
+
+  it('JOIN threads a line onto a closed shape it meets at a corner', () => {
+    const outcome = joinSelection([rect('r', 0, 0, 100, 60), line('tail', [0, 0], [-40, 0])], segments)
+
+    expect(outcome.joined).toBe(true)
+    if (!outcome.joined) return
+    const joined = outcome.entity as PolylineEntity
+    expect(joined.type).toBe('polyline')
+    // Four corners of the rectangle, the corner it came back to, and the far end of the tail.
+    expect(joined.points).toHaveLength(6)
+    expect(joined.points).toContainEqual({ x: -40, y: 0 })
+  })
+
+  it('JOIN reports how many objects were picked, not how many lines they were read as', () => {
+    const outcome = joinSelection([rect('r', 0, 0, 100, 60), line('tail', [0, 0], [-40, 0])], segments)
+
+    expect(outcome.joined && outcome.note).toBe('Joined 2 objects into a polyline')
+  })
+
+  it('JOIN consumes the shapes that were picked, so the right things are removed', () => {
+    const outcome = joinSelection([rect('r', 0, 0, 100, 60), line('tail', [0, 0], [-40, 0])], segments)
+
+    expect(outcome.joined && outcome.consumed).toEqual(['r', 'tail'])
+  })
+
+  it('JOIN turns a closed shape down when polylines are read whole', () => {
+    const outcome = joinSelection([rect('r', 0, 0, 100, 60), line('tail', [0, 0], [-40, 0])])
+
+    expect(outcome.joined).toBe(false)
+    expect(outcome.joined === false && outcome.reason).toMatch(/no free ends/)
+  })
+
+  it('OVERKILL deletes a loose line lying along a rectangle edge', () => {
+    const result = overkill([rect('r', 0, 0, 100, 60), line('edge', [0, 0], [100, 0])], segments)
+
+    expect(result.duplicates).toBe(1)
+    expect(result.entities).toHaveLength(1)
+  })
+
+  it('OVERKILL leaves the rectangle whole when nothing was taken out of it', () => {
+    const result = overkill([rect('r', 0, 0, 100, 60), line('edge', [0, 0], [100, 0])], segments)
+
+    expect(result.entities[0].type).toBe('polyline')
+    expect(result.entities[0].id).toBe('r')
+  })
+
+  it('OVERKILL keeps the rectangle rather than the loose line, whichever was drawn first', () => {
+    const result = overkill([line('edge', [0, 0], [100, 0]), rect('r', 0, 0, 100, 60)], segments)
+
+    expect(result.entities).toHaveLength(1)
+    expect(result.entities[0].id).toBe('r')
+  })
+
+  it('OVERKILL breaks the shape apart only when one of its edges really changed', () => {
+    // The loose line runs past the corner, so the edge it overlaps grows and can no longer be part
+    // of the rectangle as drawn.
+    const result = overkill([rect('r', 0, 0, 100, 60), line('over', [50, 0], [180, 0])], segments)
+
+    expect(result.merged).toBe(1)
+    expect(result.entities.every((entity) => entity.type === 'line')).toBe(true)
+    expect(result.entities).toHaveLength(4)
+  })
+
+  it('OVERKILL misses the duplicate when polylines are read whole', () => {
+    const result = overkill([rect('r', 0, 0, 100, 60), line('edge', [0, 0], [100, 0])])
+
+    expect(result.duplicates).toBe(0)
+    expect(result.entities).toHaveLength(2)
+  })
+
+  it('OVERKILL still spots two identical rectangles either way', () => {
+    const pair = [rect('a', 0, 0, 100, 60), rect('b', 0, 0, 100, 60)]
+
+    expect(overkill(pair, segments).duplicates).toBe(1)
+    expect(overkill(pair).duplicates).toBe(1)
+  })
+
+  it('OVERKILL leaves an untouched drawing of shapes exactly as it found it', () => {
+    const drawing = [rect('a', 0, 0, 100, 60), rect('b', 200, 200, 260, 240), createCircle('L', { x: 0, y: 0 }, 8)]
+
+    const result = overkill(drawing, segments)
+
+    expect(result.entities).toEqual(drawing)
+  })
+})
+
 describe('OVERKILL', () => {
   const at = (id: string, from: [number, number], to: [number, number]) => line(id, from, to)
 

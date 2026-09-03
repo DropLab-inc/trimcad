@@ -13,6 +13,9 @@ dist-ssr
 coverage
 *.local
 
+# Throwaway browser-driving harness used to check changes by hand
+.probe
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -8,6 +8,7 @@ import {
   type WheelEvent,
 } from 'react'
 import { applyDrawTool, currentPrompt, previewTrimExtend, useCadStore } from '../core/store'
+import { usePreferences } from '../core/preferences'
 import { formatPrompt, matchKeyword } from '../core/prompts'
 import { applyOrtho, applyPolarTracking, findBestSnap, trackingAppliesTo } from '../core/snap'
 import { rectFromPoints, selectEntitiesInRect, selectionModeFor } from '../core/selection'
@@ -51,18 +52,11 @@ const worldToScreen = (point: Vec2, camera: Camera): Vec2 => ({
 /** Below this drag distance a press-and-release counts as a pick rather than a fence. */
 const FENCE_THRESHOLD = 5
 
-/** How near the cursor has to be, in screen pixels, to take hold of a grip. */
-const GRIP_PICK_RADIUS = 8
-
-/** How wide a grip square is drawn, in screen pixels, whatever the zoom. */
-const GRIP_SIZE = 7
-
-/** How far a press has to travel before it counts as dragging the selection rather than picking. */
+/** How far a press has to travel before it counts as dragging rather than clicking. */
 const DRAG_THRESHOLD = 4
 
 /** AutoCAD draws a distinct glyph per snap type; this keeps the marker readable at a glance. */
-const SnapGlyph = ({ mode, at, color }: { mode: SnapMode; at: Vec2; color: string }) => {
-  const size = 7
+const SnapGlyph = ({ mode, at, color, size = 7 }: { mode: SnapMode; at: Vec2; color: string; size?: number }) => {
   const props = { stroke: color, strokeWidth: 1.6, fill: 'none' }
   switch (mode) {
     case 'endpoint':
@@ -186,6 +180,12 @@ export function CanvasViewport() {
   const [lastMouse, setLastMouse] = useState<Vec2 | null>(null)
   const [boxStart, setBoxStart] = useState<Vec2 | null>(null)
   const [boxEnd, setBoxEnd] = useState<Vec2 | null>(null)
+  /**
+   * A selection window whose first corner has been clicked and let go of. The far corner then
+   * follows the cursor with no button held until a second click closes it, which is how AutoCAD
+   * behaves when PICKDRAG allows it.
+   */
+  const [boxLatched, setBoxLatched] = useState(false)
   const [fenceStart, setFenceStart] = useState<Vec2 | null>(null)
   const [fenceEnd, setFenceEnd] = useState<Vec2 | null>(null)
   const [hoverId, setHoverId] = useState<string | null>(null)
@@ -196,6 +196,16 @@ export function CanvasViewport() {
   const [hoverGrip, setHoverGrip] = useState<{ entityId: string; grip: Grip } | null>(null)
   const [typedState, setTypedState] = useState<TypedState>({ step: '', values: NO_VALUES, field: 0 })
   const [size, setSize] = useState({ width: 1000, height: 700 })
+  const preferences = usePreferences()
+  /** The pick box, grip reach and snap aperture are set in screen pixels but used in drawing units. */
+  const pickTolerance = preferences.pickBoxSize / camera.zoom
+  /** Whether clicking one corner and then the other is an accepted way to draw a window out. */
+  const clickWindows = preferences.windowSelection !== 'drag'
+  /**
+   * How far each arm of the crosshair reaches, from AutoCAD's CURSORSIZE. At 100 it spans the whole
+   * viewport, which is the full-screen crosshair; below that it becomes a cross around the cursor.
+   */
+  const crosshairReach = (Math.max(size.width, size.height) * preferences.crosshairSize) / 100
 
   /** TRIM and EXTEND are the same command with the roles reversed; Shift flips which one you get. */
   const editingEdges = activeTool === 'trim' || activeTool === 'extend'
@@ -287,6 +297,14 @@ export function CanvasViewport() {
           setObjectDrag(null)
           return
         }
+        // A window waiting for its second corner is called off, leaving the selection untouched.
+        if (boxLatched) {
+          setBoxLatched(false)
+          setBoxStart(null)
+          setBoxEnd(null)
+          setStatusMessage('*Cancel*')
+          return
+        }
         // Escape leaves whatever command is running and drops back to the selection prompt.
         // Pressing it again from there clears the selection, as AutoCAD does.
         if (activeTool !== 'select' || draftPoints.length > 0 || pickingEdges) cancelCommand()
@@ -350,6 +368,7 @@ export function CanvasViewport() {
     activeTool,
     applyKeyword,
     applySelection,
+    boxLatched,
     cancelCommand,
     commandPoint,
     deleteSelection,
@@ -391,7 +410,7 @@ export function CanvasViewport() {
       const candidates = options?.ignoreId
         ? visibleEntities.filter((entity) => entity.id !== options.ignoreId)
         : visibleEntities
-      const snap = findBestSnap(raw, candidates, snapModes, 12 / camera.zoom, basePoint)
+      const snap = findBestSnap(raw, candidates, snapModes, preferences.apertureSize / camera.zoom, basePoint)
       if (snap) {
         return { point: snap.point, snap: snap.mode, tracking: null }
       }
@@ -406,7 +425,7 @@ export function CanvasViewport() {
       return { point: applyOrtho(basePoint, raw), snap: null, tracking: 'ortho' }
     }
     if (polarEnabled) {
-      const tracked = applyPolarTracking(basePoint, raw, 45)
+      const tracked = applyPolarTracking(basePoint, raw, preferences.polarAngle)
       if (tracked.snapped) {
         const angle = (Math.atan2(tracked.point.y - basePoint.y, tracked.point.x - basePoint.x) * 180) / Math.PI
         return { point: tracked.point, snap: null, tracking: `polar ${((angle + 360) % 360).toFixed(0)}°` }
@@ -429,17 +448,23 @@ export function CanvasViewport() {
     }
     if (event.button !== 0) return
     const local = localPoint(event)
+    // A window whose first corner is already down is waiting for its second click, and nothing
+    // else may take that click: not a grip, not an object under it. Mouse up closes the window.
+    if (boxLatched && (activeTool === 'select' || pickingEdges)) {
+      setBoxEnd(local)
+      return
+    }
     if (activeTool === 'select' && !pickingEdges) {
       // Pressing on a grip or on something already picked reshapes or drags it; anywhere else
       // still starts a selection window, so the two never get in each other's way.
       const world = screenToWorld(local, camera)
-      const held = findGripAt(world, selectedEntities, GRIP_PICK_RADIUS / camera.zoom)
+      const held = findGripAt(world, selectedEntities, preferences.gripSize / camera.zoom)
       if (held) {
         setGripDrag({ entityId: held.entity.id, grip: held.grip, to: held.grip.point })
         return
       }
       const onSelection = selectedEntities.some((entity) =>
-        isPointNearEntity(world, entity, 8 / camera.zoom),
+        isPointNearEntity(world, entity, pickTolerance),
       )
       if (onSelection) {
         setObjectDrag({ from: world, to: world })
@@ -499,7 +524,7 @@ export function CanvasViewport() {
 
     // Rollover highlight: show which object a click would pick before committing to it.
     if (activeTool === 'select' || pickingEdges) {
-      const hit = [...pickableEntities].reverse().find((entity) => isPointNearEntity(point, entity, 8 / camera.zoom))
+      const hit = [...pickableEntities].reverse().find((entity) => isPointNearEntity(point, entity, pickTolerance))
       setHoverId(hit?.id ?? null)
     } else if (hoverId) {
       setHoverId(null)
@@ -508,7 +533,7 @@ export function CanvasViewport() {
     // A grip swells under the cursor so it is clear the press will take hold of it.
     const overGrip =
       activeTool === 'select' && !pickingEdges
-        ? findGripAt(screenToWorld(local, camera), selectedEntities, GRIP_PICK_RADIUS / camera.zoom)
+        ? findGripAt(screenToWorld(local, camera), selectedEntities, preferences.gripSize / camera.zoom)
         : null
     setHoverGrip(overGrip ? { entityId: overGrip.entity.id, grip: overGrip.grip } : null)
   }
@@ -517,6 +542,15 @@ export function CanvasViewport() {
   useEffect(() => {
     publishCursorWorld(cursorWorld)
   }, [cursorWorld, publishCursorWorld])
+
+  // Starting a command puts an open selection window away, rather than leaving it hanging over the
+  // drawing waiting for a second corner that will never come.
+  useEffect(() => {
+    if (activeTool === 'select' || pickingEdges) return
+    setBoxLatched(false)
+    setBoxStart(null)
+    setBoxEnd(null)
+  }, [activeTool, pickingEdges])
 
   const handleMouseUp = (event: MouseEvent<SVGSVGElement>) => {
     setPanning(false)
@@ -540,7 +574,7 @@ export function CanvasViewport() {
         const modifier = event.shiftKey ? 'add' : event.ctrlKey ? 'remove' : 'replace'
         const hit = [...pickableEntities]
           .reverse()
-          .find((entity) => isPointNearEntity(objectDrag.from, entity, 8 / camera.zoom))
+          .find((entity) => isPointNearEntity(objectDrag.from, entity, pickTolerance))
         applySelection(hit ? [hit.id] : [], hit ? modifier : 'replace')
         setStatusMessage(hit ? `Selected ${hit.type}` : 'Nothing selected')
       }
@@ -561,21 +595,39 @@ export function CanvasViewport() {
     }
 
     if ((activeTool === 'select' || pickingEdges) && boxStart && boxEnd) {
-      const modifier = event.shiftKey ? 'add' : event.ctrlKey ? 'remove' : 'replace'
+      const modifier = event.shiftKey || !preferences.shiftToAdd ? 'add' : event.ctrlKey ? 'remove' : 'replace'
       const dragged = Math.hypot(boxEnd.x - boxStart.x, boxEnd.y - boxStart.y)
-
-      if (dragged < 4) {
-        const { point } = resolvePoint(boxStart)
-        const hit = [...pickableEntities].reverse().find((entity) => isPointNearEntity(point, entity, 8 / camera.zoom))
-        applySelection(hit ? [hit.id] : [], hit ? modifier : 'replace')
-        setStatusMessage(hit ? `Selected ${hit.type}` : 'Nothing selected')
-      } else {
+      const closeWindow = () => {
         const start = screenToWorld(boxStart, camera)
         const end = screenToWorld(boxEnd, camera)
         const mode = selectionModeFor(start, end)
         const ids = selectEntitiesInRect(pickableEntities, rectFromPoints(start, end), mode)
         applySelection(ids, modifier)
         setStatusMessage(`${mode === 'window' ? 'Window' : 'Crossing'} selected ${ids.length} object(s)`)
+      }
+
+      if (boxLatched) {
+        // The second click of a click-then-click window, which closes it however small it is.
+        closeWindow()
+        setBoxLatched(false)
+      } else if (dragged >= DRAG_THRESHOLD && preferences.windowSelection !== 'click') {
+        closeWindow()
+      } else {
+        const { point } = resolvePoint(boxStart)
+        const hit = [...pickableEntities].reverse().find((entity) => isPointNearEntity(point, entity, pickTolerance))
+        if (hit) {
+          applySelection([hit.id], modifier)
+          setStatusMessage(`Selected ${hit.type}`)
+        } else if (clickWindows) {
+          // A click on bare paper opens a window rather than clearing the selection, which is what
+          // AutoCAD does. Escape is then the way to clear, and it also calls the window off.
+          setBoxLatched(true)
+          setStatusMessage('Specify opposite corner:')
+          return
+        } else {
+          applySelection([], 'replace')
+          setStatusMessage('Nothing selected')
+        }
       }
     }
 
@@ -588,6 +640,7 @@ export function CanvasViewport() {
     setLastMouse(null)
     setBoxStart(null)
     setBoxEnd(null)
+    setBoxLatched(false)
     setFenceStart(null)
     setFenceEnd(null)
     setGripDrag(null)
@@ -609,6 +662,7 @@ export function CanvasViewport() {
   const { width, height } = size
 
   const grid = useMemo(() => {
+    if (!preferences.showGrid) return []
     const lines: ReactElement[] = []
     let spacing = 10
     let guard = 0
@@ -659,7 +713,7 @@ export function CanvasViewport() {
       )
     }
     return lines
-  }, [camera, width, height])
+  }, [camera, width, height, preferences.showGrid])
 
   /**
    * Shading the piece under the crosshair is what makes trimming feel safe: you can see the exact
@@ -722,7 +776,7 @@ export function CanvasViewport() {
               (entity) =>
                 !takenIds.has(entity.id) &&
                 canBeTangent(entity) &&
-                isPointNearEntity(cursorWorld, entity, 8 / camera.zoom),
+                isPointNearEntity(cursorWorld, entity, pickTolerance),
             )
         : undefined
 
@@ -762,7 +816,7 @@ export function CanvasViewport() {
       const eligible = activeTool === 'fillet' ? canFillet : hasStraightSegments
       const second = [...editableEntities(doc)]
         .reverse()
-        .find((entity) => eligible(entity) && isPointNearEntity(cursorWorld, entity, 8 / camera.zoom))
+        .find((entity) => eligible(entity) && isPointNearEntity(cursorWorld, entity, pickTolerance))
       const picks = second
         ? ([
             { entity: first, point: draftPoints[0] },
@@ -1046,7 +1100,7 @@ export function CanvasViewport() {
 
   const grips = useMemo(() => {
     if (selectedEntities.length === 0) return []
-    const gripSize = GRIP_SIZE / camera.zoom
+    const gripSize = preferences.gripSize / camera.zoom
     // The grip under the cursor, or the one being dragged, fills with the selection colour so it
     // is obvious which handle a press has taken hold of.
     const held = gripDrag ?? hoverGrip
@@ -1071,7 +1125,7 @@ export function CanvasViewport() {
         )
       }),
     )
-  }, [camera.zoom, gripDrag, hoverGrip, palette, selectedEntities])
+  }, [camera.zoom, gripDrag, hoverGrip, palette, preferences.gripSize, selectedEntities])
 
   /** What the drag in progress would leave behind, drawn over the unchanged original. */
   const dragPreview = useMemo(() => {
@@ -1099,7 +1153,9 @@ export function CanvasViewport() {
 
   const selectionBox = useMemo(() => {
     if (!boxStart || !boxEnd) return null
-    if (Math.hypot(boxEnd.x - boxStart.x, boxEnd.y - boxStart.y) < 4) return null
+    // A latched window is drawn from the moment its first corner is put down, so it is obvious the
+    // next click will close it rather than pick something.
+    if (!boxLatched && Math.hypot(boxEnd.x - boxStart.x, boxEnd.y - boxStart.y) < DRAG_THRESHOLD) return null
     const isWindow = boxEnd.x >= boxStart.x
     return (
       <rect
@@ -1113,7 +1169,7 @@ export function CanvasViewport() {
         strokeDasharray={isWindow ? undefined : '6 4'}
       />
     )
-  }, [boxEnd, boxStart])
+  }, [boxEnd, boxLatched, boxStart, palette])
 
   return (
     <div className="viewport-shell" ref={frameRef}>
@@ -1176,20 +1232,34 @@ export function CanvasViewport() {
 
         {cursorScreen && snapScreen && (
           <g pointerEvents="none">
-            <line x1={0} y1={snapScreen.y} x2={width} y2={snapScreen.y} stroke={palette.crosshair} strokeWidth={1} />
-            <line x1={snapScreen.x} y1={0} x2={snapScreen.x} y2={height} stroke={palette.crosshair} strokeWidth={1} />
+            <line
+              x1={snapScreen.x - crosshairReach}
+              y1={snapScreen.y}
+              x2={snapScreen.x + crosshairReach}
+              y2={snapScreen.y}
+              stroke={palette.crosshair}
+              strokeWidth={1}
+            />
+            <line
+              x1={snapScreen.x}
+              y1={snapScreen.y - crosshairReach}
+              x2={snapScreen.x}
+              y2={snapScreen.y + crosshairReach}
+              stroke={palette.crosshair}
+              strokeWidth={1}
+            />
             <rect
-              x={snapScreen.x - 5}
-              y={snapScreen.y - 5}
-              width={10}
-              height={10}
+              x={snapScreen.x - preferences.pickBoxSize / 2}
+              y={snapScreen.y - preferences.pickBoxSize / 2}
+              width={preferences.pickBoxSize}
+              height={preferences.pickBoxSize}
               fill="none"
               stroke={palette.crosshair}
               strokeWidth={1}
             />
             {activeSnap && (
               <>
-                <SnapGlyph mode={activeSnap} at={snapScreen} color={palette.snap} />
+                <SnapGlyph mode={activeSnap} at={snapScreen} color={palette.snap} size={preferences.snapMarkerSize} />
                 <text x={snapScreen.x + 14} y={snapScreen.y - 12} fill={palette.snap} fontSize={11}>
                   {activeSnap}
                 </text>

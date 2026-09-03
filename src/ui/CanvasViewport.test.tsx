@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createCircle, createLine, createPolygon, createRect } from '../core/commands'
+import { resetPreferences, setPreference } from '../core/preferences'
 import { useCadStore } from '../core/store'
 import type { Vec2 } from '../core/math/vec2'
 import type { CadEntity, PolylineEntity } from '../core/types'
@@ -21,6 +22,8 @@ const seed = (entities: CadEntity[]) => {
   state.setSelection([])
   state.updateDocument((doc) => ({ ...doc, entities, groups: [] }))
   state.setCamera({ x: 0, y: 0, zoom: 1 })
+  // Preferences persist across tests, so each one starts from the settings as shipped.
+  resetPreferences()
 }
 
 const layerId = () => useCadStore.getState().doc.layers[0].id
@@ -414,6 +417,168 @@ describe('rectangular selection', () => {
   })
 })
 
+describe('drawing a selection window out with two clicks', () => {
+  const click = (svg: SVGSVGElement, at: Vec2, options: { shiftKey?: boolean } = {}) => {
+    fireEvent.mouseDown(svg, { clientX: at.x, clientY: at.y, button: 0, ...options })
+    fireEvent.mouseUp(svg, { clientX: at.x, clientY: at.y, button: 0, ...options })
+  }
+  const moveTo = (svg: SVGSVGElement, at: Vec2) => fireEvent.mouseMove(svg, { clientX: at.x, clientY: at.y })
+
+  const canvas = (entities: CadEntity[]) => {
+    seed(entities)
+    useCadStore.getState().setTool('select')
+    const { container } = render(<CanvasViewport />)
+    return { container, svg: container.querySelector('svg')! }
+  }
+
+  it('opens a window on the first click and closes it on the second', () => {
+    const inside = createRect(layerId(), { x: 60, y: 60 }, { x: 120, y: 120 })
+    const outside = createRect(layerId(), { x: 500, y: 500 }, { x: 560, y: 560 })
+    const { svg } = canvas([inside, outside])
+
+    click(svg, { x: 20, y: 20 })
+    moveTo(svg, { x: 300, y: 300 })
+    click(svg, { x: 300, y: 300 })
+
+    expect(useCadStore.getState().selectedIds).toEqual([inside.id])
+  })
+
+  it('says what it is waiting for once the first corner is down', () => {
+    const { svg } = canvas([])
+
+    click(svg, { x: 20, y: 20 })
+
+    expect(useCadStore.getState().statusMessage).toBe('Specify opposite corner:')
+  })
+
+  it('draws the window as the cursor moves, with no button held', () => {
+    const { container, svg } = canvas([])
+
+    click(svg, { x: 20, y: 20 })
+    moveTo(svg, { x: 220, y: 170 })
+
+    const box = container.querySelector(`[stroke="${dark.windowSelect}"]`)
+    expect(box).not.toBeNull()
+    expect(Number(box!.getAttribute('width'))).toBe(200)
+  })
+
+  it('shows a crossing window when the second corner is to the left', () => {
+    const { container, svg } = canvas([])
+
+    click(svg, { x: 300, y: 300 })
+    moveTo(svg, { x: 100, y: 100 })
+
+    expect(container.querySelector(`[stroke="${dark.crossingSelect}"]`)).not.toBeNull()
+  })
+
+  it('catches what it merely touches when drawn right to left', () => {
+    const straddling = createLine(layerId(), { x: 200, y: 100 }, { x: 900, y: 100 })
+    const { svg } = canvas([straddling])
+
+    click(svg, { x: 400, y: 400 })
+    moveTo(svg, { x: 20, y: 20 })
+    click(svg, { x: 20, y: 20 })
+
+    expect(useCadStore.getState().selectedIds).toEqual([straddling.id])
+  })
+
+  it('lets the second click land on an object without picking it instead', () => {
+    // The far corner is a position, not a pick, so an object under it must not steal the click.
+    const inside = createRect(layerId(), { x: 60, y: 60 }, { x: 120, y: 120 })
+    const under = createLine(layerId(), { x: 300, y: 300 }, { x: 700, y: 300 })
+    const { svg } = canvas([inside, under])
+
+    click(svg, { x: 20, y: 20 })
+    moveTo(svg, { x: 400, y: 300 })
+    click(svg, { x: 400, y: 300 })
+
+    expect(useCadStore.getState().selectedIds).toEqual([inside.id])
+  })
+
+  it('picks an object outright when the first click lands on one', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { svg } = canvas([line])
+
+    click(svg, { x: 250, y: 100 })
+
+    expect(useCadStore.getState().selectedIds).toEqual([line.id])
+    expect(useCadStore.getState().statusMessage).not.toBe('Specify opposite corner:')
+  })
+
+  it('calls the window off on Escape, leaving the selection alone', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { container, svg } = canvas([line])
+    act(() => useCadStore.getState().setSelection([line.id]))
+
+    click(svg, { x: 700, y: 700 })
+    act(() => {
+      fireEvent.keyDown(window, { key: 'Escape' })
+    })
+
+    expect(useCadStore.getState().selectedIds).toEqual([line.id])
+    expect(container.querySelector(`[stroke="${dark.windowSelect}"]`)).toBeNull()
+  })
+
+  it('adds to the selection when the window is closed with Shift held', () => {
+    const first = createRect(layerId(), { x: 60, y: 60 }, { x: 120, y: 120 })
+    const second = createRect(layerId(), { x: 300, y: 300 }, { x: 360, y: 360 })
+    const { svg } = canvas([first, second])
+    act(() => useCadStore.getState().setSelection([first.id]))
+
+    click(svg, { x: 250, y: 250 })
+    moveTo(svg, { x: 500, y: 500 })
+    click(svg, { x: 500, y: 500 }, { shiftKey: true })
+
+    expect(useCadStore.getState().selectedIds).toHaveLength(2)
+  })
+
+  it('still lets a window be dragged out in the usual way', () => {
+    const inside = createRect(layerId(), { x: 60, y: 60 }, { x: 120, y: 120 })
+    const { svg } = canvas([inside])
+
+    fireEvent.mouseDown(svg, { clientX: 20, clientY: 20, button: 0 })
+    fireEvent.mouseMove(svg, { clientX: 300, clientY: 300 })
+    fireEvent.mouseUp(svg, { clientX: 300, clientY: 300, button: 0 })
+
+    expect(useCadStore.getState().selectedIds).toEqual([inside.id])
+  })
+
+  it('does not open a window at all when only dragging is allowed', () => {
+    const { svg } = canvas([])
+    act(() => setPreference('windowSelection', 'drag'))
+
+    click(svg, { x: 20, y: 20 })
+    moveTo(svg, { x: 300, y: 300 })
+
+    expect(useCadStore.getState().statusMessage).toBe('Nothing selected')
+  })
+
+  it('puts an open window away when a command starts, so it cannot swallow the first point', () => {
+    const { container, svg } = canvas([])
+
+    click(svg, { x: 700, y: 500 })
+    act(() => useCadStore.getState().setTool('line'))
+    click(svg, { x: 200, y: 200 })
+
+    expect(container.querySelector(`[stroke="${dark.windowSelect}"]`)).toBeNull()
+    expect(useCadStore.getState().draftPoints).toHaveLength(1)
+  })
+
+  it('ignores a drag when windows have to be clicked out', () => {
+    const inside = createRect(layerId(), { x: 60, y: 60 }, { x: 120, y: 120 })
+    const { svg } = canvas([inside])
+    act(() => setPreference('windowSelection', 'click'))
+
+    // The press-drag-release leaves the window open rather than closing it at the far corner.
+    fireEvent.mouseDown(svg, { clientX: 20, clientY: 20, button: 0 })
+    fireEvent.mouseMove(svg, { clientX: 300, clientY: 300 })
+    fireEvent.mouseUp(svg, { clientX: 300, clientY: 300, button: 0 })
+
+    expect(useCadStore.getState().selectedIds).toEqual([])
+    expect(useCadStore.getState().statusMessage).toBe('Specify opposite corner:')
+  })
+})
+
 describe('dragging grips and selected objects', () => {
   /** Selects the given objects and hands back the rendered canvas. */
   const showing = (entities: CadEntity[], chosen: CadEntity[]) => {
@@ -570,13 +735,26 @@ describe('dragging grips and selected objects', () => {
     expect(useCadStore.getState().selectedIds).toEqual([first.id])
   })
 
-  it('clears the selection when the click lands on nothing', () => {
+  it('clears the selection when the click lands on nothing, with press-and-drag windows', () => {
+    const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
+    const { svg } = showing([line], [line])
+    act(() => setPreference('windowSelection', 'drag'))
+
+    pressDragRelease(svg, { x: 800, y: 600 }, { x: 800, y: 600 })
+
+    expect(useCadStore.getState().selectedIds).toEqual([])
+  })
+
+  it('opens a window instead of clearing when a click may start one', () => {
+    // AutoCAD reads a click on bare paper as the first corner of a window, so the selection is
+    // left alone until the window closes. Escape is what clears it.
     const line = createLine(layerId(), { x: 100, y: 100 }, { x: 400, y: 100 })
     const { svg } = showing([line], [line])
 
     pressDragRelease(svg, { x: 800, y: 600 }, { x: 800, y: 600 })
 
-    expect(useCadStore.getState().selectedIds).toEqual([])
+    expect(useCadStore.getState().selectedIds).toEqual([line.id])
+    expect(useCadStore.getState().statusMessage).toBe('Specify opposite corner:')
   })
 
   it('abandons a drag on Escape, leaving the shape as it was', () => {

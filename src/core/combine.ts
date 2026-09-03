@@ -58,8 +58,14 @@ export type JoinOutcome =
   | { joined: true; entity: CadEntity; consumed: string[]; note: string }
   | { joined: false; reason: string }
 
+/**
+ * What the pieces made, before it is known how many objects were picked to make it. Read as
+ * segments, one rectangle is four lines, and reporting four would be counting the wrong thing.
+ */
+type Made = { entity: CadEntity; made: string } | { joined: false; reason: string }
+
 /** Lines that share an infinite line become one line spanning everything, gaps included. */
-const joinLines = (lines: LineEntity[], tolerance: number): JoinOutcome => {
+const joinLines = (lines: LineEntity[], tolerance: number): Made => {
   const first = lines[0]
   if (!lines.every((line) => sameInfiniteLine(first, line, tolerance))) {
     return { joined: false, reason: 'Lines have to be collinear to be joined.' }
@@ -74,10 +80,8 @@ const joinLines = (lines: LineEntity[], tolerance: number): JoinOutcome => {
   }
   const at = (t: number): Vec2 => ({ x: first.start.x + direction.x * t, y: first.start.y + direction.y * t })
   return {
-    joined: true,
     entity: { ...styleOf(first), id: uid(), type: 'line', start: at(low), end: at(high) },
-    consumed: lines.map((line) => line.id),
-    note: `Joined ${lines.length} lines into one`,
+    made: 'one line',
   }
 }
 
@@ -85,7 +89,7 @@ const joinLines = (lines: LineEntity[], tolerance: number): JoinOutcome => {
  * Arcs on one circle become a single arc, swept anticlockwise from the first one picked. That is
  * AutoCAD's rule, and it is what makes the result predictable when the pieces are out of order.
  */
-const joinArcs = (arcs: ArcEntity[], tolerance: number): JoinOutcome => {
+const joinArcs = (arcs: ArcEntity[], tolerance: number): Made => {
   const first = arcs[0]
   const onSameCircle = arcs.every(
     (arc) => samePoint(arc.center, first.center, tolerance) && sameNumber(arc.radius, first.radius, tolerance),
@@ -105,17 +109,13 @@ const joinArcs = (arcs: ArcEntity[], tolerance: number): JoinOutcome => {
 
   if (reach >= Math.PI * 2 - tolerance) {
     return {
-      joined: true,
       entity: { ...styleOf(first), id: uid(), type: 'circle', center: first.center, radius: first.radius },
-      consumed: arcs.map((arc) => arc.id),
-      note: `Joined ${arcs.length} arcs into a circle`,
+      made: 'a circle',
     }
   }
   return {
-    joined: true,
     entity: { ...styleOf(first), id: uid(), type: 'arc', center: first.center, radius: first.radius, startAngle: first.startAngle, endAngle: first.startAngle + reach },
-    consumed: arcs.map((arc) => arc.id),
-    note: `Joined ${arcs.length} arcs into one`,
+    made: 'one arc',
   }
 }
 
@@ -160,10 +160,10 @@ const chainPoints = (runs: Vec2[][], tolerance: number): Vec2[] | null => {
 }
 
 /** Lines and open polylines that meet end to end become one polyline. */
-const joinChain = (entities: CadEntity[], tolerance: number): JoinOutcome => {
+const joinChain = (entities: CadEntity[], tolerance: number): Made => {
   const runs = entities.map(pointsOf)
   if (runs.some((run) => run === null)) {
-    return { joined: false, reason: 'Only lines, arcs and open polylines can be joined.' }
+    return { joined: false, reason: 'A closed shape has no free ends to join to.' }
   }
 
   const chain = chainPoints(runs as Vec2[][], tolerance)
@@ -176,37 +176,74 @@ const joinChain = (entities: CadEntity[], tolerance: number): JoinOutcome => {
   const closed = chain.length > 2 && samePoint(chain[0], chain[chain.length - 1], tolerance)
   const points = closed ? chain.slice(0, -1) : chain
   const joined: PolylineEntity = { ...styleOf(entities[0]), id: uid(), type: 'polyline', points, closed }
-  return {
-    joined: true,
-    entity: joined,
-    consumed: entities.map((entity) => entity.id),
-    note: `Joined ${entities.length} objects into ${closed ? 'a closed polyline' : 'a polyline'}`,
-  }
+  return { entity: joined, made: closed ? 'a closed polyline' : 'a polyline' }
 }
+
+export type CombineOptions = {
+  tolerance?: number
+  /**
+   * Whether a polyline is read as the run of lines it is drawn from. With this on, a closed shape
+   * such as a rectangle can take part in a join, and a loose line lying along one of its edges is
+   * seen for the duplicate it is.
+   */
+  polylineSegments?: boolean
+}
+
+/** A polyline read as its separate segments, each keeping the shape's layer, colour and linetype. */
+export const segmentsOf = (entity: PolylineEntity): LineEntity[] => {
+  const count = entity.closed ? entity.points.length : entity.points.length - 1
+  return Array.from({ length: Math.max(0, count) }, (_, index) => ({
+    ...styleOf(entity),
+    id: `${entity.id}#${index}`,
+    type: 'line' as const,
+    start: entity.points[index],
+    end: entity.points[(index + 1) % entity.points.length],
+  }))
+}
+
+const asSegments = (entities: CadEntity[]): CadEntity[] =>
+  entities.flatMap((entity) => (entity.type === 'polyline' ? segmentsOf(entity) : [entity]))
 
 /**
  * JOIN, following AutoCAD's order: collinear lines make a line, arcs on one circle make an arc or
  * a full circle, and anything else has to meet end to end to become a polyline.
  */
-export const joinSelection = (selected: CadEntity[], tolerance = DEFAULT_TOLERANCE): JoinOutcome => {
-  if (selected.length < 2) {
+export const joinSelection = (chosen: CadEntity[], options: CombineOptions = {}): JoinOutcome => {
+  const tolerance = options.tolerance ?? DEFAULT_TOLERANCE
+  if (chosen.length < 2) {
     return { joined: false, reason: 'Select at least two objects to join.' }
   }
-  if (selected.every((entity): entity is LineEntity => entity.type === 'line')) {
-    const asLine = joinLines(selected, tolerance)
-    // Lines that are not collinear may still meet end to end, which makes a polyline instead.
-    if (asLine.joined) return asLine
+  // Read as segments, a closed shape is a run of lines like any other and can be threaded into a
+  // longer chain. Read whole, it is a dead end, since a closed shape has no free ends to join to.
+  const selected = options.polylineSegments ? asSegments(chosen) : chosen
+
+  const made = ((): Made => {
+    if (selected.every((entity): entity is LineEntity => entity.type === 'line')) {
+      const asLine = joinLines(selected, tolerance)
+      // Lines that are not collinear may still meet end to end, which makes a polyline instead.
+      if (!('joined' in asLine)) return asLine
+      return joinChain(selected, tolerance)
+    }
+    if (selected.every((entity): entity is ArcEntity => entity.type === 'arc')) {
+      return joinArcs(selected, tolerance)
+    }
+    if (selected.some((entity) => entity.type === 'arc')) {
+      // A polyline here stores only straight runs, so an arc folded into one would quietly become
+      // a chord. Saying so is better than changing the drawing behind the draughtsman's back.
+      return { joined: false, reason: 'An arc can only be joined to other arcs on the same circle.' }
+    }
     return joinChain(selected, tolerance)
+  })()
+
+  if ('joined' in made) return made
+  // Everything picked goes into the result, so the count reported is the count of objects the
+  // draughtsman chose rather than the count of pieces they were read as.
+  return {
+    joined: true,
+    entity: made.entity,
+    consumed: chosen.map((entity) => entity.id),
+    note: `Joined ${chosen.length} object${chosen.length === 1 ? '' : 's'} into ${made.made}`,
   }
-  if (selected.every((entity): entity is ArcEntity => entity.type === 'arc')) {
-    return joinArcs(selected, tolerance)
-  }
-  if (selected.some((entity) => entity.type === 'arc')) {
-    // A polyline here stores only straight runs, so an arc folded into one would quietly become a
-    // chord. Saying so is better than changing the drawing behind the draughtsman's back.
-    return { joined: false, reason: 'An arc can only be joined to other arcs on the same circle.' }
-  }
-  return joinChain(selected, tolerance)
 }
 
 // ---------------------------------------------------------------------------
@@ -273,19 +310,22 @@ const infiniteLineKey = (line: LineEntity, tolerance: number): string => {
   return `${direction.x.toFixed(digits)},${direction.y.toFixed(digits)}@${offset.toFixed(digits)}`
 }
 
+/** A survivor of the merge, and which of the original lines it stands in for in the drawing order. */
+type Survivor = { source: string; line: LineEntity }
+
 /** Merges lines that lie along one infinite line and either overlap or meet end to end. */
-const mergeCollinear = (lines: LineEntity[], tolerance: number): { kept: LineEntity[]; merged: number } => {
+const mergeCollinear = (lines: LineEntity[], tolerance: number): { kept: Survivor[]; merged: number } => {
   const groups = new Map<string, LineEntity[]>()
   for (const line of lines) {
     const key = infiniteLineKey(line, tolerance)
     groups.set(key, [...(groups.get(key) ?? []), line])
   }
 
-  const kept: LineEntity[] = []
+  const kept: Survivor[] = []
   let merged = 0
   for (const group of groups.values()) {
     if (group.length === 1) {
-      kept.push(group[0])
+      kept.push({ source: group[0].id, line: group[0] })
       continue
     }
     const origin = group[0].start
@@ -297,12 +337,17 @@ const mergeCollinear = (lines: LineEntity[], tolerance: number): { kept: LineEnt
     let current = spans[0]
     let absorbed = 0
     const flush = () => {
+      // An untouched line keeps its own identity, which is how a polyline whose segments all came
+      // through the clean is recognised later and put back together.
       if (absorbed === 0) {
-        kept.push(current.line)
+        kept.push({ source: current.line.id, line: current.line })
         return
       }
       const at = (t: number): Vec2 => ({ x: origin.x + direction.x * t, y: origin.y + direction.y * t })
-      kept.push({ ...current.line, id: uid(), start: at(current.span[0]), end: at(current.span[1]) })
+      kept.push({
+        source: current.line.id,
+        line: { ...current.line, id: uid(), start: at(current.span[0]), end: at(current.span[1]) },
+      })
       merged += absorbed
     }
 
@@ -323,39 +368,150 @@ const mergeCollinear = (lines: LineEntity[], tolerance: number): { kept: LineEnt
 }
 
 /**
- * OVERKILL: throws away objects that are copies of something already there, then absorbs straight
- * pieces that overlap or meet end to end along the same line into a single one.
+ * The heart of OVERKILL, working on a flat list: copies of something already there are dropped,
+ * then straight pieces that overlap or meet end to end along one line are absorbed into each other.
  */
-export const overkill = (entities: CadEntity[], tolerance = DEFAULT_TOLERANCE): OverkillResult => {
-  const seen = new Set<string>()
+/** What became of one object during a clean: it stayed, it was a copy, or a neighbour swallowed it. */
+type Fate = 'kept' | 'duplicate' | 'merged'
+
+const cleanUp = (
+  entities: CadEntity[],
+  tolerance: number,
+  /** Which of two identical objects to keep, when one is worth more than the other. */
+  preferred: (entity: CadEntity) => boolean = () => false,
+): OverkillResult & { fates: Map<string, Fate> } => {
+  const fates = new Map<string, Fate>()
+  // Which copy of each shape survives is settled before anything is thrown away, so the answer does
+  // not depend on the order the objects happen to sit in the drawing.
+  const keys = new Map<string, string>()
+  const winners = new Map<string, CadEntity>()
+  for (const entity of entities) {
+    const key = shapeKey(entity, tolerance)
+    keys.set(entity.id, key)
+    const standing = winners.get(key)
+    if (!standing || (preferred(entity) && !preferred(standing))) winners.set(key, entity)
+  }
+
   const unique: CadEntity[] = []
   let duplicates = 0
   for (const entity of entities) {
-    const key = shapeKey(entity, tolerance)
-    if (seen.has(key)) {
+    if (winners.get(keys.get(entity.id)!) === entity) {
+      unique.push(entity)
+      fates.set(entity.id, 'kept')
+    } else {
       duplicates += 1
-      continue
+      fates.set(entity.id, 'duplicate')
     }
-    seen.add(key)
-    unique.push(entity)
   }
 
   // Only lines on the same layer are absorbed into each other, since merging across layers would
   // silently move geometry from one to the other.
-  const lines = unique.filter((entity): entity is LineEntity => entity.type === 'line')
-  const others = unique.filter((entity) => entity.type !== 'line')
   const byLayer = new Map<string, LineEntity[]>()
-  for (const line of lines) {
-    byLayer.set(line.layerId, [...(byLayer.get(line.layerId) ?? []), line])
+  for (const entity of unique) {
+    if (entity.type !== 'line') continue
+    byLayer.set(entity.layerId, [...(byLayer.get(entity.layerId) ?? []), entity])
   }
 
-  const keptLines: LineEntity[] = []
+  // Each line is looked up by its own id to find what stands in its place, so the survivors come
+  // out in the order the drawing already held them rather than bunched at the end.
+  const replacements = new Map<string, LineEntity | null>()
   let merged = 0
   for (const group of byLayer.values()) {
     const result = mergeCollinear(group, tolerance)
-    keptLines.push(...result.kept)
     merged += result.merged
+    for (const line of group) replacements.set(line.id, null)
+    // A merged run takes the place of the first of its pieces; the rest simply go.
+    for (const survivor of result.kept) replacements.set(survivor.source, survivor.line)
   }
 
-  return { entities: [...others, ...keptLines], duplicates, merged }
+  const kept: CadEntity[] = []
+  for (const entity of unique) {
+    if (entity.type !== 'line') {
+      kept.push(entity)
+      continue
+    }
+    const replacement = replacements.get(entity.id)
+    // The line a run was rebuilt from stays; the ones folded into it are what count as merged.
+    if (replacement) kept.push(replacement)
+    else fates.set(entity.id, 'merged')
+  }
+
+  return { entities: kept, duplicates, merged, fates }
+}
+
+/**
+ * OVERKILL. With `polylineSegments` on, a polyline is compared segment by segment, so a loose line
+ * lying along one of its edges is seen for the duplicate it is. A polyline is only actually broken
+ * apart when one of its segments really was removed or absorbed; one that comes through the clean
+ * untouched is put back exactly as it was, which is AutoCAD's "do not break polylines" rule.
+ */
+export const overkill = (entities: CadEntity[], options: CombineOptions = {}): OverkillResult => {
+  const tolerance = options.tolerance ?? DEFAULT_TOLERANCE
+  if (!options.polylineSegments) {
+    const { entities: kept, duplicates, merged } = cleanUp(entities, tolerance)
+    return { entities: kept, duplicates, merged }
+  }
+
+  const sources = new Map<string, { polyline: PolylineEntity; segmentCount: number }>()
+  const expanded: CadEntity[] = []
+  for (const entity of entities) {
+    const segments = entity.type === 'polyline' ? segmentsOf(entity) : []
+    if (entity.type !== 'polyline' || segments.length === 0) {
+      expanded.push(entity)
+      continue
+    }
+    sources.set(entity.id, { polyline: entity, segmentCount: segments.length })
+    expanded.push(...segments)
+  }
+
+  // Where a loose line and a polyline's edge are the same line, the polyline's edge is the one to
+  // keep: the loose copy goes, and the shape survives whole instead of being broken up for nothing.
+  const result = cleanUp(expanded, tolerance, (entity) => sources.has(entity.id.split('#')[0]))
+
+  // Which segments of each polyline came through with their own id, meaning untouched. A segment
+  // that was merged carries a fresh id, so it will not be counted here and its shape gets broken.
+  const survivors = new Map<string, Set<string>>()
+  for (const entity of result.entities) {
+    const sourceId = entity.id.split('#')[0]
+    if (!sources.has(sourceId)) continue
+    survivors.set(sourceId, (survivors.get(sourceId) ?? new Set()).add(entity.id))
+  }
+
+  const restored = new Set<string>()
+  const rebuilt: CadEntity[] = []
+  for (const entity of result.entities) {
+    const sourceId = entity.id.split('#')[0]
+    const source = sources.get(sourceId)
+    if (!source || survivors.get(sourceId)?.size !== source.segmentCount) {
+      rebuilt.push(entity)
+      continue
+    }
+    // The whole shape survived, so it goes back as itself, once, where its first segment sat.
+    if (restored.has(sourceId)) continue
+    restored.add(sourceId)
+    rebuilt.push(source.polyline)
+  }
+
+  // What was removed is counted in objects rather than in segments: two identical rectangles are
+  // one duplicate, not four, which is what the draughtsman sees happen.
+  let duplicates = 0
+  let merged = 0
+  for (const entity of entities) {
+    const source = sources.get(entity.id)
+    if (!source) {
+      const fate = result.fates.get(entity.id)
+      if (fate === 'duplicate') duplicates += 1
+      if (fate === 'merged') merged += 1
+      continue
+    }
+    const fates = Array.from({ length: source.segmentCount }, (_, index) => result.fates.get(`${entity.id}#${index}`))
+    if (fates.every((fate) => fate === 'kept')) continue
+    if (fates.every((fate) => fate === 'duplicate')) duplicates += 1
+    else if (fates.some((fate) => fate === 'merged')) merged += 1
+    // A shape that lost only some of its edges is now a handful of loose lines, so what went is
+    // counted the way it went: piece by piece.
+    else duplicates += fates.filter((fate) => fate === 'duplicate').length
+  }
+
+  return { entities: rebuilt, duplicates, merged }
 }

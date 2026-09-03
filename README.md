@@ -17,7 +17,7 @@ Lightweight browser-based 2D drafting software inspired by AutoCAD workflows.
 
 ## Project structure
 
-- `src/core`: CAD kernel (types, geometry, commands, document state, snaps, autosave, dxf, print)
+- `src/core`: CAD kernel (types, geometry, commands, document state, snaps, preferences, autosave, dxf, print)
 - `src/ui`: UI chrome (toolbar, viewport, layer/properties panels, command line, status bar)
 - `src/test`: test harness setup
 
@@ -91,6 +91,30 @@ next point of a line or the displacement of a `MOVE`. They deliberately leave al
 set two sizes at once — a rectangle's opposite corner and an ellipse's axis point — because
 forcing those onto an axis would flatten the shape to nothing.
 
+### Preferences
+
+The **Preferences** menu beside **File** holds the settings that belong to you rather than to the
+drawing, grouped the way AutoCAD's `OPTIONS` dialog groups them. They are kept in the browser and
+come back the next time the app is opened; **Restore defaults** puts them all back at once.
+
+| Setting | AutoCAD | Default | What it does |
+| --- | --- | --- | --- |
+| Window selection | `PICKDRAG` | Click twice or drag | Whether a selection window is dragged out, clicked out, or either |
+| Pick box size | `PICKBOX` | 8 px | How near a click has to land to catch an object |
+| Grip size | `GRIPSIZE` | 7 px | How wide the handles on a selected object are drawn |
+| Use Shift to add to selection | `PICKADD` | On | Off makes every click add to the selection instead of replacing it |
+| Snap aperture | `APERTURE` | 12 px | How near the cursor has to be for object snap to take hold |
+| Snap marker size | | 7 px | How large the glyph naming the snap is drawn |
+| Polar tracking angle | `POLARANG` | 45° | The angle polar tracking holds to, and its multiples |
+| Crosshair size | `CURSORSIZE` | 100% | How far the crosshair reaches; 100 spans the whole viewport |
+| Show grid | `GRIDDISPLAY` | On | Whether the background grid is drawn |
+| Read polylines as their lines | | On | Makes `JOIN` and `OVERKILL` work on polyline segments |
+| Keep unsaved work in the browser | `SAVETIME` | On | Off stops the drawing being kept for crash recovery |
+| Theme | | Follows the system | Dark or light, the same setting as the toggle in the title bar |
+
+Sizes are in screen pixels, so they hold their apparent size at any zoom. A value outside the
+range a setting allows is pulled back into it rather than rejected.
+
 ### Drawing circles and polygons
 
 `CIRCLE` opens on a centre and a radius, and the options at that prompt pin the circle down other
@@ -134,15 +158,27 @@ make.
 
 ### Selecting objects
 
-With the Select tool, click an object to pick it, or drag a box across the drawing:
+With the Select tool, click an object to pick it, or draw a box across the drawing. The box can be
+drawn either way round, and which way decides what it catches:
 
-| Drag direction | Box | Selects |
+| Direction | Box | Selects |
 | --- | --- | --- |
 | Left to right | Solid blue | Only objects **completely inside** the box (window) |
 | Right to left | Dashed green | Objects **inside or touching** the box (crossing) |
 
+There are two ways to draw the box out, and by default both work, as in AutoCAD with `PICKDRAG`
+set to 2:
+
+- **Press and drag** the far corner out, then let go.
+- **Click one corner, then the other.** A click on bare paper puts the first corner down, the box
+  then follows the cursor with no button held, and a second click closes it. `Esc` calls it off.
+
+Because a click on bare paper opens a window rather than clearing the selection, `Esc` is what
+clears the selection. Preferences ▸ Selection ▸ Window selection switches to press-and-drag only,
+or to click-then-click only, if one gesture is preferred.
+
 Hold `Shift` while picking to add to the selection and `Ctrl` to remove from it. Picking any
-member of a group selects the whole group. `Esc` clears the selection.
+member of a group selects the whole group.
 
 ### Grips
 
@@ -253,6 +289,22 @@ gap between them are left alone, and lines on different layers are never merged 
 since that would silently move geometry from one layer to the other. It reports what it removed,
 or says there was nothing to do. Like AutoCAD's, it works on a selection rather than the whole
 drawing — type `ALL` first to take everything in.
+
+**Polylines read as the lines they are drawn from.** A rectangle or polygon is stored as a
+polyline, and for `JOIN` and `OVERKILL` it is usually the individual edges that matter, so both
+commands look at each segment rather than at the shape as a whole. This is AutoCAD's "optimize
+segments within polylines" option, and it is on by default; Preferences ▸ Modify turns it off.
+
+For `OVERKILL` this means a loose line lying along a rectangle's edge is seen for the duplicate it
+is and deleted. The rectangle itself is only broken into loose lines if one of its edges really
+did change — a shape that comes through the clean untouched is put back exactly as it was, which
+is AutoCAD's "do not break polylines" rule. Where a loose line and a polyline edge are the same
+line, the polyline's edge is the one kept. What is reported is counted in objects, so two
+identical rectangles are one duplicate rather than four.
+
+For `JOIN` it means a closed shape can take part in a join: select a rectangle and a line running
+off one of its corners and the two become a single polyline. Read whole, a closed shape has no
+free ends to join to, and `JOIN` says so.
 
 ### Tracing an area
 

@@ -3,6 +3,7 @@ import { useCadStore } from './core/store'
 import { CanvasViewport } from './ui/CanvasViewport'
 import { CommandLine } from './ui/CommandLine'
 import { FileMenu } from './ui/FileMenu'
+import { PreferencesMenu } from './ui/PreferencesMenu'
 import { LayerPanel } from './ui/LayerPanel'
 import { PropertiesPanel } from './ui/PropertiesPanel'
 import { QuickAccess } from './ui/QuickAccess'
@@ -30,8 +31,9 @@ function App() {
             <span className="wordmark-logo" role="img" aria-label="DropLab" />
             <span className="wordmark-suffix">CAD</span>
           </h1>
-          <FileMenu />
-          <QuickAccess />
+        <FileMenu />
+        <PreferencesMenu />
+        <QuickAccess />
           <ThemeToggle />
         </div>
         <Toolbar />
