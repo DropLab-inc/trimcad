@@ -1,4 +1,7 @@
-import type { CircleMode, DimensionType, PolygonFit, ToolMode } from './types'
+import type { ArrayType, CircleMode, DimensionType, PolygonFit, ToolMode } from './types'
+
+/** One of ARRAY's counts or angles, named so a typed number knows where to land. */
+export type ArrayOption = 'rows' | 'columns' | 'count' | 'fillAngle'
 
 /**
  * Prompts shown at the command line and under the crosshair.
@@ -51,6 +54,13 @@ export type PromptContext = {
   circleMode: CircleMode
   /** A Ttr circle has both its objects and is waiting for the radius. */
   circlePending: boolean
+  arrayType: ArrayType
+  arrayRows: number
+  arrayColumns: number
+  arrayCount: number
+  arrayFillAngle: number
+  /** Which of ARRAY's counts is waiting to be typed, or null while it wants a point. */
+  arrayPending: ArrayOption | null
   /** TRIM and EXTEND are collecting their cutting or boundary edges. */
   pickingEdges: boolean
   /** How many edges have been picked, or null while every object counts as an edge. */
@@ -62,6 +72,14 @@ export type PromptContext = {
 const point = (text: string, keywords: Keyword[] = []): Prompt => ({ text, kind: 'point', keywords })
 const entity = (text: string, keywords: Keyword[] = []): Prompt => ({ text, kind: 'entity', keywords })
 const selection = (text: string, keywords: Keyword[] = []): Prompt => ({ text, kind: 'selection', keywords })
+
+/** What ARRAY asks for once one of its counts has been chosen for editing. */
+const ARRAY_OPTION_PROMPTS: Record<ArrayOption, string> = {
+  rows: 'Enter the number of rows',
+  columns: 'Enter the number of columns',
+  count: 'Enter the number of items in the array',
+  fillAngle: 'Specify the angle to fill, in degrees',
+}
 
 const CLOSE_UNDO: Keyword[] = [
   { key: 'C', label: 'Close' },
@@ -153,6 +171,41 @@ const promptsForTool = (ctx: PromptContext): Prompt[] => {
       return [point('Specify centre point'), point('Specify start point'), point('Specify end point')]
     case 'ellipse':
       return [point('Specify centre point'), point('Specify axis endpoint')]
+    case 'array': {
+      if (!ctx.hasSelection) {
+        return [
+          selection('Select objects to array', [
+            { key: 'R', label: 'Rectangular' },
+            { key: 'PO', label: 'Polar' },
+          ]),
+        ]
+      }
+      if (ctx.arrayPending) {
+        return [{ ...point(ARRAY_OPTION_PROMPTS[ctx.arrayPending]), kind: 'number' }]
+      }
+      if (ctx.arrayType === 'polar') {
+        return [
+          {
+            ...point('Specify centre point of array', [
+              { key: 'I', label: 'Items' },
+              { key: 'A', label: 'Angle to fill' },
+              { key: 'ROT', label: 'Rotate items' },
+            ]),
+            defaultValue: `${ctx.arrayCount} items over ${ctx.arrayFillAngle}\u00b0`,
+          },
+        ]
+      }
+      return [
+        {
+          ...point('Specify base point for the spacing', [
+            { key: 'R', label: 'Rows' },
+            { key: 'COL', label: 'Columns' },
+          ]),
+          defaultValue: `${ctx.arrayRows} rows by ${ctx.arrayColumns} columns`,
+        },
+        point('Specify where the neighbouring item goes'),
+      ]
+    }
     case 'polygon': {
       if (ctx.polygonFit === 'edge') {
         return [point('Specify first endpoint of edge'), point('Specify second endpoint of edge')]

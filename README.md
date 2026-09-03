@@ -4,7 +4,8 @@ Lightweight browser-based 2D drafting software inspired by AutoCAD workflows.
 
 ## Implemented v1 scope
 
-- Draw: line, polyline, rectangle, circle, arc, ellipse, polygon, spline, hatch, text, block insert
+- Draw: line, polyline, rectangle, circle (centre, 2P, 3P, tangent-tangent-radius), arc, ellipse,
+  polygon (inscribed, circumscribed, by edge), spline, hatch, text, block insert
 - Modify: move, copy, rotate, scale, mirror, offset, delete, fillet, join, explode, break, rectangular/polar array
 - Drafting aids: OSNAP, polar tracking, command line aliases, crosshair viewport, pan/zoom
 - Structure: layers, linetypes, lineweights, groups, blocks, document history (undo/redo)
@@ -87,6 +88,36 @@ next point of a line or the displacement of a `MOVE`. They deliberately leave al
 set two sizes at once — a rectangle's opposite corner and an ellipse's axis point — because
 forcing those onto an axis would flatten the shape to nothing.
 
+### Drawing circles and polygons
+
+`CIRCLE` opens on a centre and a radius, and the options at that prompt pin the circle down other
+ways instead. `D` at the radius prompt reads the size across the circle rather than out from the
+middle, so a diameter taken off a drawing can be typed in as it was measured.
+
+| Option | What it takes |
+| --- | --- |
+| `2P` | Two points, taken as opposite ends of a diameter |
+| `3P` | Three points on the rim, which one circle passes through |
+| `T` | Two objects to sit tangent to, then a radius |
+
+Three points in a straight line have no circle through them, and the command says so rather than
+drawing something arbitrary. `Ttr` picks lines, polylines, arcs and circles; several circles of the
+same radius usually touch a given pair, so **where you click each object chooses between them** —
+clicking two lines near their crossing tucks the circle into that corner, and clicking the far
+sides puts it on the far side. A radius too small to reach both objects is refused. Each `CIRCLE`
+starts back at centre-and-radius, as AutoCAD's does.
+
+`POLYGON` sizes its shape by a circle, and `I` and `C` decide which part of the polygon sits on
+that circle. **Inscribed** puts the corners on it, which is the default; **circumscribed** puts the
+middle of each side on it instead, so the corners stand further out. The distinction matters
+whenever the polygon has to fit something real: a bolt head measured across its flats is
+circumscribed, while one measured corner to corner is inscribed. Unlike the circle options, this
+choice is remembered for the next polygon.
+
+`E` takes the Edge route instead, where you draw one side and the rest of the shape follows from
+it, built to the left of the direction you drew. Edge is a one-off, so the next polygon goes back
+to being sized by its circle.
+
 ### Selecting objects
 
 With the Select tool, click an object to pick it, or drag a box across the drawing:
@@ -133,10 +164,34 @@ You can also type coordinates into the command line:
 | Fillet | Set a radius, click one line then another, and the corner is rounded off |
 | Chamfer | Set a distance, click one line then another, and the corner is cut square across |
 | Mirror | Select objects first, then pick the two points of the mirror line |
+| Array | Select objects first, then set the grid out or pick a centre to sweep around |
 
 Offset produces a true parallel outline, so offsetting a rectangle inwards gives a smaller
 rectangle rather than a diagonally shifted one. "Keep source" in the ribbon controls whether
 Mirror leaves the originals in place.
+
+### Arrays
+
+`ARRAY` repeats the selection, either in a grid or around a centre. `R` and `PO` switch between
+the two, and `ARRAYRECT` and `ARRAYPOLAR` start the command with the choice already made. The
+whole array previews under the crosshair before you commit to it, and arrives as a single undo
+step so a misjudged count costs one keystroke to take back.
+
+A **rectangular** array takes its spacing the way Move takes a displacement: pick a base point,
+then pick where the neighbouring item goes. This means the gap can be snapped off existing
+geometry instead of guessed at, and the two axes can be set in one gesture, since the horizontal
+part of that displacement spaces the columns and the vertical part spaces the rows. Dragging back
+past the base point gives a negative spacing, which builds the grid down and to the left. Rows and
+columns come from the ribbon, or from `R` and `COL` at the prompt.
+
+A **polar** array needs only its centre. The item count includes the original, so six items over a
+full turn sit sixty degrees apart. The fill angle behaves as AutoCAD's does: a partial sweep puts
+an item at each end and divides the angle by the gaps between them, so four items over 180 degrees
+land at 0, 60, 120 and 180; a full turn divides by the count instead, so the last item does not
+stack on top of the first. A negative angle sweeps the other way. `I`, `A` and `ROT` set the
+count, the angle, and whether copies turn to follow the sweep — turning it off carries each copy
+around the same arc while leaving its heading alone, which is what you want for things like text
+or fixture symbols that should stay upright.
 
 ### Trim and extend
 
@@ -258,7 +313,7 @@ autocomplete list. Type `HELP` to print the whole table into the history panel.
 | --- | --- |
 | Draw | `LINE`/`L`, `PLINE`/`PL`, `RECTANG`/`REC`, `CIRCLE`/`C`, `ARC`/`A`, `ELLIPSE`/`EL`, `POLYGON`/`POL`, `SPLINE`/`SPL`, `HATCH`/`H` |
 | Annotate | `TEXT`/`DT`, `DIM`/`D`, `DIMLINEAR`/`DLI`, `DIMALIGNED`/`DAL`, `DIMRADIUS`/`DRA`, `DIMDIAMETER`/`DDI`, `DIMANGULAR`/`DAN`, `DIMSCALE`/`DSC` |
-| Modify | `MOVE`/`M`, `COPY`/`CO`, `ROTATE`/`RO`, `SCALE`/`SC`, `MIRROR`/`MI`, `OFFSET`/`O`, `TRIM`/`TR`, `EXTEND`/`EX`, `FILLET`/`F`, `CHAMFER`/`CHA`, `ERASE`/`E`, `JOIN`/`J`, `GROUP`/`G`, `EXPLODE`/`X`, `INSERT`/`I` |
+| Modify | `MOVE`/`M`, `COPY`/`CO`, `ROTATE`/`RO`, `SCALE`/`SC`, `MIRROR`/`MI`, `ARRAY`/`AR`, `ARRAYRECT`, `ARRAYPOLAR`, `OFFSET`/`O`, `TRIM`/`TR`, `EXTEND`/`EX`, `FILLET`/`F`, `CHAMFER`/`CHA`, `ERASE`/`E`, `JOIN`/`J`, `GROUP`/`G`, `EXPLODE`/`X`, `INSERT`/`I` |
 | Edit | `SELECT`/`SE`, `ALL`, `UNDO`/`U`, `REDO`/`RE` |
 | View | `ZOOM`/`Z`, `OSNAP`/`OS`, `ORTHO`/`OR`, `POLAR`/`PO`, `HELP` |
 | File | `DXFIN`, `DXFOUT`, `PLOT`/`PRINT`, `PLOT1` |

@@ -285,47 +285,6 @@ export const breakLine = (entities: CadEntity[], lineId: string, breakPoint: Vec
   return entities.flatMap((entity) => (entity.id === lineId ? [first, second] : [entity]))
 }
 
-export const rectangularArray = (
-  entities: CadEntity[],
-  ids: string[],
-  rows: number,
-  cols: number,
-  dx: number,
-  dy: number,
-): CadEntity[] => {
-  const selected = entities.filter((entity) => ids.includes(entity.id))
-  const copies: CadEntity[] = []
-  for (let r = 0; r < rows; r += 1) {
-    for (let c = 0; c < cols; c += 1) {
-      if (r === 0 && c === 0) continue
-      for (const entity of selected) {
-        const moved = moveEntities([entity], [entity.id], { x: c * dx, y: r * dy })[0]
-        copies.push({ ...moved, id: uid() })
-      }
-    }
-  }
-  return [...entities, ...copies]
-}
-
-export const polarArray = (
-  entities: CadEntity[],
-  ids: string[],
-  center: Vec2,
-  count: number,
-  totalAngleDeg: number,
-): CadEntity[] => {
-  const selected = entities.filter((entity) => ids.includes(entity.id))
-  const copies: CadEntity[] = []
-  const step = count <= 1 ? 0 : totalAngleDeg / count
-  for (let i = 1; i < count; i += 1) {
-    for (const entity of selected) {
-      const rotated = rotateEntities([entity], [entity.id], center, step * i)[0]
-      copies.push({ ...rotated, id: uid() })
-    }
-  }
-  return [...entities, ...copies]
-}
-
 export const documentStats = (document: DrawingDocument) => ({
   entityCount: document.entities.length,
   layerCount: document.layers.length,

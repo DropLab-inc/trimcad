@@ -25,6 +25,8 @@ export type IconName =
   | 'fillet'
   | 'chamfer'
   | 'mirror'
+  | 'array-rect'
+  | 'array-polar'
   | 'dim-linear'
   | 'dim-aligned'
   | 'dim-radius'
@@ -192,6 +194,23 @@ const GLYPHS: Record<IconName, ReactElement> = {
       <path d="M4 6 L9 12 L4 18 Z" />
       <path className="accent" d="M20 6 L15 12 L20 18 Z" fill="none" />
       <path className="accent" d="M12 2 L12 22" strokeDasharray="3 2" />
+    </g>
+  ),
+  'array-rect': (
+    <g>
+      <rect className="accent" x={3} y={3} width={6} height={6} />
+      <rect x={13} y={3} width={6} height={6} />
+      <rect x={3} y={13} width={6} height={6} />
+      <rect x={13} y={13} width={6} height={6} />
+    </g>
+  ),
+  'array-polar': (
+    <g>
+      <circle cx={12} cy={12} r={8} strokeDasharray="3 2" opacity={0.5} />
+      <rect className="accent" x={9.5} y={1} width={5} height={5} />
+      <rect x={18} y={9.5} width={5} height={5} />
+      <rect x={9.5} y={18} width={5} height={5} />
+      <rect x={1} y={9.5} width={5} height={5} />
     </g>
   ),
   'dim-linear': (

@@ -235,6 +235,132 @@ describe('circle constructions', () => {
   })
 })
 
+describe('ARRAY', () => {
+  /** A single circle at the origin, selected and ready to be repeated. */
+  const selectOneCircle = () => {
+    useCadStore.getState().updateDocument((draft) => ({
+      ...draft,
+      entities: [{ id: 'source', type: 'circle', layerId: draft.layers[0].id, center: { x: 0, y: 0 }, radius: 1 }],
+    }))
+    useCadStore.getState().setSelection(['source'])
+  }
+
+  const centres = (): { x: number; y: number }[] =>
+    useCadStore
+      .getState()
+      .doc.entities.filter((entity) => entity.type === 'circle')
+      .map((entity) => (entity as CircleEntity).center)
+
+  beforeEach(() => {
+    resetDrawing()
+    useCadStore.getState().setTool('select')
+    useCadStore.getState().setArrayType('rect')
+    useCadStore.getState().setArrayOption('rows', 2)
+    useCadStore.getState().setArrayOption('columns', 3)
+  })
+
+  it('asks for a selection before it will array anything', () => {
+    useCadStore.getState().setTool('array')
+    applyDrawTool({ x: 0, y: 0 })
+
+    expect(useCadStore.getState().doc.entities).toHaveLength(0)
+    expect(useCadStore.getState().statusMessage).toMatch(/select objects/i)
+  })
+
+  it('takes the grid spacing from a base point and the neighbouring item', () => {
+    selectOneCircle()
+    useCadStore.getState().setTool('array')
+    applyDrawTool({ x: 0, y: 0 })
+    // Still just the original, since the spacing is not known until the second pick.
+    expect(useCadStore.getState().doc.entities).toHaveLength(1)
+
+    applyDrawTool({ x: 10, y: 5 })
+
+    expect(useCadStore.getState().doc.entities).toHaveLength(6)
+    const places = centres()
+    expect(places).toContainEqual({ x: 10, y: 0 })
+    expect(places).toContainEqual({ x: 20, y: 0 })
+    expect(places).toContainEqual({ x: 0, y: 5 })
+    expect(places).toContainEqual({ x: 20, y: 5 })
+  })
+
+  it('refuses a spacing of nothing, which would stack every copy on the original', () => {
+    selectOneCircle()
+    useCadStore.getState().setTool('array')
+    applyDrawTool({ x: 4, y: 4 })
+    applyDrawTool({ x: 4, y: 4 })
+
+    expect(useCadStore.getState().doc.entities).toHaveLength(1)
+    expect(useCadStore.getState().statusMessage).toMatch(/same place/i)
+  })
+
+  it('sweeps a polar array around the one point it is given', () => {
+    selectOneCircle()
+    useCadStore.getState().setTool('array')
+    useCadStore.getState().setArrayType('polar')
+    useCadStore.getState().setArrayOption('count', 4)
+    useCadStore.getState().setArrayOption('fillAngle', 360)
+    // The circle sits ten to the left of the centre picked, so the sweep has a radius of ten.
+    applyDrawTool({ x: 10, y: 0 })
+
+    expect(useCadStore.getState().doc.entities).toHaveLength(4)
+    for (const place of centres()) {
+      expect(Math.hypot(place.x - 10, place.y)).toBeCloseTo(10)
+    }
+  })
+
+  it('reads a typed number into whichever count was asked for', () => {
+    selectOneCircle()
+    useCadStore.getState().setTool('array')
+    useCadStore.getState().applyKeyword({ key: 'COL', label: 'Columns' })
+    expect(useCadStore.getState().arrayPending).toBe('columns')
+
+    useCadStore.getState().executeCommand('5')
+
+    expect(useCadStore.getState().arrayColumns).toBe(5)
+    expect(useCadStore.getState().arrayPending).toBeNull()
+  })
+
+  it('switches to a polar sweep from the command line', () => {
+    selectOneCircle()
+    useCadStore.getState().setTool('array')
+    useCadStore.getState().applyKeyword({ key: 'PO', label: 'Polar' })
+
+    expect(useCadStore.getState().arrayType).toBe('polar')
+  })
+
+  it('takes the whole array back out in one undo', () => {
+    selectOneCircle()
+    useCadStore.getState().setTool('array')
+    applyDrawTool({ x: 0, y: 0 })
+    applyDrawTool({ x: 10, y: 0 })
+    expect(useCadStore.getState().doc.entities).toHaveLength(6)
+
+    useCadStore.getState().undo()
+
+    expect(useCadStore.getState().doc.entities).toHaveLength(1)
+  })
+
+  it('repeats every object in the selection together', () => {
+    useCadStore.getState().updateDocument((draft) => ({
+      ...draft,
+      entities: [
+        { id: 'a', type: 'circle', layerId: draft.layers[0].id, center: { x: 0, y: 0 }, radius: 1 },
+        { id: 'b', type: 'line', layerId: draft.layers[0].id, start: { x: 0, y: 0 }, end: { x: 2, y: 0 } },
+      ],
+    }))
+    useCadStore.getState().setSelection(['a', 'b'])
+    useCadStore.getState().setTool('array')
+    useCadStore.getState().setArrayOption('rows', 1)
+    useCadStore.getState().setArrayOption('columns', 3)
+    applyDrawTool({ x: 0, y: 0 })
+    applyDrawTool({ x: 10, y: 0 })
+
+    // Two originals plus a pair for each of the two further columns.
+    expect(useCadStore.getState().doc.entities).toHaveLength(6)
+  })
+})
+
 describe('polygon constructions', () => {
   beforeEach(() => {
     resetDrawing()

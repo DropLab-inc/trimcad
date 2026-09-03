@@ -180,8 +180,12 @@ export type CircleMode = 'center' | '2p' | '3p' | 'ttr'
  */
 export type PolygonFit = 'inscribed' | 'circumscribed' | 'edge'
 
+/** Whether ARRAY repeats the selection in a grid or around a centre. */
+export type ArrayType = 'rect' | 'polar'
+
 export type ToolMode =
   | 'select'
+  | 'array'
   | 'line'
   | 'polyline'
   | 'rect'

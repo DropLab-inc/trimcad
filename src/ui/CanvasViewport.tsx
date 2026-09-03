@@ -22,6 +22,7 @@ import { editableEntities, lineweightPixels, visibleEntities as visibleOnLayers 
 import { getEntityAnchorPoints, isPointNearEntity, mirrorEntity } from '../core/geometry'
 import { canFillet, chamferCorner, filletCorner, hasStraightSegments, offsetEntity } from '../core/modify'
 import { circleOnDiameter, circleThroughPoints, cornerRadius, polygonOnEdge } from '../core/construct'
+import { polarArrayCopies, rectangularArrayCopies } from '../core/array'
 import type { DimensionEntity, PolylineEntity, SnapMode } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
 import { COMMAND_INPUT_ID } from './CommandLine'
@@ -133,6 +134,12 @@ export function CanvasViewport() {
   const polygonFit = useCadStore((state) => state.polygonFit)
   const circleMode = useCadStore((state) => state.circleMode)
   const circleDiameter = useCadStore((state) => state.circleDiameter)
+  const arrayType = useCadStore((state) => state.arrayType)
+  const arrayRows = useCadStore((state) => state.arrayRows)
+  const arrayColumns = useCadStore((state) => state.arrayColumns)
+  const arrayCount = useCadStore((state) => state.arrayCount)
+  const arrayFillAngle = useCadStore((state) => state.arrayFillAngle)
+  const arrayRotateItems = useCadStore((state) => state.arrayRotateItems)
   const dimensionType = useCadStore((state) => state.dimensionType)
   const dimScale = useCadStore((state) => state.dimScale)
   const modifyTargetId = useCadStore((state) => state.modifyTargetId)
@@ -659,9 +666,56 @@ export function CanvasViewport() {
       )
     }
 
+    // ARRAY shows the whole repeat before it is committed, since the counts are easy to misjudge.
+    if (activeTool === 'array' && selectedIds.length > 0) {
+      const sources = doc.entities.filter((entity) => selectedIds.includes(entity.id))
+      if (arrayType === 'polar') {
+        const copies = polarArrayCopies(sources, cursorWorld, {
+          count: arrayCount,
+          fillAngle: arrayFillAngle,
+          rotateItems: arrayRotateItems,
+        })
+        return (
+          <g>
+            <circle cx={cursorWorld.x} cy={cursorWorld.y} r={4 / camera.zoom} fill="#f59e0b" />
+            {copies.map((entity) => renderEntity(entity, ghost))}
+          </g>
+        )
+      }
+      if (draftPoints.length !== 1) return null
+      const base = draftPoints[0]
+      const copies = rectangularArrayCopies(sources, {
+        rows: arrayRows,
+        columns: arrayColumns,
+        rowSpacing: cursorWorld.y - base.y,
+        columnSpacing: cursorWorld.x - base.x,
+      })
+      return (
+        <g>
+          <line
+            x1={base.x}
+            y1={base.y}
+            x2={cursorWorld.x}
+            y2={cursorWorld.y}
+            stroke="#f59e0b"
+            strokeWidth={1}
+            strokeDasharray="4 4"
+            vectorEffect="non-scaling-stroke"
+          />
+          {copies.map((entity) => renderEntity(entity, ghost))}
+        </g>
+      )
+    }
+
     return null
   }, [
     activeTool,
+    arrayColumns,
+    arrayCount,
+    arrayFillAngle,
+    arrayRotateItems,
+    arrayRows,
+    arrayType,
     camera.zoom,
     chamferDistance,
     cursorWorld,

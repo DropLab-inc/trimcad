@@ -44,10 +44,20 @@ import {
   trimResult,
 } from './modify'
 import { COMMANDS, resolveCommand, type CommandDef } from './commandRegistry'
-import { formatPrompt, matchKeyword, promptFor, type Keyword, type Prompt, type PromptContext } from './prompts'
+import {
+  formatPrompt,
+  matchKeyword,
+  promptFor,
+  type ArrayOption,
+  type Keyword,
+  type Prompt,
+  type PromptContext,
+} from './prompts'
 import { applySelectionModifier, expandSelectionToGroups, type SelectionModifier } from './selection'
+import { polarArrayCopies, rectangularArrayCopies } from './array'
 import { distance as distanceBetween, sub, type Vec2 } from './math/vec2'
 import type {
+  ArrayType,
   CadEntity,
   CircleMode,
   PolygonFit,
@@ -127,6 +137,18 @@ type CadState = {
   circleDiameter: boolean
   /** The two objects picked for a Ttr circle, with the point each was clicked at. */
   tangentPicks: { id: string; point: Vec2 }[]
+  /** Whether ARRAY repeats the selection in a grid or around a centre. */
+  arrayType: ArrayType
+  arrayRows: number
+  arrayColumns: number
+  /** How many items a polar array holds, counting the original. */
+  arrayCount: number
+  /** How much of a turn a polar array spans, in degrees. */
+  arrayFillAngle: number
+  /** Whether a polar array turns each copy to follow the sweep. */
+  arrayRotateItems: boolean
+  /** Which of ARRAY's counts is waiting to be typed, or null while it wants a point. */
+  arrayPending: ArrayOption | null
   dimensionType: DimensionType
   /** Size given to the next dimension, as a multiple of the drawing's dimension style. */
   dimScale: number
@@ -167,6 +189,10 @@ type CadState = {
   setPolygonFit: (fit: PolygonFit) => void
   /** Switches CIRCLE between its constructions, starting the new one from scratch. */
   setCircleMode: (mode: CircleMode) => void
+  setArrayType: (type: ArrayType) => void
+  /** Changes one of ARRAY's counts or angles, keeping it inside a sensible range. */
+  setArrayOption: (option: 'rows' | 'columns' | 'count' | 'fillAngle', value: number) => void
+  toggleArrayRotateItems: () => void
   setDimensionType: (dimType: DimensionType) => void
   /** Sets the size the next dimension will be drawn at. Existing ones keep their own. */
   setDimScale: (scale: number) => void
@@ -228,14 +254,15 @@ const clampDimScale = (scale: number): number =>
   Number.isFinite(scale) && scale > 0 ? Math.min(1000, scale) : 1
 
 /**
- * CIRCLE's options last only as long as the command that set them, so leaving the command puts the
- * next one back at the plain centre-and-radius prompt, as AutoCAD does.
+ * Options that last only as long as the command that set them. Leaving the command puts the next
+ * CIRCLE back at the plain centre-and-radius prompt, and forgets a half-answered ARRAY count.
  */
-const idleCircle = {
+const perCommandOptions = {
   circleMode: 'center' as CircleMode,
   circlePending: false,
   circleDiameter: false,
   tangentPicks: [] as { id: string; point: Vec2 }[],
+  arrayPending: null as ArrayOption | null,
 }
 
 const autosaveDoc = (doc: DrawingDocument) => {
@@ -271,6 +298,13 @@ export const useCadStore = create<CadState>((set, get) => ({
   circlePending: false,
   circleDiameter: false,
   tangentPicks: [],
+  arrayType: 'rect' as ArrayType,
+  arrayRows: 3,
+  arrayColumns: 4,
+  arrayCount: 6,
+  arrayFillAngle: 360,
+  arrayRotateItems: true,
+  arrayPending: null as ArrayOption | null,
   dimensionType: 'linear',
   dimScale: 1,
   hatchPattern: 'ansi31',
@@ -335,6 +369,23 @@ export const useCadStore = create<CadState>((set, get) => ({
   // Half-collected picks belong to the old construction, so they go with it.
   setCircleMode: (circleMode) =>
     set({ circleMode, circlePending: false, circleDiameter: false, tangentPicks: [], draftPoints: [] }),
+  // Switching between a grid and a sweep abandons any base point picked for the other one.
+  setArrayType: (arrayType) => set({ arrayType, draftPoints: [], arrayPending: null }),
+  setArrayOption: (option, value) => {
+    if (!Number.isFinite(value)) return
+    switch (option) {
+      case 'rows':
+        return set({ arrayRows: Math.max(1, Math.round(value)) })
+      case 'columns':
+        return set({ arrayColumns: Math.max(1, Math.round(value)) })
+      case 'count':
+        return set({ arrayCount: Math.max(1, Math.round(value)) })
+      // A sweep may run either way round, but more than a full turn just repeats itself.
+      case 'fillAngle':
+        return set({ arrayFillAngle: Math.max(-360, Math.min(360, value)) })
+    }
+  },
+  toggleArrayRotateItems: () => set((state) => ({ arrayRotateItems: !state.arrayRotateItems })),
   setDimensionType: (dimensionType) => set({ dimensionType, draftPoints: [], activeTool: 'dimension' }),
   setDimScale: (scale) => set({ dimScale: clampDimScale(scale) }),
   // A corner may legitimately be squared off with zero, so only negatives and gaps are rejected.
@@ -396,7 +447,7 @@ export const useCadStore = create<CadState>((set, get) => ({
       edgeIds: null,
       pickingEdges: false,
       cornerPending: false,
-      ...idleCircle,
+      ...perCommandOptions,
       statusMessage: 'Ready',
     }),
   cancelCommand: () => {
@@ -408,7 +459,7 @@ export const useCadStore = create<CadState>((set, get) => ({
       edgeIds: null,
       pickingEdges: false,
       cornerPending: false,
-      ...idleCircle,
+      ...perCommandOptions,
       commandInput: '',
       statusMessage: '*Cancel*',
     })
@@ -425,7 +476,7 @@ export const useCadStore = create<CadState>((set, get) => ({
       offsetThrough: false,
       // FILLET and CHAMFER go straight to picking; the size is changed by its own option.
       cornerPending: false,
-      ...idleCircle,
+      ...perCommandOptions,
       // Edge is a one-off choice, but a polygon sized inside or around its circle stays that way.
       polygonFit: get().polygonFit === 'edge' ? 'inscribed' : get().polygonFit,
       statusMessage: `Tool: ${tool.toUpperCase()}`,
@@ -1121,6 +1172,25 @@ const applyTypedNumber = (state: CadStoreState, value: number): boolean => {
     return true
   }
 
+  // ARRAY's counts are typed rather than picked, so a number lands on whichever was asked for.
+  if (state.arrayPending && state.activeTool === 'array') {
+    const option = state.arrayPending
+    state.setArrayOption(option, value)
+    useCadStore.setState({ arrayPending: null })
+    const now = useCadStore.getState()
+    const shown =
+      option === 'rows'
+        ? `${now.arrayRows} rows`
+        : option === 'columns'
+          ? `${now.arrayColumns} columns`
+          : option === 'count'
+            ? `${now.arrayCount} items`
+            : `Fill angle ${now.arrayFillAngle}\u00b0`
+    state.log('result', shown)
+    state.log('prompt', formatPrompt(currentPrompt(now)))
+    return true
+  }
+
   // A Ttr circle ends on its radius rather than on a point, so a typed number finishes it.
   if (state.circlePending && state.activeTool === 'circle') {
     if (value <= 0) {
@@ -1164,6 +1234,9 @@ const runCommandDef = (state: CadStoreState, command: CommandDef, argument = '')
 
   if (command.tool) {
     state.setTool(command.tool)
+    // ARRAYRECT and ARRAYPOLAR are the same command with the choice already made for you.
+    if (command.name === 'ARRAYRECT') useCadStore.getState().setArrayType('rect')
+    if (command.name === 'ARRAYPOLAR') useCadStore.getState().setArrayType('polar')
     state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
     return
   }
@@ -1304,6 +1377,12 @@ export const promptContextFor = (state: CadStoreState, swapped = false): PromptC
   filletRadius: state.filletRadius,
   chamferDistance: state.chamferDistance,
   cornerPending: state.cornerPending,
+  arrayType: state.arrayType,
+  arrayRows: state.arrayRows,
+  arrayColumns: state.arrayColumns,
+  arrayCount: state.arrayCount,
+  arrayFillAngle: state.arrayFillAngle,
+  arrayPending: state.arrayPending,
   polygonSides: state.polygonSides,
   polygonFit: state.polygonFit,
   circleMode: state.circleMode,
@@ -1356,6 +1435,36 @@ const runKeyword = (state: CadStoreState, keyword: Keyword) => {
       state.log('prompt', 'Specify diameter of circle:')
       return
     }
+    case 'Rectangular':
+    case 'Polar':
+      state.setArrayType(keyword.key === 'R' ? 'rect' : 'polar')
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'Rows':
+    case 'Columns':
+    case 'Items':
+    case 'Angle to fill': {
+      const option: ArrayOption =
+        keyword.label === 'Rows'
+          ? 'rows'
+          : keyword.label === 'Columns'
+            ? 'columns'
+            : keyword.label === 'Items'
+              ? 'count'
+              : 'fillAngle'
+      useCadStore.setState({ arrayPending: option })
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    }
+    case 'Rotate items':
+      state.toggleArrayRotateItems()
+      state.log(
+        'result',
+        useCadStore.getState().arrayRotateItems
+          ? 'Copies will turn to follow the sweep.'
+          : 'Copies will keep the heading the original has.',
+      )
+      return
     case 'Inscribed in circle':
     case 'Circumscribed about circle':
       state.setPolygonFit(keyword.key === 'I' ? 'inscribed' : 'circumscribed')
@@ -1485,7 +1594,82 @@ const applyModifyTool = (state: CadStoreState, point: Vec2, swapped: boolean): b
     return true
   }
 
+  if (activeTool === 'array') {
+    runArray(state, point)
+    return true
+  }
+
   return false
+}
+
+/**
+ * ARRAY, repeating the selection either in a grid or around a centre.
+ *
+ * A grid is spaced by a displacement, picked the way MOVE picks one: a base point and then where
+ * the neighbouring item goes, so the gap can be snapped off existing geometry rather than guessed
+ * at. A sweep needs only its centre. The counts come from the ribbon either way.
+ */
+const runArray = (state: CadStoreState, point: Vec2) => {
+  if (state.selectedIds.length === 0) {
+    state.setStatusMessage('Select objects before arraying them.')
+    return
+  }
+
+  const selected = new Set(state.selectedIds)
+  const commit = (make: (sources: CadEntity[]) => CadEntity[], describe: (added: number) => string) => {
+    let added = 0
+    state.updateDocument((doc) => {
+      const copies = make(doc.entities.filter((entity) => selected.has(entity.id)))
+      added = copies.length
+      return { ...doc, entities: [...doc.entities, ...copies] }
+    })
+    state.clearDraft()
+    state.endCommand()
+    state.setStatusMessage(describe(added))
+  }
+
+  if (state.arrayType === 'polar') {
+    const { arrayCount, arrayFillAngle, arrayRotateItems } = state
+    if (arrayCount < 2) {
+      state.setStatusMessage('A polar array needs at least two items.')
+      return
+    }
+    commit(
+      (sources) =>
+        polarArrayCopies(sources, point, {
+          count: arrayCount,
+          fillAngle: arrayFillAngle,
+          rotateItems: arrayRotateItems,
+        }),
+      (added) => `Array of ${arrayCount} around a centre, ${added} copies added.`,
+    )
+    return
+  }
+
+  if (state.draftPoints.length === 0) {
+    state.addDraftPoint(point)
+    state.setStatusMessage('Pick where the neighbouring item goes, to set the spacing.')
+    return
+  }
+
+  const base = state.draftPoints[0]
+  const spacing = sub(point, base)
+  if (Math.abs(spacing.x) < 1e-9 && Math.abs(spacing.y) < 1e-9) {
+    state.setStatusMessage('The two points are in the same place, which leaves no room between items.')
+    return
+  }
+
+  const { arrayRows, arrayColumns } = state
+  commit(
+    (sources) =>
+      rectangularArrayCopies(sources, {
+        rows: arrayRows,
+        columns: arrayColumns,
+        rowSpacing: spacing.y,
+        columnSpacing: spacing.x,
+      }),
+    (added) => `Array of ${arrayRows} by ${arrayColumns}, ${added} copies added.`,
+  )
 }
 
 export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) => {

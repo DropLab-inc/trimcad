@@ -1,7 +1,7 @@
 import { useCadStore } from '../core/store'
 import { shortestAlias, resolveCommand } from '../core/commandRegistry'
 import { Icon, type IconName } from './Icon'
-import type { CircleMode, DimensionType, HatchPattern, PolygonFit, ToolMode } from '../core/types'
+import type { ArrayType, CircleMode, DimensionType, HatchPattern, PolygonFit, ToolMode } from '../core/types'
 
 type ToolItem = { tool: ToolMode; label: string; icon: IconName; command: string; hint?: string }
 
@@ -107,6 +107,13 @@ const modifyTools: ToolItem[] = [
     command: 'MIRROR',
     hint: 'Select objects first, then pick the mirror line',
   },
+  {
+    tool: 'array',
+    label: 'Array',
+    icon: 'array-rect',
+    command: 'ARRAY',
+    hint: 'Select objects first, then set the grid out or pick a centre to sweep around',
+  },
 ]
 
 /** Tooltip in AutoCAD's shape: what the button does, then how to type it. */
@@ -138,6 +145,15 @@ export function Toolbar() {
   const setFilletRadius = useCadStore((state) => state.setFilletRadius)
   const chamferDistance = useCadStore((state) => state.chamferDistance)
   const setChamferDistance = useCadStore((state) => state.setChamferDistance)
+  const arrayType = useCadStore((state) => state.arrayType)
+  const setArrayType = useCadStore((state) => state.setArrayType)
+  const arrayRows = useCadStore((state) => state.arrayRows)
+  const arrayColumns = useCadStore((state) => state.arrayColumns)
+  const arrayCount = useCadStore((state) => state.arrayCount)
+  const arrayFillAngle = useCadStore((state) => state.arrayFillAngle)
+  const setArrayOption = useCadStore((state) => state.setArrayOption)
+  const arrayRotateItems = useCadStore((state) => state.arrayRotateItems)
+  const toggleArrayRotateItems = useCadStore((state) => state.toggleArrayRotateItems)
   const mirrorKeepSource = useCadStore((state) => state.mirrorKeepSource)
   const toggleMirrorKeepSource = useCadStore((state) => state.toggleMirrorKeepSource)
   const edgeIds = useCadStore((state) => state.edgeIds)
@@ -262,6 +278,67 @@ export function Toolbar() {
                 onChange={(event) => setChamferDistance(Number(event.target.value))}
               />
             </label>
+          )}
+          {activeTool === 'array' && (
+            <label className="ribbon-field" title="Repeat in rows and columns, or around a centre">
+              Array
+              <select value={arrayType} onChange={(event) => setArrayType(event.target.value as ArrayType)}>
+                <option value="rect">Rectangular</option>
+                <option value="polar">Polar</option>
+              </select>
+            </label>
+          )}
+          {activeTool === 'array' && arrayType === 'rect' && (
+            <>
+              <label className="ribbon-field" title="Number of rows in the grid">
+                Rows
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={arrayRows}
+                  onChange={(event) => setArrayOption('rows', Number(event.target.value))}
+                />
+              </label>
+              <label className="ribbon-field" title="Number of columns in the grid">
+                Columns
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={arrayColumns}
+                  onChange={(event) => setArrayOption('columns', Number(event.target.value))}
+                />
+              </label>
+            </>
+          )}
+          {activeTool === 'array' && arrayType === 'polar' && (
+            <>
+              <label className="ribbon-field" title="How many items the finished array holds, counting the original">
+                Items
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={arrayCount}
+                  onChange={(event) => setArrayOption('count', Number(event.target.value))}
+                />
+              </label>
+              <label className="ribbon-field" title="How much of a turn the array spans, in degrees">
+                Fill angle
+                <input
+                  type="number"
+                  min={-360}
+                  max={360}
+                  value={arrayFillAngle}
+                  onChange={(event) => setArrayOption('fillAngle', Number(event.target.value))}
+                />
+              </label>
+              <label className="ribbon-field" title="Turn each copy to follow the sweep, rather than keeping it upright">
+                Rotate items
+                <input type="checkbox" checked={arrayRotateItems} onChange={toggleArrayRotateItems} />
+              </label>
+            </>
           )}
           {editingEdges && (
             <label className="ribbon-field" title="Which objects act as cutting or boundary edges">

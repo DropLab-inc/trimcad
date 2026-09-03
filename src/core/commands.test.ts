@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createCircle, createLine, offsetEntities, rectangularArray } from './commands'
+import { createCircle, createLine, offsetEntities } from './commands'
 
 describe('commands', () => {
   it('creates line and circle', () => {
@@ -22,9 +22,4 @@ describe('commands', () => {
     expect(out.length).toBeGreaterThan(entities.length)
   })
 
-  it('creates rectangular arrays', () => {
-    const line = createLine('L', { x: 0, y: 0 }, { x: 10, y: 0 })
-    const out = rectangularArray([line], [line.id], 2, 3, 10, 5)
-    expect(out.length).toBe(6)
-  })
 })
