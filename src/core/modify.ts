@@ -1,17 +1,20 @@
 import { normalizeAngle, pointSegmentDistance, uid } from './geometry'
+import {
+  EPS,
+  TOUCH,
+  circleIntersections,
+  cross,
+  infiniteIntersection,
+  lineCircleRoots,
+  offsetSegmentLine,
+  perpendicular,
+  type Segment,
+} from './intersect'
 import { add, distance, dot, mul, normalize, sub, type Vec2 } from './math/vec2'
 import { entityCircle, entitySegments } from './snap'
 import type { ArcEntity, CadEntity, PolylineEntity } from './types'
 
-const EPS = 1e-9
-/** Parameter slack so an intersection sitting exactly on a cutter's endpoint still counts. */
-const TOUCH = 1e-6
-
-type Segment = { a: Vec2; b: Vec2 }
 type CircleLike = { center: Vec2; radius: number; startAngle?: number; endAngle?: number }
-
-const cross = (a: Vec2, b: Vec2): number => a.x * b.y - a.y * b.x
-const perpendicular = (v: Vec2): Vec2 => ({ x: -v.y, y: v.x })
 
 const arcSweep = (arc: { startAngle: number; endAngle: number }): number => {
   let sweep = arc.endAngle - arc.startAngle
@@ -27,21 +30,6 @@ const withinArc = (circle: CircleLike, point: Vec2): boolean => {
 }
 
 /* ------------------------------------------------------------------ offset */
-
-const offsetSegmentLine = (a: Vec2, b: Vec2, signedDistance: number): Segment => {
-  const direction = normalize(sub(b, a))
-  const delta = mul(perpendicular(direction), signedDistance)
-  return { a: add(a, delta), b: add(b, delta) }
-}
-
-const infiniteIntersection = (first: Segment, second: Segment): Vec2 | null => {
-  const r = sub(first.b, first.a)
-  const s = sub(second.b, second.a)
-  const denominator = cross(r, s)
-  if (Math.abs(denominator) < EPS) return null
-  const t = cross(sub(second.a, first.a), s) / denominator
-  return add(first.a, mul(r, t))
-}
 
 /** Which side of a directed segment the point falls on, as +1 or -1. */
 const sideOf = (a: Vec2, b: Vec2, point: Vec2): number => {
@@ -185,29 +173,6 @@ const crossingParameters = (origin: Vec2, direction: Vec2, others: CadEntity[]):
     if (circle) parameters.push(...circleParameters(origin, direction, circle))
   }
   return parameters
-}
-
-/**
- * Where two circles cross, as up to two points.
- *
- * Circles that miss each other, or that sit one wholly inside the other, never cross. Ones that
- * touch at a single point return that point once rather than twice.
- */
-const circleIntersections = (centerA: Vec2, radiusA: number, centerB: Vec2, radiusB: number): Vec2[] => {
-  const between = distance(centerA, centerB)
-  if (between < EPS) return []
-  if (between > radiusA + radiusB + TOUCH) return []
-  if (between < Math.abs(radiusA - radiusB) - TOUCH) return []
-
-  const along = (radiusA ** 2 - radiusB ** 2 + between ** 2) / (2 * between)
-  const heightSquared = radiusA ** 2 - along * along
-  const unit = normalize(sub(centerB, centerA))
-  const base = add(centerA, mul(unit, along))
-  if (heightSquared <= TOUCH) return [base]
-
-  const height = Math.sqrt(heightSquared)
-  const offset = { x: -unit.y * height, y: unit.x * height }
-  return [add(base, offset), sub(base, offset)]
 }
 
 /** Angles at which the given entities cross a circle. */
@@ -813,17 +778,6 @@ const asCurve = (entity: CadEntity): PickedCurve | null => {
 /** The objects FILLET can cut, which unlike CHAMFER takes in circles and arcs. */
 export const canFillet = (entity: CadEntity): boolean =>
   hasStraightSegments(entity) || asCurve(entity) !== null
-
-/** Where an infinite line meets a circle, as distances along `direction` from `origin`. */
-const lineCircleRoots = (origin: Vec2, direction: Vec2, center: Vec2, radius: number): number[] => {
-  const toOrigin = sub(origin, center)
-  const half = dot(toOrigin, direction)
-  const discriminant = half * half - (dot(toOrigin, toOrigin) - radius * radius)
-  if (discriminant < 0) return []
-  if (discriminant < EPS) return [-half]
-  const root = Math.sqrt(discriminant)
-  return [-half - root, -half + root]
-}
 
 /**
  * Every centre an arc of `radius` could have while touching both the straight run and the circle.

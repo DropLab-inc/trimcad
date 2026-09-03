@@ -21,7 +21,8 @@ import { isTransformTool, transformedBy } from '../core/commands'
 import { editableEntities, lineweightPixels, visibleEntities as visibleOnLayers } from '../core/layers'
 import { getEntityAnchorPoints, isPointNearEntity, mirrorEntity } from '../core/geometry'
 import { canFillet, chamferCorner, filletCorner, hasStraightSegments, offsetEntity } from '../core/modify'
-import type { DimensionEntity, SnapMode } from '../core/types'
+import { circleOnDiameter, circleThroughPoints, cornerRadius, polygonOnEdge } from '../core/construct'
+import type { DimensionEntity, PolylineEntity, SnapMode } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
 import { COMMAND_INPUT_ID } from './CommandLine'
 import { HatchDefs } from './HatchDefs'
@@ -129,6 +130,9 @@ export function CanvasViewport() {
   const lwDisplay = useCadStore((state) => state.lwDisplay)
   const draftPoints = useCadStore((state) => state.draftPoints)
   const polygonSides = useCadStore((state) => state.polygonSides)
+  const polygonFit = useCadStore((state) => state.polygonFit)
+  const circleMode = useCadStore((state) => state.circleMode)
+  const circleDiameter = useCadStore((state) => state.circleDiameter)
   const dimensionType = useCadStore((state) => state.dimensionType)
   const dimScale = useCadStore((state) => state.dimScale)
   const modifyTargetId = useCadStore((state) => state.modifyTargetId)
@@ -696,13 +700,27 @@ export function CanvasViewport() {
             {...style}
           />
         )
-      case 'circle':
+      case 'circle': {
+        // Three points need two of them down before there is a circle to show, so until then the
+        // preview is just the chord being dragged out.
+        const shape =
+          circleMode === '2p'
+            ? circleOnDiameter(first, cursorWorld)
+            : circleMode === '3p'
+              ? draftPoints.length >= 2
+                ? circleThroughPoints(first, draftPoints[1], cursorWorld)
+                : null
+              : { center: first, radius: circleDiameter ? radius / 2 : radius }
+        if (!shape) {
+          return <line x1={last.x} y1={last.y} x2={cursorWorld.x} y2={cursorWorld.y} {...style} />
+        }
         return (
           <g>
-            <circle cx={first.x} cy={first.y} r={radius} {...style} />
+            <circle cx={shape.center.x} cy={shape.center.y} r={shape.radius} {...style} />
             <line x1={first.x} y1={first.y} x2={cursorWorld.x} y2={cursorWorld.y} {...style} strokeDasharray="2 4" />
           </g>
         )
+      }
       case 'ellipse':
         return (
           <ellipse
@@ -713,8 +731,14 @@ export function CanvasViewport() {
             {...style}
           />
         )
-      case 'polygon':
-        return <polygon points={polygonPoints(first, radius, polygonSides).map((p) => `${p.x},${p.y}`).join(' ')} {...style} />
+      case 'polygon': {
+        const outline =
+          polygonFit === 'edge'
+            ? (polygonOnEdge('preview', first, cursorWorld, polygonSides) as PolylineEntity | null)?.points
+            : polygonPoints(first, cornerRadius(polygonFit, radius, polygonSides), polygonSides)
+        if (!outline) return null
+        return <polygon points={outline.map((p) => `${p.x},${p.y}`).join(' ')} {...style} />
+      }
       case 'arc': {
         if (draftPoints.length === 1) {
           return (
@@ -778,7 +802,18 @@ export function CanvasViewport() {
       default:
         return null
     }
-  }, [activeTool, commandPoint, dimScale, dimensionType, doc.dimStyle, draftPoints, polygonSides])
+  }, [
+    activeTool,
+    circleDiameter,
+    circleMode,
+    commandPoint,
+    dimScale,
+    dimensionType,
+    doc.dimStyle,
+    draftPoints,
+    polygonFit,
+    polygonSides,
+  ])
 
   const grips = useMemo(() => {
     if (selectedIds.length === 0) return []

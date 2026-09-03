@@ -23,6 +23,14 @@ import {
   nextLayerName,
 } from './layers'
 import { findHatchBoundary, getEntityAnchorPoints, isPointNearEntity, mirrorEntity, uid } from './geometry'
+import {
+  canBeTangent,
+  circleOnDiameter,
+  circleTangentToTwo,
+  circleThroughPoints,
+  cornerRadius,
+  polygonOnEdge,
+} from './construct'
 import { distanceToEntity } from './flatten'
 import { parseCoordinate } from './dynamicInput'
 import {
@@ -38,9 +46,11 @@ import {
 import { COMMANDS, resolveCommand, type CommandDef } from './commandRegistry'
 import { formatPrompt, matchKeyword, promptFor, type Keyword, type Prompt, type PromptContext } from './prompts'
 import { applySelectionModifier, expandSelectionToGroups, type SelectionModifier } from './selection'
-import { sub, type Vec2 } from './math/vec2'
+import { distance as distanceBetween, sub, type Vec2 } from './math/vec2'
 import type {
   CadEntity,
+  CircleMode,
+  PolygonFit,
   DimensionType,
   DrawingDocument,
   HatchPattern,
@@ -107,6 +117,16 @@ type CadState = {
   /** AutoCAD's LWT: draw each object at its layer's plotted width instead of a hairline. */
   lwDisplay: boolean
   polygonSides: number
+  /** Whether a polygon's corners or its flats sit on the circle its radius describes. */
+  polygonFit: PolygonFit
+  /** Which of CIRCLE's constructions is running. */
+  circleMode: CircleMode
+  /** CIRCLE's Ttr option is waiting for its radius, after both tangent objects are picked. */
+  circlePending: boolean
+  /** CIRCLE's Diameter option is on, so the size given after the centre is read across the circle. */
+  circleDiameter: boolean
+  /** The two objects picked for a Ttr circle, with the point each was clicked at. */
+  tangentPicks: { id: string; point: Vec2 }[]
   dimensionType: DimensionType
   /** Size given to the next dimension, as a multiple of the drawing's dimension style. */
   dimScale: number
@@ -144,6 +164,9 @@ type CadState = {
   setOffsetDistance: (distance: number) => void
   toggleMirrorKeepSource: () => void
   setPolygonSides: (sides: number) => void
+  setPolygonFit: (fit: PolygonFit) => void
+  /** Switches CIRCLE between its constructions, starting the new one from scratch. */
+  setCircleMode: (mode: CircleMode) => void
   setDimensionType: (dimType: DimensionType) => void
   /** Sets the size the next dimension will be drawn at. Existing ones keep their own. */
   setDimScale: (scale: number) => void
@@ -204,6 +227,17 @@ type CadState = {
 const clampDimScale = (scale: number): number =>
   Number.isFinite(scale) && scale > 0 ? Math.min(1000, scale) : 1
 
+/**
+ * CIRCLE's options last only as long as the command that set them, so leaving the command puts the
+ * next one back at the plain centre-and-radius prompt, as AutoCAD does.
+ */
+const idleCircle = {
+  circleMode: 'center' as CircleMode,
+  circlePending: false,
+  circleDiameter: false,
+  tangentPicks: [] as { id: string; point: Vec2 }[],
+}
+
 const autosaveDoc = (doc: DrawingDocument) => {
   try {
     saveAutosave(doc)
@@ -232,6 +266,11 @@ export const useCadStore = create<CadState>((set, get) => ({
   polarEnabled: true,
   lwDisplay: false,
   polygonSides: 6,
+  polygonFit: 'inscribed' as PolygonFit,
+  circleMode: 'center',
+  circlePending: false,
+  circleDiameter: false,
+  tangentPicks: [],
   dimensionType: 'linear',
   dimScale: 1,
   hatchPattern: 'ansi31',
@@ -292,6 +331,10 @@ export const useCadStore = create<CadState>((set, get) => ({
   setOffsetDistance: (offsetDistance) => set({ offsetDistance: Math.abs(offsetDistance) || 1 }),
   toggleMirrorKeepSource: () => set((state) => ({ mirrorKeepSource: !state.mirrorKeepSource })),
   setPolygonSides: (polygonSides) => set({ polygonSides: Math.max(3, Math.round(polygonSides)) }),
+  setPolygonFit: (polygonFit) => set({ polygonFit }),
+  // Half-collected picks belong to the old construction, so they go with it.
+  setCircleMode: (circleMode) =>
+    set({ circleMode, circlePending: false, circleDiameter: false, tangentPicks: [], draftPoints: [] }),
   setDimensionType: (dimensionType) => set({ dimensionType, draftPoints: [], activeTool: 'dimension' }),
   setDimScale: (scale) => set({ dimScale: clampDimScale(scale) }),
   // A corner may legitimately be squared off with zero, so only negatives and gaps are rejected.
@@ -353,6 +396,7 @@ export const useCadStore = create<CadState>((set, get) => ({
       edgeIds: null,
       pickingEdges: false,
       cornerPending: false,
+      ...idleCircle,
       statusMessage: 'Ready',
     }),
   cancelCommand: () => {
@@ -364,6 +408,7 @@ export const useCadStore = create<CadState>((set, get) => ({
       edgeIds: null,
       pickingEdges: false,
       cornerPending: false,
+      ...idleCircle,
       commandInput: '',
       statusMessage: '*Cancel*',
     })
@@ -380,6 +425,9 @@ export const useCadStore = create<CadState>((set, get) => ({
       offsetThrough: false,
       // FILLET and CHAMFER go straight to picking; the size is changed by its own option.
       cornerPending: false,
+      ...idleCircle,
+      // Edge is a one-off choice, but a polygon sized inside or around its circle stays that way.
+      polygonFit: get().polygonFit === 'edge' ? 'inscribed' : get().polygonFit,
       statusMessage: `Tool: ${tool.toUpperCase()}`,
     }),
   setActiveLayerId: (activeLayerId) => set({ activeLayerId }),
@@ -827,6 +875,98 @@ const runCorner = (state: CadStoreState, point: Vec2) => {
 }
 
 /**
+ * CIRCLE, in whichever way it is being pinned down.
+ *
+ * Centre and radius is the plain case and finishes on the second pick. Two points take the ends of
+ * a diameter, three take points on the rim, and Ttr picks two objects to sit tangent to and then
+ * asks for the radius, which is the one construction that ends on a number rather than a point.
+ */
+const runCircle = (state: CadStoreState, point: Vec2, layerId: string): boolean => {
+  const { draftPoints, circleMode } = state
+  const place = (shape: { center: Vec2; radius: number } | null, refusal: string) => {
+    if (!shape) {
+      state.clearDraft()
+      state.setStatusMessage(refusal)
+      return
+    }
+    state.addEntity(createCircle(layerId, shape.center, shape.radius))
+    state.clearDraft()
+    state.endCommand()
+  }
+
+  if (circleMode === 'ttr') {
+    const picked = pickEntity(state, point)
+    if (!picked || !canBeTangent(picked)) {
+      state.setStatusMessage('Pick a line, polyline, arc or circle to sit tangent to.')
+      return true
+    }
+    const picks = [...state.tangentPicks, { id: picked.id, point }]
+    if (picks.length < 2) {
+      useCadStore.setState({ tangentPicks: picks })
+      state.setStatusMessage('Select second object for the tangent circle:')
+      return true
+    }
+    // Both objects are in hand, so the radius is all that is left to ask for.
+    useCadStore.setState({ tangentPicks: picks, circlePending: true })
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return true
+  }
+
+  if (circleMode === '2p') {
+    if (draftPoints.length === 0) {
+      state.addDraftPoint(point)
+      return true
+    }
+    place(circleOnDiameter(draftPoints[0], point), 'Those two points are in the same place.')
+    return true
+  }
+
+  if (circleMode === '3p') {
+    if (draftPoints.length < 2) {
+      state.addDraftPoint(point)
+      return true
+    }
+    place(
+      circleThroughPoints(draftPoints[0], draftPoints[1], point),
+      'Those three points lie in a straight line, so no circle passes through them.',
+    )
+    return true
+  }
+
+  if (draftPoints.length === 0) {
+    state.addDraftPoint(point)
+    return true
+  }
+  const reach = distanceBetween(draftPoints[0], point)
+  place({ center: draftPoints[0], radius: state.circleDiameter ? reach / 2 : reach }, '')
+  return true
+}
+
+/** Builds the Ttr circle once its radius is known. */
+const finishTangentCircle = (state: CadStoreState, radius: number): boolean => {
+  const [first, second] = state.tangentPicks
+  const entityFor = (pick: { id: string }) => state.doc.entities.find((entity) => entity.id === pick.id)
+  const a = first && entityFor(first)
+  const b = second && entityFor(second)
+  if (!a || !b) {
+    useCadStore.setState({ circlePending: false, tangentPicks: [] })
+    state.setStatusMessage('Those objects are no longer there.')
+    return true
+  }
+
+  const shape = circleTangentToTwo({ entity: a, point: first.point }, { entity: b, point: second.point }, radius)
+  useCadStore.setState({ circlePending: false, tangentPicks: [], draftPoints: [] })
+  if (!shape) {
+    state.setStatusMessage(`No circle of radius ${radius} touches both of those.`)
+    return true
+  }
+  const layerId = state.activeLayerId || state.doc.layers[0].id
+  state.addEntity(createCircle(layerId, shape.center, shape.radius))
+  state.endCommand()
+  return true
+}
+
+/**
  * Trims or extends everything a dragged fence line crosses, in one undo step.
  *
  * Each crossing is treated as its own pick. Because a trim can split an object into several
@@ -979,6 +1119,15 @@ const applyTypedNumber = (state: CadStoreState, value: number): boolean => {
     state.log('result', `Offset distance ${value}`)
     state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
     return true
+  }
+
+  // A Ttr circle ends on its radius rather than on a point, so a typed number finishes it.
+  if (state.circlePending && state.activeTool === 'circle') {
+    if (value <= 0) {
+      state.log('error', 'The radius must be greater than zero.')
+      return true
+    }
+    return finishTangentCircle(state, value)
   }
 
   if (state.cornerPending && (state.activeTool === 'fillet' || state.activeTool === 'chamfer')) {
@@ -1141,7 +1290,11 @@ const runCommandDef = (state: CadStoreState, command: CommandDef, argument = '')
 /** Everything the prompt engine needs to describe the current step. */
 export const promptContextFor = (state: CadStoreState, swapped = false): PromptContext => ({
   tool: state.activeTool,
-  step: state.draftPoints.length,
+  // A Ttr circle counts its progress in picked objects rather than in points.
+  step:
+    state.activeTool === 'circle' && state.circleMode === 'ttr'
+      ? state.tangentPicks.length
+      : state.draftPoints.length,
   dimensionType: state.dimensionType,
   hasSelection: state.selectedIds.length > 0,
   hasTarget: state.modifyTargetId !== null,
@@ -1152,6 +1305,10 @@ export const promptContextFor = (state: CadStoreState, swapped = false): PromptC
   chamferDistance: state.chamferDistance,
   cornerPending: state.cornerPending,
   polygonSides: state.polygonSides,
+  polygonFit: state.polygonFit,
+  circleMode: state.circleMode,
+  // The tangent picks count as steps of their own, so the radius prompt only shows once both are in.
+  circlePending: state.circlePending,
   pickingEdges: state.pickingEdges,
   edgeCount: state.edgeIds === null ? null : state.edgeIds.length,
   swapped,
@@ -1183,6 +1340,30 @@ const runKeyword = (state: CadStoreState, keyword: Keyword) => {
     case 'Distance':
       // The pick starts over, so a size typed midway through does not half-apply.
       useCadStore.setState({ cornerPending: true, modifyTargetId: null, draftPoints: [] })
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case '3 Point':
+    case '2 Point':
+    case 'Ttr (tangent tangent radius)':
+      state.setCircleMode(keyword.key === '3P' ? '3p' : keyword.key === '2P' ? '2p' : 'ttr')
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'Diameter': {
+      // The centre is already down, so the number that follows is read across rather than out.
+      const centre = state.draftPoints[0]
+      if (!centre) return
+      useCadStore.setState({ circleDiameter: true })
+      state.log('prompt', 'Specify diameter of circle:')
+      return
+    }
+    case 'Inscribed in circle':
+    case 'Circumscribed about circle':
+      state.setPolygonFit(keyword.key === 'I' ? 'inscribed' : 'circumscribed')
+      state.log('result', keyword.key === 'I' ? 'Inscribed in circle' : 'Circumscribed about circle')
+      return
+    case 'Edge':
+      state.setPolygonFit('edge')
+      useCadStore.setState({ draftPoints: [] })
       state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
       return
     case 'Undo':
@@ -1345,7 +1526,7 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
   }
 
   if (activeTool === 'circle') {
-    finishTwoPoint((a, b) => createCircle(currentLayerId, a, Math.hypot(b.x - a.x, b.y - a.y)))
+    if (runCircle(state, point, currentLayerId)) return
     return
   }
 
@@ -1363,7 +1544,18 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
   }
 
   if (activeTool === 'polygon') {
-    finishTwoPoint((a, b) => createPolygon(currentLayerId, a, Math.hypot(b.x - a.x, b.y - a.y), state.polygonSides))
+    if (state.polygonFit === 'edge') {
+      finishTwoPoint((a, b) => polygonOnEdge(currentLayerId, a, b, state.polygonSides) ?? createPolygon(currentLayerId, a, 1, state.polygonSides))
+      return
+    }
+    finishTwoPoint((a, b) =>
+      createPolygon(
+        currentLayerId,
+        a,
+        cornerRadius(state.polygonFit, Math.hypot(b.x - a.x, b.y - a.y), state.polygonSides),
+        state.polygonSides,
+      ),
+    )
     return
   }
 

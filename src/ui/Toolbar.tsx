@@ -1,7 +1,7 @@
 import { useCadStore } from '../core/store'
 import { shortestAlias, resolveCommand } from '../core/commandRegistry'
 import { Icon, type IconName } from './Icon'
-import type { DimensionType, HatchPattern, ToolMode } from '../core/types'
+import type { CircleMode, DimensionType, HatchPattern, PolygonFit, ToolMode } from '../core/types'
 
 type ToolItem = { tool: ToolMode; label: string; icon: IconName; command: string; hint?: string }
 
@@ -122,6 +122,10 @@ export function Toolbar() {
   const setTool = useCadStore((state) => state.setTool)
   const polygonSides = useCadStore((state) => state.polygonSides)
   const setPolygonSides = useCadStore((state) => state.setPolygonSides)
+  const polygonFit = useCadStore((state) => state.polygonFit)
+  const setPolygonFit = useCadStore((state) => state.setPolygonFit)
+  const circleMode = useCadStore((state) => state.circleMode)
+  const setCircleMode = useCadStore((state) => state.setCircleMode)
   const dimensionType = useCadStore((state) => state.dimensionType)
   const setDimensionType = useCadStore((state) => state.setDimensionType)
   const dimScale = useCadStore((state) => state.dimScale)
@@ -171,6 +175,17 @@ export function Toolbar() {
                 <span>{item.label}</span>
               </button>
             ))}
+            {activeTool === 'circle' && (
+              <label className="ribbon-field" title="How the circle is pinned down">
+                Circle by
+                <select value={circleMode} onChange={(event) => setCircleMode(event.target.value as CircleMode)}>
+                  <option value="center">Centre, radius</option>
+                  <option value="2p">2 points</option>
+                  <option value="3p">3 points</option>
+                  <option value="ttr">Tangent, tangent, radius</option>
+                </select>
+              </label>
+            )}
             <label className="ribbon-field" title="Number of polygon sides">
               Sides
               <input
@@ -181,6 +196,16 @@ export function Toolbar() {
                 onChange={(event) => setPolygonSides(Number(event.target.value))}
               />
             </label>
+            {activeTool === 'polygon' && (
+              <label className="ribbon-field" title="Whether the corners or the flats sit on the radius you pick">
+                Fit
+                <select value={polygonFit} onChange={(event) => setPolygonFit(event.target.value as PolygonFit)}>
+                  <option value="inscribed">Inscribed in circle</option>
+                  <option value="circumscribed">Circumscribed about circle</option>
+                  <option value="edge">By one edge</option>
+                </select>
+              </label>
+            )}
           </div>
         </section>
       ))}

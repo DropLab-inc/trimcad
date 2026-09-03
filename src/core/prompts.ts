@@ -1,4 +1,4 @@
-import type { DimensionType, ToolMode } from './types'
+import type { CircleMode, DimensionType, PolygonFit, ToolMode } from './types'
 
 /**
  * Prompts shown at the command line and under the crosshair.
@@ -45,6 +45,12 @@ export type PromptContext = {
   /** FILLET or CHAMFER is waiting for a typed radius or distance. */
   cornerPending: boolean
   polygonSides: number
+  /** Whether a polygon is sized inside its circle, around it, or by a single edge. */
+  polygonFit: PolygonFit
+  /** Which of CIRCLE's constructions is running. */
+  circleMode: CircleMode
+  /** A Ttr circle has both its objects and is waiting for the radius. */
+  circlePending: boolean
   /** TRIM and EXTEND are collecting their cutting or boundary edges. */
   pickingEdges: boolean
   /** How many edges have been picked, or null while every object counts as an edge. */
@@ -116,17 +122,54 @@ const promptsForTool = (ctx: PromptContext): Prompt[] => {
       return [point('Specify start point'), point('Specify next point', CLOSE_UNDO)]
     case 'rect':
       return [point('Specify first corner'), point('Specify other corner')]
-    case 'circle':
-      return [point('Specify centre point'), point('Specify radius')]
+    case 'circle': {
+      const ways: Keyword[] = [
+        { key: '3P', label: '3 Point' },
+        { key: '2P', label: '2 Point' },
+        { key: 'T', label: 'Ttr (tangent tangent radius)' },
+      ]
+      if (ctx.circlePending) {
+        return [{ ...point('Specify radius of circle'), kind: 'number' }]
+      }
+      switch (ctx.circleMode) {
+        case '2p':
+          return [point('Specify first end point of diameter'), point('Specify second end point of diameter')]
+        case '3p':
+          return [
+            point('Specify first point on circle'),
+            point('Specify second point on circle'),
+            point('Specify third point on circle'),
+          ]
+        case 'ttr':
+          return [
+            entity('Specify point on object for first tangent'),
+            entity('Specify point on object for second tangent'),
+          ]
+        default:
+          return [point('Specify centre point', ways), point('Specify radius', [{ key: 'D', label: 'Diameter' }])]
+      }
+    }
     case 'arc':
       return [point('Specify centre point'), point('Specify start point'), point('Specify end point')]
     case 'ellipse':
       return [point('Specify centre point'), point('Specify axis endpoint')]
-    case 'polygon':
+    case 'polygon': {
+      if (ctx.polygonFit === 'edge') {
+        return [point('Specify first endpoint of edge'), point('Specify second endpoint of edge')]
+      }
+      const inside = ctx.polygonFit === 'inscribed'
       return [
-        { ...point('Specify centre of polygon'), defaultValue: `${ctx.polygonSides} sides` },
-        point('Specify radius'),
+        {
+          ...point('Specify centre of polygon', [
+            { key: 'I', label: 'Inscribed in circle' },
+            { key: 'C', label: 'Circumscribed about circle' },
+            { key: 'E', label: 'Edge' },
+          ]),
+          defaultValue: `${ctx.polygonSides} sides, ${inside ? 'inscribed' : 'circumscribed'}`,
+        },
+        point(inside ? 'Specify radius to a corner' : 'Specify radius to the middle of a side'),
       ]
+    }
     case 'spline':
       return [point('Specify first point'), point('Specify next point (Enter to finish)')]
     case 'text':
