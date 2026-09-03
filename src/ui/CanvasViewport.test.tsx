@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createCircle, createLine, createRect } from '../core/commands'
+import { createCircle, createLine, createPolygon, createRect } from '../core/commands'
 import { useCadStore } from '../core/store'
-import type { CadEntity } from '../core/types'
+import type { Vec2 } from '../core/math/vec2'
+import type { CadEntity, PolylineEntity } from '../core/types'
 import { CanvasViewport } from './CanvasViewport'
 
 /**
@@ -93,6 +94,81 @@ describe('snap marker placement', () => {
 
     fireEvent.mouseMove(svg, { clientX: 296, clientY: 104 })
     fireEvent.mouseDown(svg, { clientX: 296, clientY: 104, button: 0 })
+
+    expect(useCadStore.getState().draftPoints[0]).toEqual({ x: 300, y: 100 })
+  })
+})
+
+describe('picking edges for FILLET', () => {
+  const entities = () => useCadStore.getState().doc.entities
+  const arcs = () => entities().filter((entity) => entity.type === 'arc')
+  const click = (svg: Element, at: Vec2) => fireEvent.mouseDown(svg, { clientX: at.x, clientY: at.y, button: 0 })
+
+  /** A point `by` units along the run from `from` towards `to`. */
+  const towards = (from: Vec2, to: Vec2, by: number): Vec2 => {
+    const length = Math.hypot(to.x - from.x, to.y - from.y)
+    return { x: from.x + ((to.x - from.x) / length) * by, y: from.y + ((to.y - from.y) / length) * by }
+  }
+
+  const armed = (radius: number) => {
+    const state = useCadStore.getState()
+    state.setFilletRadius(radius)
+    state.executeCommand('FILLET')
+    const { container } = render(<CanvasViewport />)
+    return container.querySelector('svg')!
+  }
+
+  beforeEach(() => {
+    seed([])
+  })
+
+  it('rounds a polygon corner even when both clicks fall inside snapping range of it', () => {
+    // A hexagon's sides are short, so a click meaning "this edge" easily lands within the 12 unit
+    // endpoint snap of the corner. Were the picks snapped, both would be dragged onto the shared
+    // corner, name the same edge, and the corner would be refused.
+    const hexagon = createPolygon(layerId(), { x: 300, y: 300 }, 100, 6) as PolylineEntity
+    seed([hexagon])
+    const [first, corner, third] = hexagon.points
+    const svg = armed(10)
+
+    click(svg, towards(corner, first, 8))
+    click(svg, towards(corner, third, 8))
+
+    expect(arcs()).toHaveLength(1)
+    expect(useCadStore.getState().statusMessage).toBe('Filleted at radius 10')
+  })
+
+  it('still rounds a polygon corner when the clicks sit at the middle of each side', () => {
+    const hexagon = createPolygon(layerId(), { x: 300, y: 300 }, 100, 6) as PolylineEntity
+    seed([hexagon])
+    const [first, corner, third] = hexagon.points
+    const svg = armed(10)
+
+    click(svg, towards(corner, first, 50))
+    click(svg, towards(corner, third, 50))
+
+    expect(arcs()).toHaveLength(1)
+  })
+
+  it('joins two circles with an arc and leaves both of them alone', () => {
+    // 200 apart with radius 50 each leaves a gap of 100, which a radius of 100 spans easily.
+    seed([createCircle(layerId(), { x: 200, y: 300 }, 50), createCircle(layerId(), { x: 400, y: 300 }, 50)])
+    const svg = armed(100)
+
+    click(svg, { x: 200, y: 250 })
+    click(svg, { x: 400, y: 250 })
+
+    expect(arcs()).toHaveLength(1)
+    expect(entities().filter((entity) => entity.type === 'circle')).toHaveLength(2)
+    expect(entities()).toHaveLength(3)
+  })
+
+  it('leaves snapping alone for the tools that place points rather than pick edges', () => {
+    seed([createLine(layerId(), { x: 100, y: 100 }, { x: 300, y: 100 })])
+    useCadStore.getState().setTool('line')
+
+    const { container } = render(<CanvasViewport />)
+    fireEvent.mouseDown(container.querySelector('svg')!, { clientX: 296, clientY: 104, button: 0 })
 
     expect(useCadStore.getState().draftPoints[0]).toEqual({ x: 300, y: 100 })
   })

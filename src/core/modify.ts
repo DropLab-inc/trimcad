@@ -187,6 +187,29 @@ const crossingParameters = (origin: Vec2, direction: Vec2, others: CadEntity[]):
   return parameters
 }
 
+/**
+ * Where two circles cross, as up to two points.
+ *
+ * Circles that miss each other, or that sit one wholly inside the other, never cross. Ones that
+ * touch at a single point return that point once rather than twice.
+ */
+const circleIntersections = (centerA: Vec2, radiusA: number, centerB: Vec2, radiusB: number): Vec2[] => {
+  const between = distance(centerA, centerB)
+  if (between < EPS) return []
+  if (between > radiusA + radiusB + TOUCH) return []
+  if (between < Math.abs(radiusA - radiusB) - TOUCH) return []
+
+  const along = (radiusA ** 2 - radiusB ** 2 + between ** 2) / (2 * between)
+  const heightSquared = radiusA ** 2 - along * along
+  const unit = normalize(sub(centerB, centerA))
+  const base = add(centerA, mul(unit, along))
+  if (heightSquared <= TOUCH) return [base]
+
+  const height = Math.sqrt(heightSquared)
+  const offset = { x: -unit.y * height, y: unit.x * height }
+  return [add(base, offset), sub(base, offset)]
+}
+
 /** Angles at which the given entities cross a circle. */
 const crossingAngles = (circle: CircleLike, others: CadEntity[]): number[] => {
   const angles: number[] = []
@@ -204,18 +227,8 @@ const crossingAngles = (circle: CircleLike, others: CadEntity[]): number[] => {
     }
     const otherCircle = entityCircle(other)
     if (otherCircle) {
-      const between = distance(circle.center, otherCircle.center)
-      if (between < EPS) continue
-      if (between > circle.radius + otherCircle.radius) continue
-      if (between < Math.abs(circle.radius - otherCircle.radius)) continue
-      const a = (circle.radius ** 2 - otherCircle.radius ** 2 + between ** 2) / (2 * between)
-      const heightSquared = circle.radius ** 2 - a * a
-      if (heightSquared < 0) continue
-      const height = Math.sqrt(heightSquared)
-      const unit = normalize(sub(otherCircle.center, circle.center))
-      const base = add(circle.center, mul(unit, a))
-      const offset = { x: -unit.y * height, y: unit.x * height }
-      for (const point of [add(base, offset), sub(base, offset)]) {
+      const crossings = circleIntersections(circle.center, circle.radius, otherCircle.center, otherCircle.radius)
+      for (const point of crossings) {
         if (withinArc(otherCircle, point)) record(point)
       }
     }
@@ -938,6 +951,80 @@ const filletAgainstCurve = (
 }
 
 /**
+ * The distances a fillet centre can sit from a curve's centre while touching it.
+ *
+ * Riding around the outside puts the centre a full radius clear; curling against the concave side
+ * puts it inside, at the difference. A fillet as wide as the curve leaves nothing of the second.
+ */
+const reachesFrom = (curve: PickedCurve, radius: number): number[] =>
+  [curve.radius + radius, Math.abs(curve.radius - radius)].filter((reach) => reach > EPS)
+
+/**
+ * Rounds the join between two circles or arcs.
+ *
+ * The fillet centre has to stand at a fixed distance from both curve centres, and there are two
+ * such distances per curve depending on which side it hugs. That gives four pairs of construction
+ * circles, and each pair meets twice, so up to eight arcs touch both curves. Which one was meant
+ * is settled the same way as everywhere else here: the one landing nearest the two clicks wins.
+ *
+ * As with a line against a circle, full circles are left whole and only arcs are cut back.
+ */
+const filletBetweenCurves = (
+  a: CornerPick,
+  b: CornerPick,
+  curveA: PickedCurve,
+  curveB: PickedCurve,
+  radius: number,
+): CornerResult | null => {
+  const magnitude = Math.abs(radius)
+
+  type Meeting = { onA: Vec2; onB: Vec2; bridge: ArcEntity | null }
+  const meetings: Meeting[] =
+    magnitude < EPS
+      ? // A zero radius squares the join off, so the two simply meet where they already cross.
+        circleIntersections(curveA.center, curveA.radius, curveB.center, curveB.radius).map((point) => ({
+          onA: point,
+          onB: point,
+          bridge: null,
+        }))
+      : reachesFrom(curveA, magnitude).flatMap((reachA) =>
+          reachesFrom(curveB, magnitude).flatMap((reachB) =>
+            circleIntersections(curveA.center, reachA, curveB.center, reachB).flatMap((centre) => {
+              const onA = touchOnCurve(curveA, centre, magnitude)
+              const onB = touchOnCurve(curveB, centre, magnitude)
+              if (!onA || !onB) return []
+              if (distance(onA, onB) < TOUCH) return []
+              return [{ onA, onB, bridge: minorArc(centre, magnitude, onA, onB, a.entity) }]
+            }),
+          ),
+        )
+
+  const ranked = meetings
+    .map((meeting) => ({
+      meeting,
+      reach: distance(meeting.onA, a.point) + distance(meeting.onB, b.point),
+    }))
+    .sort((first, second) => first.reach - second.reach)
+
+  for (const { meeting } of ranked) {
+    const cutA = curveA.arc ? trimArcTo(curveA.arc, a.point, meeting.onA) : null
+    if (curveA.arc && !cutA) continue
+    const cutB = curveB.arc ? trimArcTo(curveB.arc, b.point, meeting.onB) : null
+    if (curveB.arc && !cutB) continue
+
+    const pieces = [...(cutA ? [cutA] : []), ...(cutB ? [cutB] : []), ...(meeting.bridge ? [meeting.bridge] : [])]
+    // Two circles squared off at zero would trim nothing and add nothing, so there is no such move.
+    if (pieces.length === 0) continue
+
+    return {
+      replacedIds: [...(cutA ? [a.entity.id] : []), ...(cutB ? [b.entity.id] : [])],
+      pieces,
+    }
+  }
+  return null
+}
+
+/**
  * Rounds the corner between two straight runs with an arc of the given radius, tangent to both.
  *
  * A radius of zero is AutoCAD's shortcut for squaring the corner off instead, trimming or
@@ -947,10 +1034,12 @@ const filletAgainstCurve = (
 export const filletCorner = (a: CornerPick, b: CornerPick, radius: number): CornerResult | null => {
   if (!Number.isFinite(radius)) return null
 
-  // A circle or arc on either side sends this down the curved path instead.
+  // A circle or arc on either side sends this down one of the curved paths instead.
   const curveA = asCurve(a.entity)
   const curveB = asCurve(b.entity)
-  if (curveA && curveB) return null
+  // One curve cannot make a corner with itself.
+  if (curveA && curveB && a.entity.id === b.entity.id) return null
+  if (curveA && curveB) return filletBetweenCurves(a, b, curveA, curveB, radius)
   if (curveB) return filletAgainstCurve(a, b, curveB, radius)
   if (curveA) return filletAgainstCurve(b, a, curveA, radius)
 

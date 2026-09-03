@@ -792,15 +792,12 @@ const runCorner = (state: CadStoreState, point: Vec2) => {
 
   if (!result) {
     forget()
-    const bothCurved = rounding && !hasStraightSegments(first) && !hasStraightSegments(target)
     state.setStatusMessage(
-      bothCurved
-        ? 'Fillet needs at least one straight edge; two curves are not supported yet.'
-        : first.id === target.id
-          ? 'Pick two edges that meet at a corner.'
-          : rounding
-            ? 'Those edges cannot be filleted at this radius.'
-            : 'Those edges cannot be chamfered at this distance.',
+      first.id === target.id
+        ? 'Pick two edges that meet at a corner.'
+        : rounding
+          ? 'Those edges cannot be filleted at this radius.'
+          : 'Those edges cannot be chamfered at this distance.',
     )
     return
   }
@@ -816,6 +813,9 @@ const runCorner = (state: CadStoreState, point: Vec2) => {
       planted = true
       return result.pieces
     })
+    // Filleting two circles cuts neither of them, so the arc has nothing to stand in for and
+    // simply joins the end of the drawing.
+    if (!planted) entities.push(...result.pieces)
     return { ...doc, entities }
   })
 

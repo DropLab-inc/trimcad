@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { createPolygon } from './commands'
 import { chamferCorner, filletCorner, type CornerResult } from './modify'
 import { applyDrawTool, currentPrompt, useCadStore } from './store'
 import { formatPrompt } from './prompts'
@@ -37,6 +38,8 @@ const expectPoints = (actual: Vec2[], expected: Vec2[]) => {
     expect(point.y).toBeCloseTo(expected[index].y, 6)
   })
 }
+const distanceBetween = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.y - b.y)
+
 const linesOf = (result: CornerResult) => result.pieces.filter((p): p is LineEntity => p.type === 'line')
 const arcOf = (result: CornerResult) => result.pieces.find((p): p is ArcEntity => p.type === 'arc') ?? null
 const polylinesOf = (result: CornerResult) =>
@@ -389,11 +392,6 @@ describe('filleting a line against a circle or arc', () => {
     expect(filletCorner(at(far, { x: 0, y: 900 }), at(ring(), { x: 0, y: 50 }), 5)).toBeNull()
   })
 
-  it('refuses two curves, which need a different construction', () => {
-    const other: CircleEntity = { ...ring(), id: 'd', center: { x: 200, y: 0 } }
-    expect(filletCorner(at(ring(), { x: 50, y: 0 }), at(other, { x: 150, y: 0 }), 10)).toBeNull()
-  })
-
   it('rounds a rectangle side against a circle, not just a loose line', () => {
     const rect = polyline('r', [
       { x: -200, y: 100 },
@@ -409,6 +407,145 @@ describe('filleting a line against a circle or arc', () => {
 
   it('refuses a circle for CHAMFER, which bevels straight edges only', () => {
     expect(chamferCorner(at(above, { x: 0, y: 100 }), at(ring(), { x: 0, y: 50 }), 10, 10)).toBeNull()
+  })
+})
+
+describe('filleting one curve against another', () => {
+  const circle = (id: string, center: Vec2, radius: number): CircleEntity => ({
+    id,
+    type: 'circle',
+    layerId: 'L',
+    center,
+    radius,
+  })
+  const arc = (id: string, center: Vec2, radius: number, startAngle: number, endAngle: number): ArcEntity => ({
+    id,
+    type: 'arc',
+    layerId: 'L',
+    center,
+    radius,
+    startAngle,
+    endAngle,
+  })
+  const arcsOf = (result: CornerResult) => result.pieces.filter((p): p is ArcEntity => p.type === 'arc')
+
+  /**
+   * Two circles of radius 50 with their centres 200 apart, so 100 of clear air lies between them.
+   * A fillet hugging the outside of both has its centre 50 + r from each, which only reaches
+   * across once r is at least 50.
+   */
+  const left = () => circle('a', { x: 0, y: 0 }, 50)
+  const right = () => circle('b', { x: 200, y: 0 }, 50)
+  const onLeftTop = { x: 0, y: 50 }
+  const onRightTop = { x: 200, y: 50 }
+
+  // With r = 100 the centre stands 150 from each, so it sits above the midpoint by this much.
+  const rise = Math.sqrt(150 ** 2 - 100 ** 2)
+
+  it('joins two circles with an arc tangent to both', () => {
+    const result = filletCorner(at(left(), onLeftTop), at(right(), onRightTop), 100)!
+    const bridge = arcOf(result)!
+
+    expect(bridge.radius).toBeCloseTo(100, 6)
+    // Equidistant from both centres puts it on the midline, and the clicks put it above.
+    expect(bridge.center.x).toBeCloseTo(100, 6)
+    expect(bridge.center.y).toBeCloseTo(rise, 6)
+    // Tangency means the centres are exactly a fillet radius clear of each circle.
+    expect(distanceBetween(bridge.center, { x: 0, y: 0 })).toBeCloseTo(150, 6)
+    expect(distanceBetween(bridge.center, { x: 200, y: 0 })).toBeCloseTo(150, 6)
+  })
+
+  it('leaves both circles whole, adding only the arc', () => {
+    const result = filletCorner(at(left(), onLeftTop), at(right(), onRightTop), 100)!
+
+    expect(result.replacedIds).toEqual([])
+    expect(result.pieces).toHaveLength(1)
+    expect(result.pieces[0].type).toBe('arc')
+  })
+
+  it('rounds on the sides of the circles that were clicked', () => {
+    const above = filletCorner(at(left(), onLeftTop), at(right(), onRightTop), 100)!
+    const below = filletCorner(at(left(), { x: 0, y: -50 }), at(right(), { x: 200, y: -50 }), 100)!
+
+    expect(arcOf(above)!.center.y).toBeCloseTo(rise, 6)
+    expect(arcOf(below)!.center.y).toBeCloseTo(-rise, 6)
+  })
+
+  it('trims two arcs back to the points the fillet touches them', () => {
+    // The upper halves of the same two circles, so both tangent points fall inside the sweeps.
+    const first = arc('a', { x: 0, y: 0 }, 50, 0, Math.PI)
+    const second = arc('b', { x: 200, y: 0 }, 50, 0, Math.PI)
+    const result = filletCorner(at(first, onLeftTop), at(second, onRightTop), 100)!
+
+    expect(result.replacedIds).toEqual(['a', 'b'])
+    // Both originals, cut back, plus the fillet between them.
+    expect(arcsOf(result)).toHaveLength(3)
+
+    // The tangent point lies on the line from the circle's centre to the fillet's.
+    const touchAngle = Math.atan2(rise, 100)
+    const cutLeft = arcsOf(result).find((piece) => piece.id === 'a')!
+    const cutRight = arcsOf(result).find((piece) => piece.id === 'b')!
+    // Each click sat away from its tangent point, so each keeps the far side of its sweep.
+    expect(cutLeft.startAngle).toBeCloseTo(touchAngle, 6)
+    expect(cutLeft.endAngle).toBeCloseTo(Math.PI, 6)
+    expect(cutRight.startAngle).toBeCloseTo(0, 6)
+    expect(cutRight.endAngle).toBeCloseTo(Math.PI - touchAngle, 6)
+  })
+
+  it('trims the arc but leaves the circle whole when the two are mixed', () => {
+    const halfRight = arc('b', { x: 200, y: 0 }, 50, 0, Math.PI)
+    const result = filletCorner(at(left(), onLeftTop), at(halfRight, onRightTop), 100)!
+
+    // Only the arc gives way; the circle is not in the list at all.
+    expect(result.replacedIds).toEqual(['b'])
+    expect(arcsOf(result)).toHaveLength(2)
+  })
+
+  it('refuses a radius too small to reach across the gap', () => {
+    // The circles are 100 apart, so nothing under 50 can bridge them.
+    expect(filletCorner(at(left(), onLeftTop), at(right(), onRightTop), 10)).toBeNull()
+  })
+
+  it('curls around the inside of a circle when the fillet is picked there', () => {
+    // A small circle sitting well inside a large one: the fillet hugs the big circle's concave
+    // side, which puts its centre at 200 - 30 from that centre rather than 200 + 30.
+    const outer = circle('a', { x: 0, y: 0 }, 200)
+    const inner = circle('b', { x: 100, y: 0 }, 50)
+    const bridge = arcOf(filletCorner(at(outer, { x: 200, y: 0 }), at(inner, { x: 150, y: 0 }), 30)!)!
+
+    expect(bridge.radius).toBeCloseTo(30, 6)
+    expect(distanceBetween(bridge.center, { x: 0, y: 0 })).toBeCloseTo(170, 6)
+    expect(distanceBetween(bridge.center, { x: 100, y: 0 })).toBeCloseTo(80, 6)
+  })
+
+  it('squares two arcs off at radius zero where they already cross', () => {
+    const first = arc('a', { x: 0, y: 0 }, 100, 0, Math.PI)
+    const second = arc('b', { x: 100, y: 0 }, 100, 0, Math.PI)
+    // They meet at 60 degrees round the first and 120 degrees round the second.
+    const result = filletCorner(
+      at(first, { x: 100 * Math.cos(0.35), y: 100 * Math.sin(0.35) }),
+      at(second, { x: 100 + 100 * Math.cos(2.79), y: 100 * Math.sin(2.79) }),
+      0,
+    )!
+
+    // No fillet arc, just the two originals cut to the crossing.
+    expect(arcsOf(result)).toHaveLength(2)
+    expect(arcsOf(result).find((piece) => piece.id === 'a')!.endAngle).toBeCloseTo(Math.PI / 3, 6)
+    expect(arcsOf(result).find((piece) => piece.id === 'b')!.startAngle).toBeCloseTo((Math.PI * 2) / 3, 6)
+  })
+
+  it('refuses two circles at radius zero, which would leave nothing to show for it', () => {
+    const overlapping = circle('b', { x: 60, y: 0 }, 50)
+    expect(filletCorner(at(left(), { x: 50, y: 0 }), at(overlapping, { x: 10, y: 0 }), 0)).toBeNull()
+  })
+
+  it('refuses a circle picked twice, which makes no corner with itself', () => {
+    const same = left()
+    expect(filletCorner(at(same, { x: 50, y: 0 }), at(same, { x: -50, y: 0 }), 10)).toBeNull()
+  })
+
+  it('refuses two curves for CHAMFER, which bevels straight edges only', () => {
+    expect(chamferCorner(at(left(), onLeftTop), at(right(), onRightTop), 10, 10)).toBeNull()
   })
 })
 
@@ -466,6 +603,75 @@ describe('the FILLET and CHAMFER commands', () => {
     expect(arcs()[0].center.x).toBeCloseTo(90, 6)
     expect(shapes()).toHaveLength(1)
     expect(shapes()[0].closed).toBe(false)
+  })
+
+  /** The middle of the run between two of a shape's corners, which is where a user clicks. */
+  const midpoint = (points: Vec2[], i: number, j: number) => ({
+    x: (points[i].x + points[j].x) / 2,
+    y: (points[i].y + points[j].y) / 2,
+  })
+
+  it('rounds a corner of a polygon straight from the POLYGON tool', () => {
+    // Built by the tool itself, so this is the shape a user actually draws rather than a stand-in.
+    load((layerId) => [createPolygon(layerId, { x: 0, y: 0 }, 100, 6)])
+    const corners = shapes()[0].points
+
+    state().executeCommand('FILLET')
+    applyDrawTool(midpoint(corners, 0, 1))
+    applyDrawTool(midpoint(corners, 1, 2))
+
+    expect(lastStatus()).toBe('Filleted at radius 10')
+    expect(arcs()).toHaveLength(1)
+    expect(arcs()[0].radius).toBeCloseTo(10, 6)
+    // As with a rectangle, the run opens so the arc is not doubled by a straight chord.
+    expect(shapes()).toHaveLength(1)
+    expect(shapes()[0].closed).toBe(false)
+  })
+
+  it('rounds the sharper corner of a triangle, which needs a longer setback', () => {
+    load((layerId) => [createPolygon(layerId, { x: 0, y: 0 }, 100, 3)])
+    const corners = shapes()[0].points
+
+    state().executeCommand('FILLET')
+    applyDrawTool(midpoint(corners, 0, 1))
+    applyDrawTool(midpoint(corners, 1, 2))
+
+    expect(arcs()).toHaveLength(1)
+    // A 60 degree corner stands the tangent points back by r/tan(30), much further than a square.
+    const vertex = corners[1]
+    expect(distanceBetween(arcs()[0].center, vertex)).toBeCloseTo(10 / Math.sin(Math.PI / 6), 6)
+  })
+
+  it('bevels a polygon corner without breaking the polygon apart', () => {
+    load((layerId) => [createPolygon(layerId, { x: 0, y: 0 }, 100, 6)])
+    const corners = shapes()[0].points
+
+    state().executeCommand('CHAMFER')
+    applyDrawTool(midpoint(corners, 0, 1))
+    applyDrawTool(midpoint(corners, 1, 2))
+
+    expect(entities()).toHaveLength(1)
+    expect(shapes()[0].closed).toBe(true)
+    // The rounded vertex is replaced by the two the bevel runs between.
+    expect(shapes()[0].points).toHaveLength(7)
+  })
+
+  it('joins two circles with an arc, leaving both circles in place', () => {
+    load((layerId) => [
+      { id: 'a', type: 'circle', layerId, center: { x: 0, y: 0 }, radius: 50 },
+      { id: 'b', type: 'circle', layerId, center: { x: 200, y: 0 }, radius: 50 },
+    ])
+    state().setFilletRadius(100)
+
+    state().executeCommand('FILLET')
+    applyDrawTool({ x: 0, y: 50 })
+    applyDrawTool({ x: 200, y: 50 })
+
+    expect(lastStatus()).toBe('Filleted at radius 100')
+    expect(arcs()).toHaveLength(1)
+    // Neither circle is cut, so the drawing simply gains the fillet.
+    expect(entities()).toHaveLength(3)
+    expect(entities().filter((entity) => entity.type === 'circle')).toHaveLength(2)
   })
 
   it('bevels a rectangle corner in place, adding no new object', () => {

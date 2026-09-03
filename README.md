@@ -170,13 +170,18 @@ An edge is any straight run, so this covers **lines, polylines, rectangles and p
 two sides of one rectangle rounds that corner of the rectangle; picking a rectangle side and a
 loose line joins the two.
 
-Fillet also takes **arcs and circles** on one side of the corner, as AutoCAD does. There are up to
-eight arcs of a given radius that touch both a straight edge and a circle, so the one nearest your
-two clicks wins: click the part of the circle you want the fillet to land on. A circle is left
-whole rather than trimmed, again following AutoCAD, so only the straight edge is cut back and the
-fillet bridges the gap; an arc is trimmed to the tangent point like any other edge. The radius has
-to be large enough to span the gap, and filleting two curves together is not supported yet.
-Chamfer stays straight-only, which is also how AutoCAD behaves.
+Fillet also takes **arcs and circles**, on one side of the corner or on both, as AutoCAD does. A
+given radius can usually touch two objects in more than one place — up to eight, once each curve
+can be hugged from either side — so the fillet nearest your two clicks wins: click the part of each
+circle you want it to land on. A circle is left whole rather than trimmed, again following AutoCAD,
+so only the other edge is cut back and the fillet bridges the gap; an arc is trimmed to the tangent
+point like any other edge. Filleting two circles therefore adds the arc and changes nothing else.
+
+The radius has to be large enough to span the gap: two circles 100 apart cannot be joined by
+anything under a radius of 50. Chamfer stays straight-only, which is also how AutoCAD behaves.
+
+The arc drawn is always the shorter way round between the two tangent points, which is the one
+wanted in ordinary use; a fillet that has to wrap more than half way around is not yet expressible.
 
 **Where you click on each edge decides which side survives**, so on two lines that cross you
 choose which of the four corners gets cut by picking the two arms that form it. The edges do not
@@ -196,6 +201,11 @@ for the same reason.
 
 Splines and ellipses are not supported by either command, and picking one says as much rather than
 guessing.
+
+Object snap is deliberately **off while these two commands pick edges**. A click here means "this
+edge, on this side" rather than a position, and letting it jump to the nearest vertex would destroy
+that: on a polygon, whose sides are short, both picks land on the shared corner and name the same
+edge, so a perfectly good corner gets refused. Snapping resumes as soon as the command ends.
 
 ### Object snap
 

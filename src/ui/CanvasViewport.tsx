@@ -331,7 +331,13 @@ export function CanvasViewport() {
     const raw = screenToWorld(screenPoint, camera)
     const basePoint = draftPoints.at(-1)
 
-    if (osnapEnabled) {
+    // FILLET and CHAMFER read a click as "this edge, on this side" rather than as a position, so
+    // pulling it onto a nearby vertex throws away the one thing being asked. On a polygon, whose
+    // sides are short, both picks would land on the shared corner and name the same edge, and the
+    // command would give up on a corner that is perfectly good.
+    const picksAnEdge = activeTool === 'fillet' || activeTool === 'chamfer'
+
+    if (osnapEnabled && !picksAnEdge) {
       const snap = findBestSnap(raw, visibleEntities, snapModes, 12 / camera.zoom, basePoint)
       if (snap) {
         return { point: snap.point, snap: snap.mode, tracking: null }
