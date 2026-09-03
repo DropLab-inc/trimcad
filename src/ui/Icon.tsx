@@ -25,6 +25,11 @@ export type IconName =
   | 'fillet'
   | 'chamfer'
   | 'mirror'
+  | 'circle-center-radius'
+  | 'circle-center-diameter'
+  | 'circle-2p'
+  | 'circle-3p'
+  | 'circle-ttr'
   | 'array-rect'
   | 'array-polar'
   | 'dim-linear'
@@ -97,6 +102,46 @@ const GLYPHS: Record<IconName, ReactElement> = {
     <g>
       <circle cx={12} cy={12} r={8} />
       <path className="accent" d="M12 9.5 L12 14.5 M9.5 12 L14.5 12" />
+    </g>
+  ),
+  // The circle constructions, each showing the points it asks you to pick.
+  'circle-center-radius': (
+    <g>
+      <circle cx={12} cy={12} r={8} />
+      <path className="accent" d="M12 12 L20 12" strokeDasharray="2 2" />
+      {grip(12, 12)}
+      {grip(20, 12)}
+    </g>
+  ),
+  'circle-center-diameter': (
+    <g>
+      <circle cx={12} cy={12} r={8} />
+      <path className="accent" d="M4 12 L20 12" strokeDasharray="2 2" />
+      {grip(12, 12)}
+      {grip(20, 12)}
+    </g>
+  ),
+  // No centre grip, since the two picks are the ends of the diameter themselves.
+  'circle-2p': (
+    <g>
+      <circle cx={12} cy={12} r={8} />
+      <path className="accent" d="M6.3 6.3 L17.7 17.7" strokeDasharray="2 2" />
+      {grip(6.3, 6.3)}
+      {grip(17.7, 17.7)}
+    </g>
+  ),
+  'circle-3p': (
+    <g>
+      <circle cx={12} cy={12} r={8} />
+      {grip(12, 4)}
+      {grip(5.1, 16)}
+      {grip(18.9, 16)}
+    </g>
+  ),
+  'circle-ttr': (
+    <g>
+      <path className="accent" d="M4 3 L4 21 M3 20 L21 20" />
+      <circle cx={10} cy={14} r={6} />
     </g>
   ),
   arc: (

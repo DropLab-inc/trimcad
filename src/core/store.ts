@@ -133,8 +133,6 @@ type CadState = {
   circleMode: CircleMode
   /** CIRCLE's Ttr option is waiting for its radius, after both tangent objects are picked. */
   circlePending: boolean
-  /** CIRCLE's Diameter option is on, so the size given after the centre is read across the circle. */
-  circleDiameter: boolean
   /** The two objects picked for a Ttr circle, with the point each was clicked at. */
   tangentPicks: { id: string; point: Vec2 }[]
   /** Whether ARRAY repeats the selection in a grid or around a centre. */
@@ -260,7 +258,6 @@ const clampDimScale = (scale: number): number =>
 const perCommandOptions = {
   circleMode: 'center' as CircleMode,
   circlePending: false,
-  circleDiameter: false,
   tangentPicks: [] as { id: string; point: Vec2 }[],
   arrayPending: null as ArrayOption | null,
 }
@@ -294,9 +291,8 @@ export const useCadStore = create<CadState>((set, get) => ({
   lwDisplay: false,
   polygonSides: 6,
   polygonFit: 'inscribed' as PolygonFit,
-  circleMode: 'center',
+  circleMode: 'center' as CircleMode,
   circlePending: false,
-  circleDiameter: false,
   tangentPicks: [],
   arrayType: 'rect' as ArrayType,
   arrayRows: 3,
@@ -367,8 +363,7 @@ export const useCadStore = create<CadState>((set, get) => ({
   setPolygonSides: (polygonSides) => set({ polygonSides: Math.max(3, Math.round(polygonSides)) }),
   setPolygonFit: (polygonFit) => set({ polygonFit }),
   // Half-collected picks belong to the old construction, so they go with it.
-  setCircleMode: (circleMode) =>
-    set({ circleMode, circlePending: false, circleDiameter: false, tangentPicks: [], draftPoints: [] }),
+  setCircleMode: (circleMode) => set({ circleMode, circlePending: false, tangentPicks: [], draftPoints: [] }),
   // Switching between a grid and a sweep abandons any base point picked for the other one.
   setArrayType: (arrayType) => set({ arrayType, draftPoints: [], arrayPending: null }),
   setArrayOption: (option, value) => {
@@ -954,11 +949,13 @@ const runCircle = (state: CadStoreState, point: Vec2, layerId: string): boolean 
     const picks = [...state.tangentPicks, { id: picked.id, point }]
     if (picks.length < 2) {
       useCadStore.setState({ tangentPicks: picks })
-      state.setStatusMessage('Select second object for the tangent circle:')
+      state.log('result', 'First tangent object selected.')
+      state.setStatusMessage('First tangent object selected. Pick the second.')
       return true
     }
     // Both objects are in hand, so the radius is all that is left to ask for.
     useCadStore.setState({ tangentPicks: picks, circlePending: true })
+    state.log('result', 'Second tangent object selected.')
     state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
     return true
   }
@@ -989,7 +986,7 @@ const runCircle = (state: CadStoreState, point: Vec2, layerId: string): boolean 
     return true
   }
   const reach = distanceBetween(draftPoints[0], point)
-  place({ center: draftPoints[0], radius: state.circleDiameter ? reach / 2 : reach }, '')
+  place({ center: draftPoints[0], radius: circleMode === 'diameter' ? reach / 2 : reach }, '')
   return true
 }
 
@@ -1427,14 +1424,12 @@ const runKeyword = (state: CadStoreState, keyword: Keyword) => {
       state.setCircleMode(keyword.key === '3P' ? '3p' : keyword.key === '2P' ? '2p' : 'ttr')
       state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
       return
-    case 'Diameter': {
-      // The centre is already down, so the number that follows is read across rather than out.
-      const centre = state.draftPoints[0]
-      if (!centre) return
-      useCadStore.setState({ circleDiameter: true })
-      state.log('prompt', 'Specify diameter of circle:')
+    case 'Diameter':
+      // Set directly rather than through setCircleMode, which would throw away the centre that has
+      // already been picked and send the command back to its first prompt.
+      useCadStore.setState({ circleMode: 'diameter' })
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
       return
-    }
     case 'Rectangular':
     case 'Polar':
       state.setArrayType(keyword.key === 'R' ? 'rect' : 'polar')

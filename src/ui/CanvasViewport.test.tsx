@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createCircle, createLine, createPolygon, createRect } from '../core/commands'
 import { useCadStore } from '../core/store'
@@ -171,6 +171,72 @@ describe('picking edges for FILLET', () => {
     fireEvent.mouseDown(container.querySelector('svg')!, { clientX: 296, clientY: 104, button: 0 })
 
     expect(useCadStore.getState().draftPoints[0]).toEqual({ x: 300, y: 100 })
+  })
+})
+
+describe('picking tangent objects for a Ttr circle', () => {
+  const click = (svg: Element, at: Vec2) => fireEvent.mouseDown(svg, { clientX: at.x, clientY: at.y, button: 0 })
+  /** The green used to mark an object as chosen. */
+  const chosen = (svg: Element) => svg.querySelectorAll('[stroke="#4ade80"]')
+
+  const armed = () => {
+    seed([
+      createLine(layerId(), { x: 50, y: 200 }, { x: 350, y: 200 }),
+      createLine(layerId(), { x: 50, y: 200 }, { x: 50, y: 400 }),
+    ])
+    useCadStore.getState().executeCommand('CIRCLE')
+    useCadStore.getState().setCircleMode('ttr')
+    const { container } = render(<CanvasViewport />)
+    return container.querySelector('svg')!
+  }
+
+  beforeEach(() => {
+    seed([])
+  })
+
+  it('marks nothing before anything has been picked', () => {
+    expect(chosen(armed())).toHaveLength(0)
+  })
+
+  it('picks out the first object once it is clicked, so the pick is visible', () => {
+    const svg = armed()
+    click(svg, { x: 200, y: 200 })
+
+    expect(useCadStore.getState().tangentPicks).toHaveLength(1)
+    expect(chosen(svg).length).toBeGreaterThan(0)
+    expect(useCadStore.getState().statusMessage).toMatch(/first tangent object selected/i)
+  })
+
+  it('picks out both objects while the radius is being typed', () => {
+    const svg = armed()
+    click(svg, { x: 200, y: 200 })
+    click(svg, { x: 50, y: 300 })
+
+    expect(useCadStore.getState().circlePending).toBe(true)
+    // Two objects in green, each with its own marker where it was clicked.
+    expect(chosen(svg).length).toBeGreaterThanOrEqual(2)
+    expect(svg.querySelectorAll('[fill="#4ade80"]')).toHaveLength(2)
+  })
+
+  it('drops the marks once the circle is drawn', () => {
+    const svg = armed()
+    click(svg, { x: 200, y: 200 })
+    click(svg, { x: 50, y: 300 })
+    // Typing the radius happens at the command line rather than on the canvas, so the resulting
+    // render has to be flushed by hand.
+    act(() => useCadStore.getState().executeCommand('40'))
+
+    expect(useCadStore.getState().tangentPicks).toHaveLength(0)
+    expect(chosen(svg)).toHaveLength(0)
+    expect(useCadStore.getState().doc.entities.filter((entity) => entity.type === 'circle')).toHaveLength(1)
+  })
+
+  it('leaves the marks alone for the constructions that place points instead', () => {
+    const svg = armed()
+    useCadStore.getState().setCircleMode('3p')
+    click(svg, { x: 200, y: 200 })
+
+    expect(chosen(svg)).toHaveLength(0)
   })
 })
 

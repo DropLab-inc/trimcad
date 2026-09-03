@@ -21,9 +21,9 @@ import { isTransformTool, transformedBy } from '../core/commands'
 import { editableEntities, lineweightPixels, visibleEntities as visibleOnLayers } from '../core/layers'
 import { getEntityAnchorPoints, isPointNearEntity, mirrorEntity } from '../core/geometry'
 import { canFillet, chamferCorner, filletCorner, hasStraightSegments, offsetEntity } from '../core/modify'
-import { circleOnDiameter, circleThroughPoints, cornerRadius, polygonOnEdge } from '../core/construct'
+import { canBeTangent, circleOnDiameter, circleThroughPoints, cornerRadius, polygonOnEdge } from '../core/construct'
 import { polarArrayCopies, rectangularArrayCopies } from '../core/array'
-import type { DimensionEntity, PolylineEntity, SnapMode } from '../core/types'
+import type { CadEntity, DimensionEntity, PolylineEntity, SnapMode } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
 import { COMMAND_INPUT_ID } from './CommandLine'
 import { HatchDefs } from './HatchDefs'
@@ -133,7 +133,7 @@ export function CanvasViewport() {
   const polygonSides = useCadStore((state) => state.polygonSides)
   const polygonFit = useCadStore((state) => state.polygonFit)
   const circleMode = useCadStore((state) => state.circleMode)
-  const circleDiameter = useCadStore((state) => state.circleDiameter)
+  const tangentPicks = useCadStore((state) => state.tangentPicks)
   const arrayType = useCadStore((state) => state.arrayType)
   const arrayRows = useCadStore((state) => state.arrayRows)
   const arrayColumns = useCadStore((state) => state.arrayColumns)
@@ -580,6 +580,49 @@ export function CanvasViewport() {
     )
   }, [activeTool, fenceEnd, fenceStart, swapped])
 
+  /**
+   * A Ttr circle is the one construction that picks objects rather than places points, so nothing
+   * appears on the drawing to show how far it has got. The objects already chosen are picked out in
+   * green with a marker where each was clicked, and the one under the crosshair is outlined so it is
+   * clear what the next click would take.
+   */
+  const tangentHighlight = useMemo(() => {
+    if (activeTool !== 'circle' || circleMode !== 'ttr') return null
+
+    const chosen = tangentPicks
+      .map((pick) => ({ pick, entity: doc.entities.find((entity) => entity.id === pick.id) }))
+      .filter((found): found is { pick: (typeof tangentPicks)[number]; entity: CadEntity } => Boolean(found.entity))
+    const takenIds = new Set(chosen.map((found) => found.entity.id))
+
+    const hovered =
+      cursorWorld && chosen.length < 2
+        ? [...editableEntities(doc)]
+            .reverse()
+            .find(
+              (entity) =>
+                !takenIds.has(entity.id) &&
+                canBeTangent(entity) &&
+                isPointNearEntity(cursorWorld, entity, 8 / camera.zoom),
+            )
+        : undefined
+
+    if (chosen.length === 0 && !hovered) return null
+
+    return (
+      <g>
+        {hovered && (
+          <g>{renderEntity(hovered, { selected: false, color: '#f59e0b', dash: '6 4', width: 3, dimStyle: doc.dimStyle })}</g>
+        )}
+        {chosen.map(({ pick, entity }) => (
+          <g key={entity.id}>
+            {renderEntity(entity, { selected: false, color: '#4ade80', width: 3, dimStyle: doc.dimStyle })}
+            <circle cx={pick.point.x} cy={pick.point.y} r={5 / camera.zoom} fill="#4ade80" />
+          </g>
+        ))}
+      </g>
+    )
+  }, [activeTool, camera.zoom, circleMode, cursorWorld, doc, tangentPicks])
+
   const modifyPreview = useMemo(() => {
     if (!cursorWorld) return null
     const ghost = { selected: false, color: '#f59e0b', dash: '6 4', dimStyle: doc.dimStyle }
@@ -764,7 +807,7 @@ export function CanvasViewport() {
               ? draftPoints.length >= 2
                 ? circleThroughPoints(first, draftPoints[1], cursorWorld)
                 : null
-              : { center: first, radius: circleDiameter ? radius / 2 : radius }
+              : { center: first, radius: circleMode === 'diameter' ? radius / 2 : radius }
         if (!shape) {
           return <line x1={last.x} y1={last.y} x2={cursorWorld.x} y2={cursorWorld.y} {...style} />
         }
@@ -858,7 +901,6 @@ export function CanvasViewport() {
     }
   }, [
     activeTool,
-    circleDiameter,
     circleMode,
     commandPoint,
     dimScale,
@@ -960,6 +1002,7 @@ export function CanvasViewport() {
 
           {grips}
           {trimExtendPreview}
+          {tangentHighlight}
           {modifyPreview}
           {preview}
         </g>

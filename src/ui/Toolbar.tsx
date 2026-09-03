@@ -26,6 +26,40 @@ const groups: ToolGroup[] = [
   },
 ]
 
+/** The ways CIRCLE can be pinned down, shown while the command is running. */
+const circleModes: Array<{ mode: CircleMode; label: string; icon: IconName; hint: string }> = [
+  {
+    mode: 'center',
+    label: 'Centre, radius',
+    icon: 'circle-center-radius',
+    hint: 'Pick the centre, then a point at the radius',
+  },
+  {
+    mode: 'diameter',
+    label: 'Centre, diameter',
+    icon: 'circle-center-diameter',
+    hint: 'Pick the centre, then give the size across the circle rather than out from the middle',
+  },
+  {
+    mode: '2p',
+    label: '2 point',
+    icon: 'circle-2p',
+    hint: 'Pick two points, taken as opposite ends of a diameter',
+  },
+  {
+    mode: '3p',
+    label: '3 point',
+    icon: 'circle-3p',
+    hint: 'Pick three points on the rim, which one circle passes through',
+  },
+  {
+    mode: 'ttr',
+    label: 'Tan, tan, radius',
+    icon: 'circle-ttr',
+    hint: 'Click two objects to sit tangent to, then give the radius',
+  },
+]
+
 const dimensionTypes: Array<{ value: DimensionType; label: string; icon: IconName; command: string }> = [
   { value: 'linear', label: 'Linear', icon: 'dim-linear', command: 'DIMLINEAR' },
   { value: 'aligned', label: 'Aligned', icon: 'dim-aligned', command: 'DIMALIGNED' },
@@ -191,27 +225,31 @@ export function Toolbar() {
                 <span>{item.label}</span>
               </button>
             ))}
-            {activeTool === 'circle' && (
-              <label className="ribbon-field" title="How the circle is pinned down">
-                Circle by
-                <select value={circleMode} onChange={(event) => setCircleMode(event.target.value as CircleMode)}>
-                  <option value="center">Centre, radius</option>
-                  <option value="2p">2 points</option>
-                  <option value="3p">3 points</option>
-                  <option value="ttr">Tangent, tangent, radius</option>
-                </select>
+            {activeTool === 'circle' &&
+              circleModes.map((item) => (
+                <button
+                  key={item.mode}
+                  type="button"
+                  className={`ribbon-btn ${circleMode === item.mode ? 'active' : ''}`}
+                  onClick={() => setCircleMode(item.mode)}
+                  title={`${item.label}\n${item.hint}`}
+                >
+                  <Icon name={item.icon} />
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            {activeTool === 'polygon' && (
+              <label className="ribbon-field" title="Number of polygon sides">
+                Sides
+                <input
+                  type="number"
+                  min={3}
+                  max={64}
+                  value={polygonSides}
+                  onChange={(event) => setPolygonSides(Number(event.target.value))}
+                />
               </label>
             )}
-            <label className="ribbon-field" title="Number of polygon sides">
-              Sides
-              <input
-                type="number"
-                min={3}
-                max={64}
-                value={polygonSides}
-                onChange={(event) => setPolygonSides(Number(event.target.value))}
-              />
-            </label>
             {activeTool === 'polygon' && (
               <label className="ribbon-field" title="Whether the corners or the flats sit on the radius you pick">
                 Fit

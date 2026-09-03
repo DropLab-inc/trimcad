@@ -92,13 +92,16 @@ forcing those onto an axis would flatten the shape to nothing.
 
 `CIRCLE` opens on a centre and a radius, and the options at that prompt pin the circle down other
 ways instead. `D` at the radius prompt reads the size across the circle rather than out from the
-middle, so a diameter taken off a drawing can be typed in as it was measured.
+middle, so a diameter taken off a drawing can be typed in as it was measured. While the command
+runs, the ribbon shows the same five constructions as buttons, each drawn with the points it asks
+you to pick.
 
 | Option | What it takes |
 | --- | --- |
 | `2P` | Two points, taken as opposite ends of a diameter |
 | `3P` | Three points on the rim, which one circle passes through |
 | `T` | Two objects to sit tangent to, then a radius |
+| `D` | The size across the circle instead of out from the centre |
 
 Three points in a straight line have no circle through them, and the command says so rather than
 drawing something arbitrary. `Ttr` picks lines, polylines, arcs and circles; several circles of the
@@ -106,6 +109,11 @@ same radius usually touch a given pair, so **where you click each object chooses
 clicking two lines near their crossing tucks the circle into that corner, and clicking the far
 sides puts it on the far side. A radius too small to reach both objects is refused. Each `CIRCLE`
 starts back at centre-and-radius, as AutoCAD's does.
+
+`Ttr` is the one construction that clicks objects rather than places points, so nothing would
+otherwise appear on the drawing to show how far it has got. The object under the crosshair is
+outlined in amber to show what the next click would take, and each object already chosen turns
+green with a marker where it was clicked, which stays put while you type the radius.
 
 `POLYGON` sizes its shape by a circle, and `I` and `C` decide which part of the polygon sits on
 that circle. **Inscribed** puts the corners on it, which is the default; **circumscribed** puts the

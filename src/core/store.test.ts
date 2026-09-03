@@ -179,6 +179,30 @@ describe('circle constructions', () => {
     expect(onlyCircle().radius).toBeCloseTo(10)
   })
 
+  it('keeps the centre already picked when Diameter is taken mid-command', () => {
+    useCadStore.getState().setTool('circle')
+    applyDrawTool({ x: 5, y: 5 })
+    useCadStore.getState().applyKeyword({ key: 'D', label: 'Diameter' })
+
+    // Switching the option must not send the command back to asking for a centre.
+    expect(useCadStore.getState().draftPoints).toHaveLength(1)
+    expect(useCadStore.getState().circleMode).toBe('diameter')
+
+    applyDrawTool({ x: 25, y: 5 })
+    expect(onlyCircle().center).toEqual({ x: 5, y: 5 })
+    expect(onlyCircle().radius).toBeCloseTo(10)
+  })
+
+  it('reads the size across the circle when diameter is chosen up front', () => {
+    useCadStore.getState().setTool('circle')
+    useCadStore.getState().setCircleMode('diameter')
+    applyDrawTool({ x: 0, y: 0 })
+    applyDrawTool({ x: 20, y: 0 })
+
+    expect(onlyCircle().center).toEqual({ x: 0, y: 0 })
+    expect(onlyCircle().radius).toBeCloseTo(10)
+  })
+
   it('sits a Ttr circle in the corner made by two picked lines', () => {
     useCadStore.getState().updateDocument((draft) => ({
       ...draft,

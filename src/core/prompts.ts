@@ -163,6 +163,8 @@ const promptsForTool = (ctx: PromptContext): Prompt[] => {
             entity('Specify point on object for first tangent'),
             entity('Specify point on object for second tangent'),
           ]
+        case 'diameter':
+          return [point('Specify centre point', ways), point('Specify diameter of circle')]
         default:
           return [point('Specify centre point', ways), point('Specify radius', [{ key: 'D', label: 'Diameter' }])]
       }

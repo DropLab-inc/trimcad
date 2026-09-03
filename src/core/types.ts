@@ -169,10 +169,10 @@ export type SnapMode =
   | 'node'
 
 /**
- * How CIRCLE is being pinned down: by a centre and radius, by two ends of a diameter, by three
- * points on the rim, or tangent to two objects at a given radius.
+ * How CIRCLE is being pinned down: by a centre and a radius or a diameter, by two ends of a
+ * diameter, by three points on the rim, or tangent to two objects at a given radius.
  */
-export type CircleMode = 'center' | '2p' | '3p' | 'ttr'
+export type CircleMode = 'center' | 'diameter' | '2p' | '3p' | 'ttr'
 
 /**
  * How a polygon is sized: by a circle its corners sit on, by one its sides sit against, or by

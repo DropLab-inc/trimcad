@@ -30,6 +30,38 @@ const context = (overrides: Partial<PromptContext> = {}): PromptContext => ({
   ...overrides,
 })
 
+describe('circle prompts', () => {
+  it('offers the other constructions at the centre prompt', () => {
+    const prompt = promptFor(context({ tool: 'circle', step: 0 }))
+    expect(prompt.text).toBe('Specify centre point')
+    expect(prompt.keywords.map((word) => word.key)).toEqual(['3P', '2P', 'T'])
+  })
+
+  it('offers Diameter only once the centre is down', () => {
+    expect(promptFor(context({ tool: 'circle', step: 1 })).keywords.map((word) => word.key)).toEqual(['D'])
+  })
+
+  it('asks for a diameter rather than a radius once that option is taken', () => {
+    const prompt = promptFor(context({ tool: 'circle', circleMode: 'diameter', step: 1 }))
+    expect(prompt.text).toBe('Specify diameter of circle')
+  })
+
+  it('asks for points on the rim in three point mode', () => {
+    expect(promptFor(context({ tool: 'circle', circleMode: '3p', step: 0 })).text).toBe('Specify first point on circle')
+    expect(promptFor(context({ tool: 'circle', circleMode: '3p', step: 2 })).text).toBe('Specify third point on circle')
+  })
+
+  it('asks for objects rather than points in tangent mode', () => {
+    expect(promptFor(context({ tool: 'circle', circleMode: 'ttr', step: 0 })).kind).toBe('entity')
+  })
+
+  it('asks for a typed radius once both tangent objects are picked', () => {
+    const prompt = promptFor(context({ tool: 'circle', circleMode: 'ttr', circlePending: true, step: 2 }))
+    expect(prompt.kind).toBe('number')
+    expect(prompt.text).toBe('Specify radius of circle')
+  })
+})
+
 describe('promptFor', () => {
   it('advances through a command as points are collected', () => {
     expect(promptFor(context({ tool: 'rect', step: 0 })).text).toBe('Specify first corner')
