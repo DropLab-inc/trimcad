@@ -64,6 +64,8 @@ export const COMMANDS: CommandDef[] = [
   { name: 'GROUP', aliases: ['G'], category: 'Modify', summary: 'Group the selection' },
   { name: 'UNGROUP', aliases: ['UNG'], category: 'Modify', summary: 'Break up the groups in the selection' },
   { name: 'INSERT', aliases: ['I'], category: 'Modify', summary: 'Place a block', tool: 'insert' },
+  { name: 'LAYMOV', aliases: ['MOVETOLAYER'], category: 'Modify', summary: 'Move the selection to a layer' },
+  { name: 'LAYCUR', aliases: ['LAYMCUR'], category: 'Modify', summary: "Make the selected object's layer current" },
 
   // Edit
   { name: 'SELECT', aliases: ['SE'], category: 'Edit', summary: 'Return to the selection tool', tool: 'select' },

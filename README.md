@@ -115,6 +115,23 @@ come back the next time the app is opened; **Restore defaults** puts them all ba
 Sizes are in screen pixels, so they hold their apparent size at any zoom. A value outside the
 range a setting allows is pulled back into it rather than rejected.
 
+### Layers
+
+The Layers panel on the right is the Layer Properties Manager: on/off, freeze, lock, plot, colour,
+rename, and which layer new objects land on. With a selection active you can also move objects
+between layers:
+
+| Where | What it does |
+| --- | --- |
+| Properties ▸ Layer | Dropdown that moves every selected object onto the chosen layer |
+| Layer row ▸ move icon | Puts the selection onto that row's layer |
+| Layer options ▾ | **Move selection to current layer**, or **Make object's layer current** |
+| `LAYMOV` / `MOVETOLAYER` | Moves the selection to the current layer, or `LAYMOV WALLS` to a named one |
+| `LAYCUR` / `LAYMCUR` | Makes the first selected object's layer the current one |
+
+Moving onto a locked or off layer still works, but those objects then drop out of the selection,
+since they can no longer be edited.
+
 ### Drawing circles and polygons
 
 `CIRCLE` opens on a centre and a radius, and the options at that prompt pin the circle down other
@@ -465,7 +482,7 @@ autocomplete list. Type `HELP` to print the whole table into the history panel.
 | --- | --- |
 | Draw | `LINE`/`L`, `PLINE`/`PL`, `RECTANG`/`REC`, `CIRCLE`/`C`, `ARC`/`A`, `ELLIPSE`/`EL`, `POLYGON`/`POL`, `SPLINE`/`SPL`, `HATCH`/`H` |
 | Annotate | `TEXT`/`DT`, `DIM`/`D`, `DIMLINEAR`/`DLI`, `DIMALIGNED`/`DAL`, `DIMRADIUS`/`DRA`, `DIMDIAMETER`/`DDI`, `DIMANGULAR`/`DAN`, `DIMSCALE`/`DSC` |
-| Modify | `MOVE`/`M`, `COPY`/`CO`, `ROTATE`/`RO`, `SCALE`/`SC`, `MIRROR`/`MI`, `ARRAY`/`AR`, `ARRAYRECT`, `ARRAYPOLAR`, `OFFSET`/`O`, `TRIM`/`TR`, `EXTEND`/`EX`, `FILLET`/`F`, `CHAMFER`/`CHA`, `ERASE`/`E`, `JOIN`/`J`, `GROUP`/`G`, `EXPLODE`/`X`, `INSERT`/`I` |
+| Modify | `MOVE`/`M`, `COPY`/`CO`, `ROTATE`/`RO`, `SCALE`/`SC`, `MIRROR`/`MI`, `ARRAY`/`AR`, `ARRAYRECT`, `ARRAYPOLAR`, `OFFSET`/`O`, `TRIM`/`TR`, `EXTEND`/`EX`, `FILLET`/`F`, `CHAMFER`/`CHA`, `ERASE`/`E`, `JOIN`/`J`, `GROUP`/`G`, `EXPLODE`/`X`, `OVERKILL`/`OV`, `BOUNDARY`/`BO`, `UNGROUP`/`UNG`, `INSERT`/`I`, `LAYMOV`/`MOVETOLAYER`, `LAYCUR`/`LAYMCUR` |
 | Edit | `SELECT`/`SE`, `ALL`, `UNDO`/`U`, `REDO`/`RE` |
 | View | `ZOOM`/`Z`, `OSNAP`/`OS`, `ORTHO`/`OR`, `POLAR`/`PO`, `HELP` |
 | File | `DXFIN`, `DXFOUT`, `PLOT`/`PRINT` (opens the Plot dialog), `PLOT1` (Plot preset to 1:1) |

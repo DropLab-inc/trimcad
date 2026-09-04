@@ -39,26 +39,36 @@ const TOGGLES: Toggle[] = [
 export function LayerPanel() {
   const doc = useCadStore((state) => state.doc)
   const activeLayerId = useCadStore((state) => state.activeLayerId)
+  const selectedIds = useCadStore((state) => state.selectedIds)
   const setActiveLayerId = useCadStore((state) => state.setActiveLayerId)
   const updateLayer = useCadStore((state) => state.updateLayer)
   const addLayer = useCadStore((state) => state.addLayer)
   const deleteLayer = useCadStore((state) => state.deleteLayer)
+  const moveSelectionToLayer = useCadStore((state) => state.moveSelectionToLayer)
+  const setActiveLayerFromSelection = useCadStore((state) => state.setActiveLayerFromSelection)
   const [editingColor, setEditingColor] = useState<string | null>(null)
+  const [optionsOpen, setOptionsOpen] = useState(false)
   const panelRef = useRef<HTMLElement | null>(null)
+  const optionsRef = useRef<HTMLDivElement | null>(null)
   const { height: listHeight, startResize: startResizeList } = usePanelHeight('layers', 140, 60, 480)
 
   /** Linetype and lineweight are shown for the current layer, as AutoCAD's layer controls do. */
   const current = doc.layers.find((layer) => layer.id === activeLayerId)
+  const hasSelection = selectedIds.length > 0
 
   // The palette stays open until it is dismissed, so a colour can be tried and changed again.
   useEffect(() => {
-    if (!editingColor) return
+    if (!editingColor && !optionsOpen) return
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node
-      if (!panelRef.current?.contains(target)) setEditingColor(null)
+      if (editingColor && !panelRef.current?.contains(target)) setEditingColor(null)
+      if (optionsOpen && !optionsRef.current?.contains(target)) setOptionsOpen(false)
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setEditingColor(null)
+      if (event.key === 'Escape') {
+        setEditingColor(null)
+        setOptionsOpen(false)
+      }
     }
     window.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('keydown', onKeyDown)
@@ -66,13 +76,53 @@ export function LayerPanel() {
       window.removeEventListener('pointerdown', onPointerDown)
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [editingColor])
+  }, [editingColor, optionsOpen])
 
   return (
     <section className="panel layer-panel" ref={panelRef}>
       <header className="panel-head">
         <h3>Layers</h3>
         <div className="panel-actions">
+          <div className="layer-options" ref={optionsRef}>
+            <button
+              type="button"
+              title="Layer options"
+              aria-label="Layer options"
+              aria-haspopup="menu"
+              aria-expanded={optionsOpen}
+              onClick={() => setOptionsOpen((open) => !open)}
+            >
+              ▾
+            </button>
+            {optionsOpen && (
+              <div className="layer-options-popup" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!hasSelection}
+                  onClick={() => {
+                    moveSelectionToLayer(activeLayerId)
+                    setOptionsOpen(false)
+                  }}
+                >
+                  <Icon name="layer-move" />
+                  Move selection to current layer
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!hasSelection}
+                  onClick={() => {
+                    setActiveLayerFromSelection()
+                    setOptionsOpen(false)
+                  }}
+                >
+                  <Icon name="layer-current" />
+                  Make object&apos;s layer current
+                </button>
+              </div>
+            )}
+          </div>
           <button type="button" title="New layer" aria-label="New layer" onClick={addLayer}>
             <Icon name="layer-add" />
           </button>
@@ -92,6 +142,9 @@ export function LayerPanel() {
         <span />
         <span />
         <span>Name</span>
+        <span className="layer-head-icon" title="Move the selection onto this layer">
+          <Icon name="layer-move" />
+        </span>
         {TOGGLES.map((toggle) => (
           <span key={toggle.field} className="layer-head-icon" title={toggle.titles[0]}>
             <Icon name={toggle.icons[0]} />
@@ -128,6 +181,21 @@ export function LayerPanel() {
               title={`${layer.name} — ${countEntitiesOnLayer(doc, layer.id)} object(s)`}
               onChange={(event) => updateLayer(layer.id, { name: event.target.value })}
             />
+
+            <button
+              type="button"
+              className="layer-toggle layer-move-here"
+              title={
+                hasSelection
+                  ? `Move selection to ${layer.name}`
+                  : 'Select objects first, then move them here'
+              }
+              aria-label={`Move selection to ${layer.name}`}
+              disabled={!hasSelection}
+              onClick={() => moveSelectionToLayer(layer.id)}
+            >
+              <Icon name="layer-move" />
+            </button>
 
             {TOGGLES.map((toggle) => {
               const on = layer[toggle.field]
@@ -168,7 +236,6 @@ export function LayerPanel() {
                 />
               </div>
             )}
-
           </li>
         ))}
       </ul>

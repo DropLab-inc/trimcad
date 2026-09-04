@@ -66,6 +66,8 @@ export type IconName =
   | 'plot-off'
   | 'layer-add'
   | 'layer-delete'
+  | 'layer-move'
+  | 'layer-current'
   | 'theme-dark'
   | 'theme-light'
   | 'join'
@@ -490,6 +492,22 @@ const GLYPHS: Record<IconName, ReactElement> = {
       <path d="M12 3 L21 8 L12 13 L3 8 Z" />
       <path d="M3 13 L12 18 L15 16.3" />
       <path className="accent" d="M16.4 15.9 L20.6 20.1 M20.6 15.9 L16.4 20.1" />
+    </g>
+  ),
+  // An arrow into the stack: the selection is being put onto that layer.
+  'layer-move': (
+    <g>
+      <path d="M11 3 L19 7.5 L11 12 L3 7.5 Z" />
+      <path d="M3 12 L11 16.5 L14 14.8" />
+      <path className="accent" d="M18 13 L18 21 M15.2 18.2 L18 21 L20.8 18.2" />
+    </g>
+  ),
+  // A check on the stack: this object's layer becomes the current one.
+  'layer-current': (
+    <g>
+      <path d="M12 3 L21 8 L12 13 L3 8 Z" />
+      <path d="M3 13 L12 18 L15 16.3" />
+      <path className="accent" d="M15.5 16.5 L17.8 18.8 L21.5 14.5" />
     </g>
   ),
   'theme-dark': (

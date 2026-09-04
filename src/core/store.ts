@@ -245,6 +245,10 @@ type CadState = {
   updateLayer: (id: string, patch: Partial<Layer>) => void
   /** Removes a layer and everything drawn on it. Layer 0 and the current layer stay. */
   deleteLayer: (id: string) => void
+  /** Puts every selected object onto the named layer. */
+  moveSelectionToLayer: (layerId: string) => boolean
+  /** Makes the current layer the one the first selected object sits on. */
+  setActiveLayerFromSelection: () => boolean
   /** Commits a grip drag: one object reshaped by one of its handles, as a single undo step. */
   stretchGrip: (entityId: string, grip: Grip, point: Vec2) => void
   /** Commits a drag of the whole selection, as a single undo step. */
@@ -717,6 +721,52 @@ export const useCadStore = create<CadState>((set, get) => ({
       entities: doc.entities.filter((entity) => entity.layerId !== id),
     }))
     state.setStatusMessage(`Deleted layer ${layer?.name}`)
+  },
+  moveSelectionToLayer: (layerId) => {
+    const state = get()
+    const layer = state.doc.layers.find((candidate) => candidate.id === layerId)
+    if (!layer) {
+      state.setStatusMessage('No such layer.')
+      return false
+    }
+    if (state.selectedIds.length === 0) {
+      state.setStatusMessage('Select objects to move to a layer.')
+      return false
+    }
+    const wanted = new Set(state.selectedIds)
+    const already = state.doc.entities.filter((entity) => wanted.has(entity.id) && entity.layerId === layerId).length
+    const moving = state.selectedIds.length - already
+    state.updateDocument((doc) => ({
+      ...doc,
+      entities: doc.entities.map((entity) => (wanted.has(entity.id) ? { ...entity, layerId } : entity)),
+    }))
+    // Objects that landed on a locked or off layer can no longer stay selected.
+    const stillEditable = editableEntities(get().doc).map((entity) => entity.id)
+    const kept = get().selectedIds.filter((selectedId) => stillEditable.includes(selectedId))
+    controller.select(kept)
+    set({
+      selectedIds: controller.getSelection(),
+      statusMessage:
+        moving === 0
+          ? `Already on layer ${layer.name}`
+          : `Moved ${describeCount(moving)} to layer ${layer.name}`,
+    })
+    return true
+  },
+  setActiveLayerFromSelection: () => {
+    const state = get()
+    const first = state.doc.entities.find((entity) => state.selectedIds.includes(entity.id))
+    if (!first) {
+      state.setStatusMessage('Select an object whose layer should become current.')
+      return false
+    }
+    const layer = layerOf(state.doc, first)
+    if (!layer) {
+      state.setStatusMessage('That object has no layer.')
+      return false
+    }
+    set({ activeLayerId: layer.id, statusMessage: `Current layer is now ${layer.name}` })
+    return true
   },
   stretchGrip: (entityId, grip, point) => {
     const state = get()
@@ -1524,6 +1574,34 @@ const runCommandDef = (state: CadStoreState, command: CommandDef, argument = '')
     case 'OVERKILL':
       runOverkill(state)
       return
+    case 'LAYMOV':
+    case 'MOVETOLAYER': {
+      if (state.selectedIds.length === 0) {
+        state.log('error', 'Select objects before moving them to a layer.')
+        return
+      }
+      const named = argument.trim()
+      const target = named
+        ? state.doc.layers.find((layer) => layer.name.toLowerCase() === named.toLowerCase())
+        : state.doc.layers.find((layer) => layer.id === state.activeLayerId)
+      if (!target) {
+        state.log('error', named ? `No layer named "${named}".` : 'No current layer.')
+        return
+      }
+      if (state.moveSelectionToLayer(target.id)) {
+        state.log('result', useCadStore.getState().statusMessage)
+      }
+      return
+    }
+    case 'LAYCUR':
+    case 'LAYMCUR': {
+      if (state.setActiveLayerFromSelection()) {
+        state.log('result', useCadStore.getState().statusMessage)
+      } else {
+        state.log('error', useCadStore.getState().statusMessage)
+      }
+      return
+    }
     case 'HELP':
       for (const entry of COMMANDS) {
         const aliases = entry.aliases.length > 0 ? ` (${entry.aliases.join(', ')})` : ''

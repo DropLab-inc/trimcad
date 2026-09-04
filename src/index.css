@@ -663,11 +663,18 @@ body.resizing-sidebar .sidebar-resizer {
 }
 
 .panel input[type='number'],
-.panel input[type='color'] {
+.panel input[type='color'],
+.panel select {
   background: var(--surface-1);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 0.25rem;
+}
+
+.panel select {
+  max-width: 11rem;
+  padding: 0.12rem 0.25rem;
+  font-size: 0.72rem;
 }
 
 /* ---- Layer properties manager ---- */
@@ -712,10 +719,57 @@ body.resizing-sidebar .sidebar-resizer {
   cursor: default;
 }
 
+.layer-options {
+  position: relative;
+}
+
+.layer-options-popup {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  right: 0;
+  z-index: 30;
+  min-width: 220px;
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  background: var(--surface-2);
+  box-shadow: 0 10px 24px var(--shadow-color);
+}
+
+.layer-options-popup button {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  height: auto;
+  padding: 0.35rem 0.45rem;
+  border: none;
+  border-radius: 0.2rem;
+  background: none;
+  color: var(--text);
+  font-size: 0.72rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.layer-options-popup button:hover:not(:disabled) {
+  background: var(--border-soft);
+}
+
+.layer-options-popup button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.layer-toggle.layer-move-here:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 .layer-head,
 .layer-row {
   display: grid;
-  grid-template-columns: 12px 16px minmax(0, 1fr) repeat(4, 20px);
+  grid-template-columns: 12px 16px minmax(0, 1fr) repeat(5, 20px);
   align-items: center;
   gap: 0.2rem;
 }

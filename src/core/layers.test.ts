@@ -186,3 +186,119 @@ describe('the layer manager', () => {
     confirm.mockRestore()
   })
 })
+
+describe('moving the selection onto a layer', () => {
+  const state = () => useCadStore.getState()
+
+  beforeEach(() => {
+    const store = useCadStore.getState()
+    store.setSelection([])
+    store.updateDocument(() => makeDefaultDocument())
+    store.setActiveLayerId(useCadStore.getState().doc.layers[0].id)
+  })
+
+  it('puts every selected object onto the chosen layer', () => {
+    state().addLayer()
+    const [home, walls] = state().doc.layers
+    const line = createLine(home.id, { x: 0, y: 0 }, { x: 10, y: 0 })
+    const circle = createCircle(home.id, { x: 5, y: 5 }, 2)
+    state().updateDocument((doc) => ({ ...doc, entities: [line, circle] }))
+    state().setSelection([line.id, circle.id])
+
+    expect(state().moveSelectionToLayer(walls.id)).toBe(true)
+    expect(state().doc.entities.every((entity) => entity.layerId === walls.id)).toBe(true)
+    expect(state().statusMessage).toMatch(/Moved 2 objects to layer/)
+  })
+
+  it('says so when the selection is already on that layer', () => {
+    const home = state().doc.layers[0]
+    const line = createLine(home.id, { x: 0, y: 0 }, { x: 10, y: 0 })
+    state().updateDocument((doc) => ({ ...doc, entities: [line] }))
+    state().setSelection([line.id])
+
+    expect(state().moveSelectionToLayer(home.id)).toBe(true)
+    expect(state().statusMessage).toMatch(/Already on layer/)
+  })
+
+  it('refuses when nothing is selected', () => {
+    state().addLayer()
+    expect(state().moveSelectionToLayer(state().doc.layers[1].id)).toBe(false)
+    expect(state().statusMessage).toMatch(/Select objects/)
+  })
+
+  it('drops the selection when the destination layer is locked', () => {
+    state().addLayer()
+    const [home, locked] = state().doc.layers
+    state().updateLayer(locked.id, { locked: true })
+    const line = createLine(home.id, { x: 0, y: 0 }, { x: 10, y: 0 })
+    state().updateDocument((doc) => ({ ...doc, entities: [line] }))
+    state().setSelection([line.id])
+
+    state().moveSelectionToLayer(locked.id)
+
+    expect(state().doc.entities[0].layerId).toBe(locked.id)
+    expect(state().selectedIds).toEqual([])
+  })
+
+  it('makes the first selected object\'s layer current', () => {
+    state().addLayer()
+    const walls = state().doc.layers[1]
+    const line = createLine(walls.id, { x: 0, y: 0 }, { x: 10, y: 0 })
+    state().updateDocument((doc) => ({ ...doc, entities: [line] }))
+    state().setSelection([line.id])
+    state().setActiveLayerId(state().doc.layers[0].id)
+
+    expect(state().setActiveLayerFromSelection()).toBe(true)
+    expect(state().activeLayerId).toBe(walls.id)
+  })
+})
+
+describe('LAYMOV and LAYCUR at the command line', () => {
+  const state = () => useCadStore.getState()
+
+  beforeEach(() => {
+    const store = useCadStore.getState()
+    store.setSelection([])
+    store.updateDocument(() => makeDefaultDocument())
+    store.setActiveLayerId(useCadStore.getState().doc.layers[0].id)
+  })
+
+  it('LAYMOV puts the selection on the current layer', () => {
+    state().addLayer()
+    const [home, walls] = state().doc.layers
+    const line = createLine(home.id, { x: 0, y: 0 }, { x: 5, y: 0 })
+    state().updateDocument((doc) => ({ ...doc, entities: [line] }))
+    state().setSelection([line.id])
+    state().setActiveLayerId(walls.id)
+
+    state().executeCommand('LAYMOV')
+
+    expect(state().doc.entities[0].layerId).toBe(walls.id)
+  })
+
+  it('LAYMOV accepts a layer name', () => {
+    state().addLayer()
+    const walls = state().doc.layers[1]
+    state().updateLayer(walls.id, { name: 'WALLS' })
+    const line = createLine(state().doc.layers[0].id, { x: 0, y: 0 }, { x: 5, y: 0 })
+    state().updateDocument((doc) => ({ ...doc, entities: [line] }))
+    state().setSelection([line.id])
+
+    state().executeCommand('LAYMOV WALLS')
+
+    expect(state().doc.entities[0].layerId).toBe(walls.id)
+  })
+
+  it('LAYCUR makes the object\'s layer current', () => {
+    state().addLayer()
+    const walls = state().doc.layers[1]
+    const line = createLine(walls.id, { x: 0, y: 0 }, { x: 5, y: 0 })
+    state().updateDocument((doc) => ({ ...doc, entities: [line] }))
+    state().setSelection([line.id])
+    state().setActiveLayerId(state().doc.layers[0].id)
+
+    state().executeCommand('LAYCUR')
+
+    expect(state().activeLayerId).toBe(walls.id)
+  })
+})

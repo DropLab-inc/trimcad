@@ -122,4 +122,43 @@ describe('the layer manager', () => {
 
     expect(screen.getByTitle('0 — 1 object(s)')).toBeInTheDocument()
   })
+
+  it('moves the selection onto a layer from the row button', () => {
+    state().addLayer()
+    const [home, walls] = layers()
+    const line = createLine(home.id, { x: 0, y: 0 }, { x: 8, y: 0 })
+    state().updateDocument((doc) => ({ ...doc, entities: [line] }))
+    state().setSelection([line.id])
+    render(<LayerPanel />)
+
+    fireEvent.click(screen.getByRole('button', { name: `Move selection to ${walls.name}` }))
+
+    expect(state().doc.entities[0].layerId).toBe(walls.id)
+  })
+
+  it('keeps the move-here buttons quiet until something is selected', () => {
+    state().addLayer()
+    render(<LayerPanel />)
+
+    expect(screen.getByRole('button', { name: 'Move selection to 0' })).toBeDisabled()
+  })
+
+  it('offers move-to-current and make-current from the options menu', () => {
+    state().addLayer()
+    const [home, walls] = layers()
+    const line = createLine(walls.id, { x: 0, y: 0 }, { x: 8, y: 0 })
+    state().updateDocument((doc) => ({ ...doc, entities: [line] }))
+    state().setSelection([line.id])
+    state().setActiveLayerId(home.id)
+    render(<LayerPanel />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Layer options' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Make object's layer current/ }))
+    expect(state().activeLayerId).toBe(walls.id)
+
+    state().setActiveLayerId(home.id)
+    fireEvent.click(screen.getByRole('button', { name: 'Layer options' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Move selection to current layer/ }))
+    expect(state().doc.entities[0].layerId).toBe(home.id)
+  })
 })
