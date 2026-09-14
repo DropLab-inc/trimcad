@@ -637,3 +637,16 @@ is what gives the repository GitHub's own Sponsor button.
 
 - DXF support is intentionally a subset for lightweight interoperability.
 - Hatch, spline, and some modify operations are pragmatic implementations aimed at speed and usability in v1.
+
+## Analytics
+
+The deployed site can count page views with **Cloudflare Web Analytics**: aggregate numbers, no
+cookies, no fingerprinting, no personal data, and nothing shared with third parties. That is the
+whole extent of it — no account, no profile, no cross-site tracking — which is the only kind of
+measurement that fits a tool that advertises having no login.
+
+It is off unless a beacon token is built in. `src/core/analytics.ts` reads
+`VITE_CLOUDFLARE_BEACON`, which lives in `.env` (it is public — the token ships in the page), and
+a host that looks like development (`localhost`, `127.0.0.1`, `*.local`) never reports even when
+a token is present. An empty token means the beacon is never added to the page.
+
