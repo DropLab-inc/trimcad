@@ -45,6 +45,10 @@ export function SupportView() {
             Sponsorship runs through GitHub, so the payment, the receipts and the cancellation all stay in an
             account you already have. One-off or monthly, any amount.
           </p>
+          <p className="support-cta-note">
+            <Icon name="star" />
+            <span>One-off amounts and monthly tiers both live on that page.</span>
+          </p>
           {live ? (
             <a className="site-primary" href={SITE.sponsorUrl} target="_blank" rel="noreferrer noopener">
               <Icon name="github" />

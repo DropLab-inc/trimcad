@@ -595,14 +595,15 @@ to the drawing with the drawing untouched.
   do it for them. Before the first labelled issue exists the page falls back to showing every open
   issue and says so.
 - **Support TrimCAD** explains what sponsorship pays for and links to GitHub Sponsors. The button
-  appears only when a build supplies a real profile:
+  appears only when a build supplies a published profile, which `.env` does:
 
-```bash
-VITE_SPONSOR_URL=https://github.com/sponsors/<handle> npm run build
+```
+VITE_SPONSOR_URL=https://github.com/sponsors/DropLab-inc
 ```
 
-Left unset, that page says sponsorship is not switched on rather than offering a dead link, and
-`github:` in `.github/FUNDING.yml` adds GitHub's own Sponsor button once the profile exists.
+Left unset, that page says sponsorship is not switched on rather than offering a dead link. Point it
+at a different profile and the whole page follows, including `github:` in `.github/FUNDING.yml`, which
+is what gives the repository GitHub's own Sponsor button.
 
 ## Notes
 

@@ -710,6 +710,20 @@
   background: linear-gradient(135deg, var(--surface-2), var(--accent-fill));
 }
 
+.support-cta-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.support-cta-note .icon {
+  flex: none;
+  color: var(--warn);
+}
+
 .support-dormant {
   padding: 0.9rem 1rem;
   border: 1px dashed var(--border-strong);
