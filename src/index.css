@@ -1493,12 +1493,6 @@ body.resizing-sidebar .sidebar-resizer {
     order: 4;
   }
 
-  /* Menus lose their comfortable desktop padding so six controls fit a phone. */
-  .file-menu-button {
-    padding: 0.35rem 0.45rem;
-    font-size: 0.76rem;
-  }
-
   /* A shorter word where the long one costs a control its place. */
   .menu-label-full {
     display: none;
@@ -1512,20 +1506,63 @@ body.resizing-sidebar .sidebar-resizer {
     font-size: 0.85rem;
   }
 
-  /* The asks keep their place and lose only their labels. */
-  .titlebar-cta {
-    min-width: 44px;
-    min-height: 44px;
+  /*
+   * One strip, one button shape. The menus, the two asks, the drawer toggle and
+   * the theme button all take the same height, radius, border and type size, so
+   * the row reads as a set. Mixed heights were the visible fault: a 44px icon box
+   * sitting beside a 26px word.
+   */
+  .titlebar .file-menu-button,
+  .titlebar .titlebar-cta,
+  .titlebar .panels-toggle,
+  .titlebar .theme-toggle {
+    display: inline-flex;
+    align-items: center;
     justify-content: center;
-    padding: 0.3rem 0.45rem;
+    gap: 0.35rem;
+    min-height: 40px;
+    padding: 0.3rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: 0.3rem;
+    background: var(--surface-2);
+    color: var(--text);
+    font-family: var(--font-display);
+    font-size: 0.76rem;
+    font-weight: 600;
+    white-space: nowrap;
   }
 
-  .titlebar-cta-label {
-    display: none;
+  .titlebar .file-menu-button:hover,
+  .titlebar .panels-toggle:hover,
+  .titlebar .theme-toggle:hover {
+    background: var(--surface-3);
+    border-color: var(--border-strong);
   }
 
-  .theme-toggle {
+  /* The accent fill has to be restated after the shared shape, or it loses. */
+  .titlebar .titlebar-cta.donate {
+    border-color: var(--accent-deep);
+    background: var(--accent-fill);
+    color: var(--accent-ink);
+  }
+
+  .titlebar .titlebar-cta.donate:hover {
+    border-color: var(--accent);
+    background: var(--accent-deep);
+    color: var(--on-accent);
+  }
+
+  .titlebar .theme-toggle {
+    min-width: 40px;
     margin-left: 0;
+    padding: 0.3rem;
+    color: var(--text-muted);
+  }
+
+  /* The quick-access box keeps its own grouping but matches the strip's height. */
+  .titlebar .quick-btn {
+    width: 32px;
+    min-height: 34px;
   }
 
   .file-name {
@@ -1598,26 +1635,10 @@ body.resizing-sidebar .sidebar-resizer {
     cursor: pointer;
   }
 
+  /* Shape comes from the shared strip rule above; this is only its own state. */
   .panels-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    min-width: 44px;
-    min-height: 44px;
-    justify-content: center;
-    padding: 0.35rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
-    background: var(--surface-2);
     color: var(--text-muted);
-    font: inherit;
-    font-size: 0.72rem;
     cursor: pointer;
-  }
-
-  /* The glyph carries it on a phone; the label stays for screen readers. */
-  .panels-toggle-label {
-    display: none;
   }
 
   .panels-toggle.active {
@@ -1670,6 +1691,25 @@ body.resizing-sidebar .sidebar-resizer {
   /* Menus hang off the title bar, which can reach the screen edge on a phone. */
   .file-menu-popup {
     max-width: calc(100vw - 1rem);
+  }
+}
+
+/*
+ * Portrait phones: the words go, and the two asks plus the drawer toggle become
+ * icon boxes of exactly the shape their neighbours already have. Below this
+ * width a fully labelled strip would wrap into three rows of title bar, and a
+ * row of words with three bare icons in it is the inconsistency worth avoiding.
+ */
+@media (max-width: 520px) {
+  .titlebar .titlebar-cta,
+  .titlebar .panels-toggle {
+    min-width: 40px;
+    padding: 0.3rem;
+  }
+
+  .titlebar-cta-label,
+  .panels-toggle-label {
+    display: none;
   }
 }
 
