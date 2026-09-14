@@ -194,6 +194,88 @@ body,
   stroke: var(--warn);
 }
 
+/*
+ * The two standing asks — ask for what is missing, and help pay for the hours —
+ * sit in the title bar with the weight of buttons, so they are visible without
+ * hunting through the Help menu. The support one carries the accent fill: one
+ * filled control in a strip of outlines is the loudest thing that still reads as
+ * a drafting tool rather than an advert.
+ */
+.titlebar-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.titlebar-cta:hover {
+  border-color: var(--accent);
+  background: var(--surface-3);
+  color: var(--text-bright);
+}
+
+.titlebar-cta.donate {
+  border-color: var(--accent-deep);
+  background: var(--accent-fill);
+  color: var(--accent-ink);
+}
+
+.titlebar-cta.donate:hover {
+  border-color: var(--accent);
+  background: var(--accent-deep);
+  color: var(--on-accent);
+}
+
+.site-band {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.9rem;
+  margin-top: 1.5rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 0.5rem;
+  background: linear-gradient(135deg, var(--surface-2), var(--accent-fill));
+}
+
+.site-band .icon {
+  color: var(--accent);
+}
+
+.site-band p {
+  flex: 1 1 22rem;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.site-band strong {
+  color: var(--text-bright);
+}
+
+.site-band-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* The long menu label is the real one; the short label is a phone-only stand-in. */
+.menu-label-short {
+  display: none;
+}
+
 .icon .accent[fill='currentColor'] {
   fill: var(--warn);
   stroke: none;
@@ -1378,10 +1460,50 @@ body.resizing-sidebar .sidebar-resizer {
     flex: none;
   }
 
-  /* File, Preferences, Help, theme and Panels first; the quick-access row (which
-     duplicates the File menu and the ribbon) scrolls in behind them. */
+  /* File, Preferences, the two asks and Panels hold the screen; Help, the theme
+     toggle and the quick-access row (which duplicates the File menu and the
+     ribbon) scroll in behind them. */
+  .titlebar .help-menu {
+    order: 2;
+  }
+
+  .titlebar .theme-toggle {
+    order: 3;
+  }
+
   .titlebar .quick-access {
-    order: 1;
+    order: 4;
+  }
+
+  /* Menus lose their comfortable desktop padding so six controls fit a phone. */
+  .file-menu-button {
+    padding: 0.35rem 0.45rem;
+    font-size: 0.76rem;
+  }
+
+  /* A shorter word where the long one costs a control its place. */
+  .menu-label-full {
+    display: none;
+  }
+
+  .menu-label-short {
+    display: inline;
+  }
+
+  .wordmark {
+    font-size: 0.85rem;
+  }
+
+  /* The asks keep their place and lose only their labels. */
+  .titlebar-cta {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding: 0.3rem 0.45rem;
+  }
+
+  .titlebar-cta-label {
+    display: none;
   }
 
   .theme-toggle {

@@ -360,6 +360,13 @@
   gap: 0.5rem;
 }
 
+/* The two calls to action on a reader page are the loudest controls there. */
+.site-hero-actions .site-primary,
+.site-hero-actions .site-secondary {
+  padding: 0.6rem 1rem;
+  font-size: 0.9rem;
+}
+
 .site-primary,
 .site-secondary {
   display: inline-flex;
@@ -725,6 +732,13 @@
 .support-dormant-note {
   color: var(--text-faint);
   font-size: 0.78rem;
+}
+
+.support-dormant-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.7rem 0;
 }
 
 .support-dormant code {

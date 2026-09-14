@@ -223,6 +223,23 @@ export function FeatureRequestsView() {
             ))}
           </ul>
         )}
+        <aside className="site-band">
+          <Icon name="heart" />
+          <p>
+            <strong>The list only moves as fast as the hours behind it.</strong> TrimCAD is free and MIT
+            licensed, with no paid tier — sponsorship pays for the hosting, the test machines and the time.
+          </p>
+          <div className="site-band-actions">
+            <a className="site-primary" href="#/support">
+              <Icon name="heart" />
+              <span>Support TrimCAD</span>
+            </a>
+            <a className="site-secondary" href={SITE.starsUrl} target="_blank" rel="noreferrer noopener">
+              <Icon name="star" />
+              <span>Star the repo</span>
+            </a>
+          </div>
+        </aside>
       </div>
 
       {composing && <RequestForm onClose={() => setComposing(false)} />}

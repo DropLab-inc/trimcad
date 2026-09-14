@@ -62,7 +62,7 @@ export function HelpMenu() {
   ]
 
   return (
-    <div className="file-menu" ref={menuRef}>
+    <div className="file-menu help-menu" ref={menuRef}>
       <button
         type="button"
         className={`file-menu-button ${open ? 'active' : ''}`}

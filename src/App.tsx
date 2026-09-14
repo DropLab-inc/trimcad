@@ -14,6 +14,7 @@ import { PropertiesPanel } from './ui/PropertiesPanel'
 import { QuickAccess } from './ui/QuickAccess'
 import { SnapPanel } from './ui/SnapPanel'
 import { StatusBar } from './ui/StatusBar'
+import { RequestsCta, SupportCta } from './ui/SupportCtas'
 import { SupportView } from './ui/SupportView'
 import { ThemeToggle } from './ui/ThemeToggle'
 import { Toolbar } from './ui/Toolbar'
@@ -68,6 +69,8 @@ function App() {
           </h1>
         <FileMenu />
         <PreferencesMenu />
+        <RequestsCta />
+        <SupportCta />
         <QuickAccess />
         <HelpMenu />
           <ThemeToggle />

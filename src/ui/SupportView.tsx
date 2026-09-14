@@ -57,6 +57,16 @@ export function SupportView() {
                 The project does not have a published GitHub Sponsors profile, so this button has nowhere honest
                 to point. Everything else on this page still helps today.
               </p>
+              <div className="support-dormant-actions">
+                <a className="site-primary" href={SITE.starsUrl} target="_blank" rel="noreferrer noopener">
+                  <Icon name="star" />
+                  <span>Star the repository</span>
+                </a>
+                <a className="site-secondary" href={SITE.repoUrl} target="_blank" rel="noreferrer noopener">
+                  <Icon name="github" />
+                  <span>Read the source</span>
+                </a>
+              </div>
               <p className="support-dormant-note">
                 Maintainers: publish the profile, then build with{' '}
                 <code>VITE_SPONSOR_URL=https://github.com/sponsors/&lt;handle&gt;</code> and this button goes live
