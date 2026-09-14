@@ -145,24 +145,23 @@ body,
   padding: 0 0.5rem 0 0.15rem;
 }
 
-.wordmark {
-  display: flex;
-  align-items: baseline;
-  gap: 0.12rem;
-}
-
 /*
- * Wordmark: Trim in ink, CAD in the accent colour.
+ * Brand: the logo's own drawing, cropped from the master asset by
+ * scripts/make-logo-derivatives.py with its corners already transparent. The
+ * lockup (drawing plus wordmark) is unreadable at this size, so the title bar
+ * shows the drawing alone.
  */
-.wordmark-mark {
-  color: var(--text-bright);
-  font-weight: 700;
-  letter-spacing: -0.02em;
+.brand {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0 0.35rem 0 0.15rem;
 }
 
-.wordmark-suffix {
-  color: var(--accent);
-  font-weight: 500;
+.brand-mark {
+  display: block;
+  width: 30px;
+  height: 30px;
 }
 
 .theme-toggle {
@@ -1541,8 +1540,9 @@ body.resizing-sidebar .sidebar-resizer {
     display: inline;
   }
 
-  .wordmark {
-    font-size: 0.85rem;
+  .brand-mark {
+    width: 26px;
+    height: 26px;
   }
 
   /*

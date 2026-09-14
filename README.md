@@ -537,11 +537,20 @@ to show on paper as black.
 
 ### The logo
 
-`public/trimcad-logo.png` is the master asset — a square mark with the wordmark, used for the
-social preview where a large image is the point. It is 1024px and a JPEG, so it is the wrong thing
-to send to a phone drawing a 76px logo; `public/trimcad-logo-180.png` is the small PNG the app and
-the home-screen icon actually use, and `scripts/make-logo-derivatives.py` regenerates it after any
-change to the master.
+`public/trimcad-logo.png` is the master asset and is never edited: a 1024px lockup — the drawing on
+top, "TrimCAD" underneath — drawn as a dark rounded square on white. `scripts/make-logo-derivatives.py`
+turns it into the sizes the app actually asks for, and re-measures nothing itself: `scripts/inspect-logo.py`
+prints the numbers (19px white margin, 18.8% corner radius, and the box holding the drawing alone) after
+the master changes.
+
+- **Lockup** (`trimcad-logo-180.png`) — the home-screen icon and the mark on the Support page, where
+  the wordmark is big enough to read. The master itself is the social preview.
+- **Drawing alone** (`trimcad-mark-64.png`, `favicon-16/32/48.png`, `favicon.ico`) — the title bar and
+  the browser tab. Below about 100px the lockup's wordmark is a smear and its drawing is half the size
+  it could be; a favicon is a picture of the mark, not of the name.
+
+Derived files have their corners made transparent to match the chip, and the master's JPEG is served
+with its true `image/jpeg` type rather than the `.png` name it was committed under.
 
 ## Build
 

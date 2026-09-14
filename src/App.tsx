@@ -67,9 +67,8 @@ function App() {
     <div className={`app-shell ${narrow ? 'is-narrow' : ''}`}>
       <header className="topbar">
         <div className="titlebar">
-          <h1 className="wordmark">
-            <span className="wordmark-mark">Trim</span>
-            <span className="wordmark-suffix">CAD</span>
+          <h1 className="brand">
+            <img className="brand-mark" src="/trimcad-mark-64.png" alt="TrimCAD" width={32} height={32} />
           </h1>
         <FileMenu />
         <PreferencesMenu />
