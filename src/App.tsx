@@ -19,6 +19,7 @@ import { SupportView } from './ui/SupportView'
 import { ThemeToggle } from './ui/ThemeToggle'
 import { Toolbar } from './ui/Toolbar'
 import { useGlobalShortcuts } from './ui/useGlobalShortcuts'
+import { useKeyboardInset } from './ui/useKeyboardInset'
 import { useRoute } from './ui/useHashRoute'
 import { NARROW_QUERY, useMediaQuery } from './ui/useMediaQuery'
 import { useSidebarWidth } from './ui/useSidebarWidth'
@@ -28,6 +29,9 @@ function App() {
   const { width: sidebarWidth, startResize } = useSidebarWidth()
   const route = useRoute()
   const narrow = useMediaQuery(NARROW_QUERY)
+  // Keeps the command bar clear of the on-screen keyboard where the browser
+  // overlays it rather than resizing the window (iOS).
+  useKeyboardInset(narrow)
   /*
    * On a phone the layer and snap panels are a drawer rather than a column, and
    * the drawing gets the whole width. The drawer remembers which page it was

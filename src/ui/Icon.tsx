@@ -93,6 +93,7 @@ export type IconName =
   | 'star'
   | 'thumb'
   | 'panels'
+  | 'keyboard'
 
 /** A small filled square, the way AutoCAD marks pick points and grips. */
 const grip = (x: number, y: number, key?: string) => (
@@ -709,6 +710,14 @@ const GLYPHS: Record<IconName, ReactElement> = {
       <rect x={3} y={5} width={18} height={14} rx={1.2} />
       <path className="accent" d="M15 5 L15 19" />
       <path className="accent" d="M17.5 9 L20 9 M17.5 12 L20 12 M17.5 15 L20 15" />
+    </g>
+  ),
+  // Keys and a space bar: the phone's route to typing a value while drawing.
+  keyboard: (
+    <g>
+      <rect x={2.5} y={6} width={19} height={12} rx={1.6} />
+      <path d="M5.6 9.6 L5.6 9.7 M8.4 9.6 L8.4 9.7 M11.2 9.6 L11.2 9.7 M14 9.6 L14 9.7 M16.8 9.6 L16.8 9.7" />
+      <path className="accent" d="M7.5 14.4 L16.5 14.4" />
     </g>
   ),
 }

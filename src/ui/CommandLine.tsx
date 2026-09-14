@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { matchCommands, type CommandDef } from '../core/commandRegistry'
 import { currentPrompt, useCadStore } from '../core/store'
 import { formatPrompt } from '../core/prompts'
+import { COMMAND_INPUT_ID, focusCommandInput } from './commandFocus'
+import { Icon } from './Icon'
 import { useFileActions } from './useFileActions'
 
 /** The canvas focuses the input by id so any keystroke can start a command. */
-export const COMMAND_INPUT_ID = 'cad-command-input'
+export { COMMAND_INPUT_ID, focusCommandInput }
 
 export function CommandLine() {
   const [highlight, setHighlight] = useState(0)
@@ -134,8 +136,27 @@ export function CommandLine() {
         ))}
       </div>
 
+      {/*
+        * On a desktop you type wherever the crosshair is and the value boxes on
+        * the canvas do the teaching. A phone has neither a cursor nor a keyboard
+        * until asked, so the three forms worth knowing are written down here.
+        */}
+      <p className="command-hint">
+        Type <b>10,20</b> for a point, <b>@50,0</b> to step from the last one, or <b>120&lt;45</b> for a
+        length and angle.
+      </p>
+
       <div className="command-entry">
-        <span className="command-prompt">
+        <span
+          className="command-prompt"
+          onPointerDown={(event) => {
+            // Tapping the prompt is the same as tapping the field: the phone has
+            // no keyboard to start typing into. Tapping an option still means the
+            // option, so those stop this themselves.
+            event.preventDefault()
+            focusCommandInput()
+          }}
+        >
           {prompt.text}
           {prompt.keywords.length > 0 && (
             <>
@@ -147,6 +168,7 @@ export function CommandLine() {
                     type="button"
                     className="prompt-option"
                     title={`Type ${keyword.key} or click`}
+                    onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => {
                       log('input', keyword.label)
                       applyKeyword(keyword)
@@ -173,6 +195,9 @@ export function CommandLine() {
             onKeyDown={handleKeyDown}
             placeholder="Type a command, or press Enter to repeat the last one"
             autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            enterKeyHint="enter"
             spellCheck={false}
           />
           {suggestions.length > 0 && (
@@ -197,6 +222,22 @@ export function CommandLine() {
             </ul>
           )}
         </div>
+        {/*
+          * The phone's keyboard only exists once something has focus. This raises
+          * it, on its own, without the user having to find the input.
+          */}
+        <button
+          type="button"
+          className="command-type"
+          aria-label="Type a value or a command"
+          title="Type a value or a command"
+          onPointerDown={(event) => {
+            event.preventDefault()
+            focusCommandInput()
+          }}
+        >
+          <Icon name="keyboard" />
+        </button>
       </div>
 
     </section>

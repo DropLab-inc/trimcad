@@ -34,7 +34,7 @@ import { polarArrayCopies, rectangularArrayCopies } from '../core/array'
 import { dragGrip, entityGrips, findGripAt, type Grip } from '../core/grips'
 import type { CadEntity, DimensionEntity, PolylineEntity, SnapMode } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
-import { COMMAND_INPUT_ID } from './CommandLine'
+import { COMMAND_INPUT_ID, focusCommandInput } from './commandFocus'
 import { renderDimension, renderEntity, splinePath } from './renderers'
 import { readableOnCanvas, useCanvasPalette } from './theme'
 
@@ -1392,6 +1392,17 @@ export function CanvasViewport() {
                     fill={palette.tooltipBackground}
                     stroke={isActive ? palette.typed : palette.hint}
                     strokeWidth={1}
+                    style={{ cursor: 'text' }}
+                    /*
+                     * On a phone these boxes are the only place that says what the
+                     * command is waiting for, so tapping one raises the keyboard
+                     * for that value rather than placing another point.
+                     */
+                    onPointerDown={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      focusCommandInput()
+                    }}
                   />
                   <text x={snapScreen.x + 21} y={top + 13} fill={palette.hint} fontSize={11}>
                     {field.label}

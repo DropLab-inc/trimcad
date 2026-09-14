@@ -29,6 +29,14 @@ export function SupportView() {
       <div className="site-body support-body">
         <header className="site-hero">
           <div>
+            <img
+              className="site-logo"
+              src="/trimcad-logo-180.png"
+              alt="TrimCAD"
+              width={76}
+              height={76}
+              decoding="async"
+            />
             <p className="docs-kicker">Support TrimCAD</p>
             <h1>Free, open, and paid for by people who find it useful</h1>
             <p className="site-lead">

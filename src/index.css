@@ -276,6 +276,45 @@ body,
   display: none;
 }
 
+/*
+ * The keyboard button. It only earns its place where there is no hardware
+ * keyboard to start typing on, so it stays hidden above the phone breakpoint.
+ */
+.command-type {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  min-height: 38px;
+  margin-left: 0.25rem;
+  padding: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.command-type:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-3);
+  color: var(--text-bright);
+}
+
+/* Written down only where the canvas cannot teach it: see CommandLine.tsx. */
+.command-hint {
+  display: none;
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.command-hint b {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
 .icon .accent[fill='currentColor'] {
   fill: var(--warn);
   stroke: none;
@@ -1651,6 +1690,32 @@ body.resizing-sidebar .sidebar-resizer {
   .command-line {
     gap: 0.25rem;
     padding: 0.35rem 0.5rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Tapping the prompt is the same as tapping the field: raise the keyboard. */
+  .command-prompt {
+    cursor: text;
+    padding: 0.4rem 0;
+  }
+
+  .command-type {
+    display: inline-flex;
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .command-hint {
+    display: block;
+  }
+
+  /*
+   * Where the browser overlays the keyboard instead of resizing the window
+   * (iOS), the shell gives back exactly the covered strip so the prompt and the
+   * input stay visible above it. Android is told to resize instead, in the
+   * viewport meta, and nothing here is needed.
+   */
+  .app-shell {
+    padding-bottom: var(--keyboard-inset, 0px);
   }
 
   .command-history {

@@ -109,4 +109,47 @@ describe('the command line', () => {
 
     expect(screen.getByText('Command: LINE')).toBeInTheDocument()
   })
+
+  /*
+   * A phone has no keyboard until something has focus, so typing a length or a
+   * coordinate while drawing depends entirely on these two ways in.
+   */
+  describe('typing on a touch screen', () => {
+    it('raises the keyboard from the button beside the field', () => {
+      render(<CommandLine />)
+      const input = screen.getByRole('textbox')
+      input.blur()
+      expect(document.activeElement).not.toBe(input)
+
+      fireEvent.pointerDown(screen.getByRole('button', { name: /type a value/i }))
+      expect(document.activeElement).toBe(input)
+    })
+
+    it('treats a tap on the prompt as a tap on the field', () => {
+      run('LINE')
+      render(<CommandLine />)
+      const input = screen.getByRole('textbox')
+      input.blur()
+
+      const prompt = document.querySelector('.command-prompt')
+      expect(prompt?.textContent).toMatch(/Specify first point/)
+      fireEvent.pointerDown(prompt as HTMLElement)
+      expect(document.activeElement).toBe(input)
+    })
+
+    it('does not steal a tap meant for one of the prompt options', () => {
+      // TRIM asks for the cutting edges in its first prompt, so it offers options straight away.
+      run('TRIM')
+      render(<CommandLine />)
+      const input = screen.getByRole('textbox')
+      input.blur()
+      const option = screen.getByRole('button', { name: 'Undo' })
+
+      fireEvent.pointerDown(option)
+      fireEvent.click(option)
+
+      // The keyword ran; the caret did not jump into the field as a side effect.
+      expect(document.activeElement).not.toBe(input)
+    })
+  })
 })

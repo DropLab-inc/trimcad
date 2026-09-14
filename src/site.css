@@ -347,6 +347,16 @@
   color: var(--text-bright);
 }
 
+/* The project's own mark, at the one size where its wordmark is legible. */
+.site-logo {
+  display: block;
+  width: 76px;
+  height: 76px;
+  margin-bottom: 0.9rem;
+  border-radius: 0.7rem;
+  box-shadow: 0 6px 18px var(--shadow-color);
+}
+
 .site-lead {
   max-width: 62ch;
   margin: 0;

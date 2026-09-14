@@ -535,6 +535,14 @@ theme-specific in the file. Only plain white and plain black flip like this; eve
 colour is drawn exactly as specified. Printing applies the same idea, plotting anything too light
 to show on paper as black.
 
+### The logo
+
+`public/trimcad-logo.png` is the master asset — a square mark with the wordmark, used for the
+social preview where a large image is the point. It is 1024px and a JPEG, so it is the wrong thing
+to send to a phone drawing a 76px logo; `public/trimcad-logo-180.png` is the small PNG the app and
+the home-screen icon actually use, and `scripts/make-logo-derivatives.py` regenerates it after any
+change to the master.
+
 ## Build
 
 ```bash
