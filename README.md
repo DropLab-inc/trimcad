@@ -5,7 +5,8 @@ Lightweight browser-based 2D drafting software inspired by AutoCAD workflows.
 ## Implemented v1 scope
 
 - Draw: line, polyline, rectangle, circle (centre, 2P, 3P, tangent-tangent-radius), arc, ellipse,
-  polygon (inscribed, circumscribed, by edge), spline, hatch, text, - Modify: move, copy, rotate, scale, mirror, offset, delete, fillet, chamfer, join, explode,
+  polygon (inscribed, circumscribed, by edge), spline, hatch, text
+- Modify: move, copy, rotate, scale, mirror, offset, delete, fillet, chamfer, join, explode,
   overkill, boundary, rectangular/polar array
 - Drafting aids: OSNAP, polar tracking, grips for reshaping by hand, command line aliases,
   crosshair viewport, pan/zoom
