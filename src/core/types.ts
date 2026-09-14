@@ -80,13 +80,16 @@ export type SplineEntity = BaseEntity & {
   controlPoints: Vec2[]
 }
 
-export type HatchPattern = 'solid' | 'ansi31' | 'ansi37' | 'dots'
+export type HatchPattern = 'solid' | 'ansi31' | 'ansi37' | 'dots' | 'net' | 'line'
 
 export type HatchEntity = BaseEntity & {
   type: 'hatch'
   boundary: Vec2[]
   pattern: HatchPattern
+  /** Spacing multiplier for the pattern. Solid ignores it. */
   scale: number
+  /** Extra rotation of the pattern in degrees. Solid ignores it. */
+  angle: number
 }
 
 export type TextEntity = BaseEntity & {
@@ -173,6 +176,18 @@ export type SnapMode =
  * diameter, by three points on the rim, or tangent to two objects at a given radius.
  */
 export type CircleMode = 'center' | 'diameter' | '2p' | '3p' | 'ttr'
+
+/**
+ * How ARC is pinned down: by a centre then its ends, by three points on the curve, by a start
+ * then the centre then the end, or by a start, the centre, and an included angle.
+ */
+export type ArcMode = 'cse' | '3p' | 'sce' | 'sca'
+
+/**
+ * How RECTANG is pinned down: by two opposite corners, by its centre and a corner, or by a
+ * corner plus typed length and width.
+ */
+export type RectMode = 'corners' | 'center' | 'dimensions'
 
 /**
  * How a polygon is sized: by a circle its corners sit on, by one its sides sit against, or by

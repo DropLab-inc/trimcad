@@ -19,7 +19,7 @@ const withEntities = (build: (layerId: string) => CadEntity[]): DrawingDocument 
  */
 const asAnotherProgramSeesIt = (doc: DrawingDocument): DrawingDocument => {
   const dxf = exportDocumentToDxf(doc)
-  const withoutEmbedded = dxf.slice(dxf.indexOf('\n', dxf.indexOf('DROPLABCAD-DOCUMENT:')) + 1)
+  const withoutEmbedded = dxf.slice(dxf.indexOf('\n', dxf.indexOf('TRIMCAD-DOCUMENT:')) + 1)
   return importDocumentFromDxf(withoutEmbedded, makeDefaultDocument())
 }
 
@@ -89,7 +89,7 @@ describe('saving a drawing as DXF', () => {
     const doc = withEntities((layerId) => [
       { id: 's', type: 'spline', layerId, controlPoints: [{ x: 0, y: 0 }, { x: 3, y: 9 }, { x: 6, y: 0 }, { x: 9, y: 9 }] },
       { id: 'e', type: 'ellipse', layerId, center: { x: 1, y: 2 }, rx: 9, ry: 4, rotation: 0.3 },
-      { id: 'h', type: 'hatch', layerId, pattern: 'ansi31', scale: 1, boundary: [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 8 }] },
+      { id: 'h', type: 'hatch', layerId, pattern: 'ansi31', scale: 1, angle: 0, boundary: [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 8 }] },
     ])
 
     const reopened = roundTrip(doc)
@@ -103,7 +103,7 @@ describe('saving a drawing as DXF', () => {
   it('still prefers the DXF when another program has changed the geometry', () => {
     const doc = withEntities((layerId) => [
       createCircle(layerId, { x: 3, y: 3 }, 2),
-      { id: 'h', type: 'hatch', layerId, pattern: 'ansi31', scale: 1, boundary: [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 8 }] },
+      { id: 'h', type: 'hatch', layerId, pattern: 'ansi31', scale: 1, angle: 0, boundary: [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 8 }] },
     ])
     // An outside edit: the circle grows, which no longer matches the embedded copy.
     const edited = exportDocumentToDxf(doc).replace('\n40\n2\n', '\n40\n7\n')
@@ -193,7 +193,7 @@ describe('what DXF cannot carry', () => {
   it('counts the hatches and dimensions that would be dropped', () => {
     const doc = withEntities((layerId) => [
       createLine(layerId, { x: 0, y: 0 }, { x: 1, y: 1 }),
-      { id: 'h', type: 'hatch', layerId, boundary: [{ x: 0, y: 0 }], pattern: 'ansi31', scale: 1 },
+      { id: 'h', type: 'hatch', layerId, boundary: [{ x: 0, y: 0 }], pattern: 'ansi31', scale: 1, angle: 0 },
       { id: 'd', type: 'dimension', layerId, dimType: 'linear', p1: { x: 0, y: 0 }, p2: { x: 5, y: 0 } },
     ])
 

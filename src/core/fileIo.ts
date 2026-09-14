@@ -8,11 +8,13 @@ export const DRAWING_MIME = 'application/dxf'
 
 /** The JSON format drawings used before DXF took over; still readable when opening a file. */
 export const LEGACY_EXTENSION = '.dlc'
-export const DRAWING_FORMAT = 'droplabcad-drawing'
+export const DRAWING_FORMAT = 'trimcad-drawing'
+/** Earlier JSON drawings from before the TrimCAD rename; still accepted when opening a file. */
+const LEGACY_DRAWING_FORMATS = new Set([DRAWING_FORMAT, 'droplabcad-drawing'])
 export const DRAWING_VERSION = 1
 
 export type DrawingFile = {
-  format: typeof DRAWING_FORMAT
+  format: string
   version: number
   savedAt: string
   document: DrawingDocument
@@ -34,16 +36,17 @@ export const parseDrawing = (text: string): DrawingDocument => {
   try {
     parsed = JSON.parse(text)
   } catch {
-    throw new Error('That file is not a DropLabCad drawing.')
+    throw new Error('That file is not a TrimCAD drawing.')
   }
 
   if (!parsed || typeof parsed !== 'object') {
-    throw new Error('That file is not a DropLabCad drawing.')
+    throw new Error('That file is not a TrimCAD drawing.')
   }
 
   const wrapper = parsed as Partial<DrawingFile>
   // Files written before the wrapper existed were the bare document.
-  const document = (wrapper.format === DRAWING_FORMAT ? wrapper.document : parsed) as Partial<DrawingDocument>
+  const wrapped = typeof wrapper.format === 'string' && LEGACY_DRAWING_FORMATS.has(wrapper.format)
+  const document = (wrapped ? wrapper.document : parsed) as Partial<DrawingDocument>
 
   if (!document || !Array.isArray(document.entities) || !Array.isArray(document.layers)) {
     throw new Error('That drawing file is missing its layers or entities.')

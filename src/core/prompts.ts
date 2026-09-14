@@ -1,7 +1,10 @@
-import type { ArrayType, CircleMode, DimensionType, PolygonFit, ToolMode } from './types'
+import type { ArcMode, ArrayType, CircleMode, DimensionType, HatchPattern, PolygonFit, RectMode, ToolMode } from './types'
 
 /** One of ARRAY's counts or angles, named so a typed number knows where to land. */
 export type ArrayOption = 'rows' | 'columns' | 'rowSpacing' | 'columnSpacing' | 'count' | 'fillAngle'
+
+/** Which size RECTANG is waiting to type once Dimensions or Rotation has been taken. */
+export type RectPending = 'length' | 'width' | 'rotation'
 
 /**
  * Prompts shown at the command line and under the crosshair.
@@ -54,6 +57,20 @@ export type PromptContext = {
   circleMode: CircleMode
   /** A Ttr circle has both its objects and is waiting for the radius. */
   circlePending: boolean
+  /** Which of ARC's constructions is running. */
+  arcMode: ArcMode
+  /** Start-centre-angle is waiting for the included angle. */
+  arcPending: boolean
+  /** Which of RECTANG's constructions is running. */
+  rectMode: RectMode
+  /** RECTANG is waiting for a typed length, width, or rotation. */
+  rectPending: RectPending | null
+  /** Which hatch pattern the next pick will use. */
+  hatchPattern: HatchPattern
+  hatchScale: number
+  hatchAngle: number
+  /** HATCH is waiting for a typed scale or angle. */
+  hatchPending: 'scale' | 'angle' | null
   arrayType: ArrayType
   arrayRows: number
   arrayColumns: number
@@ -142,8 +159,36 @@ const promptsForTool = (ctx: PromptContext): Prompt[] => {
       return [point('Specify first point'), point('Specify next point', CLOSE_UNDO)]
     case 'polyline':
       return [point('Specify start point'), point('Specify next point', CLOSE_UNDO)]
-    case 'rect':
-      return [point('Specify first corner'), point('Specify other corner')]
+    case 'rect': {
+      if (ctx.rectPending === 'rotation') {
+        return [{ ...point('Specify rotation angle'), kind: 'number' }]
+      }
+      if (ctx.rectPending === 'length') {
+        return [{ ...point('Specify length for rectangle'), kind: 'number' }]
+      }
+      if (ctx.rectPending === 'width') {
+        return [{ ...point('Specify width for rectangle'), kind: 'number' }]
+      }
+      const cornerWays: Keyword[] = [
+        { key: 'C', label: 'Center' },
+        { key: 'D', label: 'Dimensions' },
+      ]
+      const afterFirst: Keyword[] = [
+        { key: 'R', label: 'Rotation' },
+        { key: 'D', label: 'Dimensions' },
+      ]
+      switch (ctx.rectMode) {
+        case 'center':
+          return [
+            point('Specify centre point of rectangle', [{ key: 'D', label: 'Dimensions' }]),
+            point('Specify corner point of rectangle', [{ key: 'R', label: 'Rotation' }]),
+          ]
+        case 'dimensions':
+          return [point('Specify first corner', [{ key: 'C', label: 'Center' }, { key: 'R', label: 'Rotation' }])]
+        default:
+          return [point('Specify first corner', cornerWays), point('Specify other corner', afterFirst)]
+      }
+    }
     case 'circle': {
       const ways: Keyword[] = [
         { key: '3P', label: '3 Point' },
@@ -173,8 +218,42 @@ const promptsForTool = (ctx: PromptContext): Prompt[] => {
           return [point('Specify centre point', ways), point('Specify radius', [{ key: 'D', label: 'Diameter' }])]
       }
     }
-    case 'arc':
-      return [point('Specify centre point'), point('Specify start point'), point('Specify end point')]
+    case 'arc': {
+      if (ctx.arcPending) {
+        return [{ ...point('Specify included angle'), kind: 'number' }]
+      }
+      const ways: Keyword[] = [
+        { key: '3P', label: '3 Point' },
+        { key: 'S', label: 'Start' },
+        { key: 'A', label: 'Angle' },
+      ]
+      switch (ctx.arcMode) {
+        case '3p':
+          return [
+            point('Specify first point on arc'),
+            point('Specify second point on arc'),
+            point('Specify end point of arc'),
+          ]
+        case 'sce':
+          return [
+            point('Specify start point of arc'),
+            point('Specify centre point of arc'),
+            point('Specify end point of arc'),
+          ]
+        case 'sca':
+          return [
+            point('Specify start point of arc'),
+            point('Specify centre point of arc'),
+            point('Specify end point of arc'),
+          ]
+        default:
+          return [
+            point('Specify centre point of arc', ways),
+            point('Specify start point of arc'),
+            point('Specify end point of arc'),
+          ]
+      }
+    }
     case 'ellipse':
       return [point('Specify centre point'), point('Specify axis endpoint')]
     case 'array': {
@@ -235,8 +314,24 @@ const promptsForTool = (ctx: PromptContext): Prompt[] => {
       return [point('Specify first point'), point('Specify next point (Enter to finish)')]
     case 'text':
       return [point('Specify text insertion point')]
-    case 'hatch':
-      return [point('Pick an internal point of a closed area')]
+    case 'hatch': {
+      if (ctx.hatchPending === 'scale') {
+        return [{ ...point('Specify hatch scale'), kind: 'number', defaultValue: String(ctx.hatchScale) }]
+      }
+      if (ctx.hatchPending === 'angle') {
+        return [{ ...point('Specify hatch angle'), kind: 'number', defaultValue: String(ctx.hatchAngle) }]
+      }
+      return [
+        {
+          ...point('Pick an internal point of a closed area', [
+            { key: 'P', label: 'Pattern' },
+            { key: 'S', label: 'Scale' },
+            { key: 'A', label: 'Angle' },
+          ]),
+          defaultValue: `${ctx.hatchPattern} @ ${ctx.hatchScale}, ${ctx.hatchAngle}\u00b0`,
+        },
+      ]
+    }
     case 'boundary':
       return [point('Pick an internal point to trace')]
     case 'insert':

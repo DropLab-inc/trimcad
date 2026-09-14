@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  arcFromCenterStartEnd,
+  arcFromStartCenterAngle,
+  arcThroughPoints,
   circleOnDiameter,
   circleTangentToTwo,
   circleThroughPoints,
   cornerRadius,
   polygonOnEdge,
+  rectFromCenter,
+  rectFromCorners,
+  rectFromDimensions,
 } from './construct'
 import { distance, type Vec2 } from './math/vec2'
 import type { CadEntity, PolylineEntity } from './types'
@@ -236,5 +242,84 @@ describe('polygonOnEdge', () => {
 
   it('refuses an edge with no length', () => {
     expect(polygonOnEdge('0', { x: 1, y: 1 }, { x: 1, y: 1 }, 5)).toBeNull()
+  })
+})
+
+describe('arcThroughPoints', () => {
+  it('sweeps through the middle point on the way from the first to the last', () => {
+    const shape = arcThroughPoints({ x: 10, y: 0 }, { x: 0, y: 10 }, { x: -10, y: 0 })!
+    expect(shape.center.x).toBeCloseTo(0)
+    expect(shape.center.y).toBeCloseTo(0)
+    expect(shape.radius).toBeCloseTo(10)
+    expect(shape.startAngle).toBeCloseTo(0)
+    expect(shape.endAngle).toBeCloseTo(Math.PI)
+  })
+
+  it('refuses three points in a straight line', () => {
+    expect(arcThroughPoints({ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 10, y: 0 })).toBeNull()
+  })
+})
+
+describe('arcFromStartCenterAngle', () => {
+  it('sweeps the included angle from the start ray', () => {
+    const shape = arcFromStartCenterAngle({ x: 10, y: 0 }, { x: 0, y: 0 }, 90)!
+    expect(shape.radius).toBeCloseTo(10)
+    expect(shape.startAngle).toBeCloseTo(0)
+    expect(shape.endAngle).toBeCloseTo(Math.PI / 2)
+  })
+
+  it('refuses a zero angle', () => {
+    expect(arcFromStartCenterAngle({ x: 10, y: 0 }, { x: 0, y: 0 }, 0)).toBeNull()
+  })
+})
+
+describe('arcFromCenterStartEnd', () => {
+  it('keeps the radius of the start point even when the end is farther out', () => {
+    const shape = arcFromCenterStartEnd({ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 0, y: 20 })!
+    expect(shape.radius).toBeCloseTo(5)
+    expect(shape.endAngle).toBeCloseTo(Math.PI / 2)
+  })
+})
+
+describe('rectFromCorners', () => {
+  it('builds an axis-aligned rectangle from opposite corners', () => {
+    expect(rectFromCorners({ x: 0, y: 0 }, { x: 10, y: 6 })).toEqual([
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 6 },
+      { x: 0, y: 6 },
+    ])
+  })
+
+  it('reads the second corner in rotated axes when a rotation is given', () => {
+    // At 90°, the local x-axis points up the world y-axis, so a local (10, 6) corner lands at (-6, 10).
+    const points = rectFromCorners({ x: 0, y: 0 }, { x: -6, y: 10 }, Math.PI / 2)
+    expect(points[1].x).toBeCloseTo(0)
+    expect(points[1].y).toBeCloseTo(10)
+    expect(points[2].x).toBeCloseTo(-6)
+    expect(points[2].y).toBeCloseTo(10)
+  })
+})
+
+describe('rectFromCenter', () => {
+  it('puts the centre midway between opposite corners', () => {
+    const points = rectFromCenter({ x: 5, y: 5 }, { x: 10, y: 8 })
+    expect(points[0]).toEqual({ x: 0, y: 2 })
+    expect(points[2]).toEqual({ x: 10, y: 8 })
+  })
+})
+
+describe('rectFromDimensions', () => {
+  it('builds a rectangle of the given length and width', () => {
+    expect(rectFromDimensions({ x: 0, y: 0 }, 10, 4)).toEqual([
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 4 },
+      { x: 0, y: 4 },
+    ])
+  })
+
+  it('refuses a zero side', () => {
+    expect(rectFromDimensions({ x: 0, y: 0 }, 10, 0)).toBeNull()
   })
 })

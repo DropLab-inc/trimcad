@@ -174,3 +174,35 @@ describe('store selection actions', () => {
     expect(useCadStore.getState().selectedIds).toEqual([second.id])
   })
 })
+
+describe('hatch selection', () => {
+  const hatch = {
+    id: 'h',
+    type: 'hatch' as const,
+    layerId: 'L',
+    pattern: 'ansi31' as const,
+    scale: 1,
+    angle: 0,
+    boundary: [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+    ],
+  }
+
+  it('is caught by a crossing window that sits entirely inside the fill', () => {
+    const inside = rectFromPoints({ x: 40, y: 40 }, { x: 60, y: 60 })
+    expect(entityTouchesRect(hatch, inside)).toBe(true)
+  })
+
+  it('is caught by a crossing window that cuts an edge', () => {
+    const across = rectFromPoints({ x: -10, y: 40 }, { x: 10, y: 60 })
+    expect(entityTouchesRect(hatch, across)).toBe(true)
+  })
+
+  it('is fully inside a window that encloses it', () => {
+    const around = rectFromPoints({ x: -10, y: -10 }, { x: 110, y: 110 })
+    expect(entityFullyInside(hatch, around)).toBe(true)
+  })
+})

@@ -28,6 +28,6 @@ describe('ThemeToggle', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Switch to dark mode' }))
 
     expect(document.documentElement.dataset.theme).toBe('dark')
-    expect(localStorage.getItem('droplabcad.theme')).toBe('dark')
+    expect(localStorage.getItem('trimcad.theme')).toBe('dark')
   })
 })

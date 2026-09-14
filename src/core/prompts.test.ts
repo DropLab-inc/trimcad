@@ -26,6 +26,14 @@ const context = (overrides: Partial<PromptContext> = {}): PromptContext => ({
   polygonFit: 'inscribed',
   circleMode: 'center',
   circlePending: false,
+  arcMode: 'cse',
+  arcPending: false,
+  rectMode: 'corners',
+  rectPending: null,
+  hatchPattern: 'ansi31',
+  hatchScale: 1,
+  hatchAngle: 0,
+  hatchPending: null,
   pickingEdges: false,
   edgeCount: null,
   swapped: false,
@@ -61,6 +69,43 @@ describe('circle prompts', () => {
     const prompt = promptFor(context({ tool: 'circle', circleMode: 'ttr', circlePending: true, step: 2 }))
     expect(prompt.kind).toBe('number')
     expect(prompt.text).toBe('Specify radius of circle')
+  })
+})
+
+describe('arc prompts', () => {
+  it('offers the other constructions at the centre prompt', () => {
+    const prompt = promptFor(context({ tool: 'arc', step: 0 }))
+    expect(prompt.text).toBe('Specify centre point of arc')
+    expect(prompt.keywords.map((word) => word.key)).toEqual(['3P', 'S', 'A'])
+  })
+
+  it('asks for three rim points in three point mode', () => {
+    expect(promptFor(context({ tool: 'arc', arcMode: '3p', step: 0 })).text).toBe('Specify first point on arc')
+    expect(promptFor(context({ tool: 'arc', arcMode: '3p', step: 2 })).text).toBe('Specify end point of arc')
+  })
+
+  it('asks for a typed angle once start-centre-angle has its two points', () => {
+    const prompt = promptFor(context({ tool: 'arc', arcMode: 'sca', arcPending: true, step: 2 }))
+    expect(prompt.kind).toBe('number')
+    expect(prompt.text).toBe('Specify included angle')
+  })
+})
+
+describe('rectangle prompts', () => {
+  it('offers Centre and Dimensions at the first corner', () => {
+    expect(promptFor(context({ tool: 'rect', step: 0 })).keywords.map((word) => word.key)).toEqual(['C', 'D'])
+  })
+
+  it('asks for the centre when that construction is chosen', () => {
+    expect(promptFor(context({ tool: 'rect', rectMode: 'center', step: 0 })).text).toBe(
+      'Specify centre point of rectangle',
+    )
+  })
+
+  it('asks for a typed length once Dimensions has a corner', () => {
+    const prompt = promptFor(context({ tool: 'rect', rectMode: 'dimensions', rectPending: 'length', step: 1 }))
+    expect(prompt.kind).toBe('number')
+    expect(prompt.text).toBe('Specify length for rectangle')
   })
 })
 
@@ -120,6 +165,20 @@ describe('trim and extend prompts', () => {
   })
 })
 
+describe('hatch prompts', () => {
+  it('offers Pattern, Scale and Angle at the pick prompt', () => {
+    const prompt = promptFor(context({ tool: 'hatch', step: 0 }))
+    expect(prompt.text).toBe('Pick an internal point of a closed area')
+    expect(prompt.keywords.map((word) => word.key)).toEqual(['P', 'S', 'A'])
+  })
+
+  it('asks for a typed scale once that option is taken', () => {
+    const prompt = promptFor(context({ tool: 'hatch', hatchPending: 'scale' }))
+    expect(prompt.kind).toBe('number')
+    expect(prompt.text).toBe('Specify hatch scale')
+  })
+})
+
 describe('formatPrompt', () => {
   it('writes options in brackets and defaults in angle brackets', () => {
     expect(formatPrompt(promptFor(context({ tool: 'trim', edgeCount: 2 })))).toBe(
@@ -128,7 +187,7 @@ describe('formatPrompt', () => {
   })
 
   it('leaves a bare prompt alone', () => {
-    expect(formatPrompt(promptFor(context({ tool: 'rect' })))).toBe('Specify first corner:')
+    expect(formatPrompt(promptFor(context({ tool: 'ellipse' })))).toBe('Specify centre point:')
   })
 })
 

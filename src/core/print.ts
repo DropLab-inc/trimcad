@@ -327,6 +327,6 @@ export const exportPdf = (
   }
 
   pdf.restoreGraphicsState()
-  pdf.save(fileName ?? `droplabcad-${options.paper}-${options.scaleMode}.pdf`)
+  pdf.save(fileName ?? `trimcad-${options.paper}-${options.scaleMode}.pdf`)
   return layout
 }

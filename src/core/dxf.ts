@@ -8,7 +8,9 @@ import { DEFAULT_LAYER_COLOR, makeLayer, normalizeLayer } from './layers'
 import { uid } from './geometry'
 
 /** Marks the comment line carrying the full drawing. DXF readers ignore group code 999. */
-const EMBED_TAG = 'DROPLABCAD-DOCUMENT:'
+const EMBED_TAG = 'TRIMCAD-DOCUMENT:'
+/** Earlier embeds from before the TrimCAD rename; still accepted when opening a file. */
+const LEGACY_EMBED_TAGS = [EMBED_TAG, 'DROPLABCAD-DOCUMENT:'] as const
 
 /**
  * DXF is the drawing's own save format, so the writer keeps layers and their colours and puts each
@@ -104,11 +106,20 @@ const fingerprintOf = (entities: CadEntity[]): string => {
  * If another program has moved or added something, the comment is stale and the DXF itself wins.
  */
 const readEmbedded = (content: string, dxfEntities: CadEntity[]): DrawingDocument | null => {
-  const start = content.indexOf(EMBED_TAG)
+  let start = -1
+  let tagLength = 0
+  for (const tag of LEGACY_EMBED_TAGS) {
+    const at = content.indexOf(tag)
+    if (at !== -1) {
+      start = at
+      tagLength = tag.length
+      break
+    }
+  }
   if (start === -1) return null
 
   const end = content.indexOf('\n', start)
-  const line = content.slice(start + EMBED_TAG.length, end === -1 ? undefined : end).trim()
+  const line = content.slice(start + tagLength, end === -1 ? undefined : end).trim()
 
   try {
     const parsed = JSON.parse(line) as { fingerprint?: string; document?: DrawingDocument }

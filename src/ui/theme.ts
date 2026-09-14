@@ -109,7 +109,8 @@ export const readableOnCanvas = (color: string, palette: CanvasPalette): string 
   return isPlain ? palette.contrast : color
 }
 
-const THEME_KEY = 'droplabcad.theme'
+const THEME_KEY = 'trimcad.theme'
+const LEGACY_THEME_KEY = 'droplabcad.theme'
 
 const prefersLight = (): boolean => {
   try {
@@ -121,7 +122,7 @@ const prefersLight = (): boolean => {
 
 const readStoredTheme = (): ThemeName | null => {
   try {
-    const stored = localStorage.getItem(THEME_KEY)
+    const stored = localStorage.getItem(THEME_KEY) ?? localStorage.getItem(LEGACY_THEME_KEY)
     return stored === 'dark' || stored === 'light' ? stored : null
   } catch {
     return null

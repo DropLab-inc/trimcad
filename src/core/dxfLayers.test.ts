@@ -69,6 +69,7 @@ describe('objects DXF has no shape for', () => {
       layerId: doc.layers[0].id,
       pattern: 'ansi31',
       scale: 1,
+      angle: 0,
       boundary: [
         { x: 0, y: 0 },
         { x: 4, y: 0 },
@@ -145,7 +146,7 @@ describe('a file another program has edited', () => {
 
   it('still reads a plain DXF that was never written by this app', () => {
     const plain = exportDocumentToDxf(makeDefaultDocument()).split('\n').slice(2).join('\n')
-    expect(plain).not.toContain('DROPLABCAD-DOCUMENT')
+    expect(plain).not.toContain('TRIMCAD-DOCUMENT')
 
     expect(() => importDocumentFromDxf(plain, makeDefaultDocument())).not.toThrow()
   })

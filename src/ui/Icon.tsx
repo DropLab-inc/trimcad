@@ -30,6 +30,13 @@ export type IconName =
   | 'circle-2p'
   | 'circle-3p'
   | 'circle-ttr'
+  | 'arc-cse'
+  | 'arc-3p'
+  | 'arc-sce'
+  | 'arc-sca'
+  | 'rect-corners'
+  | 'rect-center'
+  | 'rect-dimensions'
   | 'polygon-inscribed'
   | 'polygon-circumscribed'
   | 'polygon-edge'
@@ -160,6 +167,62 @@ const GLYPHS: Record<IconName, ReactElement> = {
       <path d="M4 18 A 9 9 0 0 1 20 18" />
       {grip(4, 18)}
       {grip(20, 18)}
+    </g>
+  ),
+  'arc-cse': (
+    <g>
+      <path d="M5 17 A 8 8 0 0 1 19 17" />
+      <path className="accent" d="M12 12 L5 17 M12 12 L19 17" strokeDasharray="2 2" />
+      {grip(12, 12)}
+      {grip(5, 17)}
+      {grip(19, 17)}
+    </g>
+  ),
+  'arc-3p': (
+    <g>
+      <path d="M5 17 A 8 8 0 0 1 19 17" />
+      {grip(5, 17)}
+      {grip(12, 4)}
+      {grip(19, 17)}
+    </g>
+  ),
+  'arc-sce': (
+    <g>
+      <path d="M5 17 A 8 8 0 0 1 19 17" />
+      <path className="accent" d="M12 12 L5 17" strokeDasharray="2 2" />
+      {grip(5, 17)}
+      {grip(12, 12)}
+      {grip(19, 17)}
+    </g>
+  ),
+  'arc-sca': (
+    <g>
+      <path d="M5 17 A 8 8 0 0 1 19 17" />
+      <path className="accent" d="M12 12 L5 17 M12 12 L19 12" strokeDasharray="2 2" />
+      {grip(5, 17)}
+      {grip(12, 12)}
+    </g>
+  ),
+  'rect-corners': (
+    <g>
+      <rect x={4} y={6} width={16} height={12} />
+      {grip(4, 6)}
+      {grip(20, 18)}
+    </g>
+  ),
+  'rect-center': (
+    <g>
+      <rect x={4} y={6} width={16} height={12} />
+      <path className="accent" d="M12 12 L20 6" strokeDasharray="2 2" />
+      {grip(12, 12)}
+      {grip(20, 6)}
+    </g>
+  ),
+  'rect-dimensions': (
+    <g>
+      <rect x={4} y={6} width={16} height={12} />
+      <path className="accent" d="M4 20 L20 20 M22 6 L22 18" />
+      {grip(4, 6)}
     </g>
   ),
   ellipse: (

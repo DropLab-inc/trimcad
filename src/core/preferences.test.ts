@@ -98,7 +98,7 @@ describe('changing a setting', () => {
   })
 
   it('starts from the defaults when storage holds something unreadable', () => {
-    localStorage.setItem('droplabcad.preferences.v1', '{ not json')
+    localStorage.setItem('trimcad.preferences.v1', '{ not json')
 
     initPreferences()
 

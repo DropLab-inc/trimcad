@@ -88,7 +88,8 @@ const clamp = (key: string, value: number): number => {
   return Math.min(limit.max, Math.max(limit.min, value))
 }
 
-const PREFERENCES_KEY = 'droplabcad.preferences.v1'
+const PREFERENCES_KEY = 'trimcad.preferences.v1'
+const LEGACY_PREFERENCES_KEY = 'droplabcad.preferences.v1'
 
 /**
  * Reads what was stored, keeping only the keys that are still preferences and only the values that
@@ -131,7 +132,7 @@ const persist = () => {
 /** Called once as the app starts, before anything reads a preference. */
 export const initPreferences = () => {
   try {
-    const raw = localStorage.getItem(PREFERENCES_KEY)
+    const raw = localStorage.getItem(PREFERENCES_KEY) ?? localStorage.getItem(LEGACY_PREFERENCES_KEY)
     current = mergeStored(raw ? JSON.parse(raw) : null)
   } catch {
     current = { ...DEFAULT_PREFERENCES }

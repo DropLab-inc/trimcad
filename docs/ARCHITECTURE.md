@@ -1,4 +1,4 @@
-# DropLabCad Architecture
+# TrimCAD Architecture
 
 ## Runtime modules
 

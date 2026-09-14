@@ -1,4 +1,4 @@
-import { polar } from './geometry'
+import { isPointInPolygon, polar } from './geometry'
 import type { Vec2 } from './math/vec2'
 import { entityCircle, entitySegments, segmentCircleIntersections, segmentIntersection } from './snap'
 import type { CadEntity, DrawingDocument } from './types'
@@ -132,6 +132,20 @@ export const entityTouchesRect = (entity: CadEntity, rect: SelectionRect): boole
     return (
       bounds.min.x <= rect.max.x && bounds.max.x >= rect.min.x && bounds.min.y <= rect.max.y && bounds.max.y >= rect.min.y
     )
+  }
+
+  // A hatch is a filled area: a crossing box that sits inside it without cutting an edge still
+  // selects it, the way AutoCAD's crossing selection does for hatches.
+  if (entity.type === 'hatch') {
+    const corners = [
+      { x: rect.min.x, y: rect.min.y },
+      { x: rect.max.x, y: rect.min.y },
+      { x: rect.max.x, y: rect.max.y },
+      { x: rect.min.x, y: rect.max.y },
+    ]
+    if (corners.some((corner) => isPointInPolygon(corner, entity.boundary))) return true
+    const centre = { x: (rect.min.x + rect.max.x) / 2, y: (rect.min.y + rect.max.y) / 2 }
+    if (isPointInPolygon(centre, entity.boundary)) return true
   }
 
   return false

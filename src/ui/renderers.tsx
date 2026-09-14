@@ -1,13 +1,11 @@
 import type { ReactElement } from 'react'
 import { angularSweep, makeDimensionLabel, polar } from '../core/geometry'
+import { hatchBaseAngle, hatchTileSize, HATCH_PATTERNS as PATTERN_LIST } from '../core/hatch'
 import { add, mul, normalize, sub, type Vec2 } from '../core/math/vec2'
-import type { CadEntity, DimensionEntity, DimStyle, HatchPattern } from '../core/types'
+import type { CadEntity, DimensionEntity, DimStyle, HatchEntity, HatchPattern } from '../core/types'
 import type { CanvasPalette } from './theme'
 
-export const HATCH_PATTERNS: HatchPattern[] = ['ansi31', 'ansi37', 'dots', 'solid']
-
-const hatchFill = (pattern: HatchPattern = 'ansi31', solid: string): string =>
-  pattern === 'solid' ? solid : `url(#hatch-${pattern})`
+export const HATCH_PATTERNS: HatchPattern[] = PATTERN_LIST
 
 const arcPath = (center: Vec2, radius: number, startAngle: number, endAngle: number): string => {
   const start = polar(center, radius, startAngle)
@@ -279,16 +277,7 @@ export const renderEntity = (
     case 'spline':
       return <path key={entity.id} d={splinePath(entity.controlPoints)} {...common} />
     case 'hatch':
-      return (
-        <polygon
-          key={entity.id}
-          points={entity.boundary.map((point) => `${point.x},${point.y}`).join(' ')}
-          fill={hatchFill(entity.pattern, palette.hatchSolid)}
-          stroke={selected ? palette.selection : 'none'}
-          strokeWidth={1}
-          vectorEffect="non-scaling-stroke"
-        />
-      )
+      return renderHatch(entity, selected, palette)
     case 'text':
       return (
         <text key={entity.id} x={entity.position.x} y={entity.position.y} fill={stroke} fontSize={entity.height}>
@@ -309,6 +298,91 @@ export const renderEntity = (
       )
     default:
       return null
+  }
+}
+
+/**
+ * Draws a hatch with its own pattern tile so scale and angle belong to the entity rather than a
+ * shared definition. A light outline stays on so the fill can be found and selected the way
+ * AutoCAD's hatches are, even when the pattern is sparse.
+ */
+const renderHatch = (
+  entity: HatchEntity,
+  selected: boolean,
+  palette: CanvasPalette,
+): ReactElement => {
+  const points = entity.boundary.map((point) => `${point.x},${point.y}`).join(' ')
+  const outline = selected ? palette.selection : palette.hatch
+  const pattern = entity.pattern ?? 'ansi31'
+
+  if (pattern === 'solid') {
+    return (
+      <polygon
+        key={entity.id}
+        points={points}
+        fill={palette.hatchSolid}
+        stroke={outline}
+        strokeWidth={1}
+        strokeOpacity={selected ? 1 : 0.45}
+        vectorEffect="non-scaling-stroke"
+      />
+    )
+  }
+
+  const tile = hatchTileSize(pattern, entity.scale ?? 1)
+  const angle = hatchBaseAngle(pattern) + (entity.angle ?? 0)
+  const patternId = `hatch-fill-${entity.id}`
+
+  return (
+    <g key={entity.id}>
+      <defs>
+        <pattern
+          id={patternId}
+          patternUnits="userSpaceOnUse"
+          width={tile}
+          height={tile}
+          patternTransform={`rotate(${angle})`}
+        >
+          {hatchPatternMarks(pattern, tile, palette.hatch)}
+        </pattern>
+      </defs>
+      <polygon
+        points={points}
+        fill={`url(#${patternId})`}
+        stroke={outline}
+        strokeWidth={1}
+        strokeOpacity={selected ? 1 : 0.45}
+        vectorEffect="non-scaling-stroke"
+      />
+    </g>
+  )
+}
+
+/** The marks drawn inside one pattern tile, sized to the tile so scale changes the spacing. */
+const hatchPatternMarks = (pattern: HatchPattern, tile: number, color: string): ReactElement => {
+  const stroke = { stroke: color, strokeWidth: Math.max(0.4, tile * 0.08) }
+  switch (pattern) {
+    case 'ansi37':
+      return (
+        <g>
+          <line x1={0} y1={0} x2={tile} y2={tile} {...stroke} />
+          <line x1={tile} y1={0} x2={0} y2={tile} {...stroke} />
+        </g>
+      )
+    case 'dots':
+      return <circle cx={tile / 2} cy={tile / 2} r={Math.max(0.4, tile * 0.12)} fill={color} />
+    case 'net':
+      return (
+        <g>
+          <line x1={0} y1={tile / 2} x2={tile} y2={tile / 2} {...stroke} />
+          <line x1={tile / 2} y1={0} x2={tile / 2} y2={tile} {...stroke} />
+        </g>
+      )
+    case 'line':
+      return <line x1={0} y1={tile / 2} x2={tile} y2={tile / 2} {...stroke} />
+    default:
+      // ANSI31: a single run of lines; the pattern's rotate transform supplies the 45° tilt.
+      return <line x1={0} y1={0} x2={0} y2={tile} {...stroke} />
   }
 }
 

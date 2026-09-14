@@ -34,7 +34,7 @@ describe('saving and opening a drawing', () => {
   })
 
   it('refuses a file that is not JSON at all', () => {
-    expect(() => parseDrawing('DXF 0 SECTION')).toThrow(/not a DropLabCad drawing/i)
+    expect(() => parseDrawing('DXF 0 SECTION')).toThrow(/not a TrimCAD drawing/i)
   })
 
   it('refuses JSON that carries no drawing', () => {
@@ -43,7 +43,7 @@ describe('saving and opening a drawing', () => {
 
   it('says so plainly when the file is from a newer version', () => {
     const future = JSON.stringify({
-      format: 'droplabcad-drawing',
+      format: 'trimcad-drawing',
       version: 99,
       document: sample(),
     })

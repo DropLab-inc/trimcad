@@ -59,8 +59,15 @@ export const isPointNearEntity = (point: Vec2, entity: CadEntity, tol: number): 
       return isPointNearPolyline(point, entity, tol)
     case 'spline':
       return isPointNearSpline(point, entity, tol)
-    case 'hatch':
-      return isPointInPolygon(point, entity.boundary)
+    case 'hatch': {
+      if (isPointInPolygon(point, entity.boundary)) return true
+      for (let i = 0; i < entity.boundary.length; i += 1) {
+        const a = entity.boundary[i]
+        const b = entity.boundary[(i + 1) % entity.boundary.length]
+        if (pointSegmentDistance(point, a, b) <= tol) return true
+      }
+      return false
+    }
     case 'text':
       return distance(point, entity.position) <= tol * 2
     case 'dimension':
@@ -189,7 +196,11 @@ export const rotateEntity = (entity: CadEntity, origin: Vec2, angleRad: number):
     case 'spline':
       return { ...entity, controlPoints: entity.controlPoints.map(rot) }
     case 'hatch':
-      return { ...entity, boundary: entity.boundary.map(rot) }
+      return {
+        ...entity,
+        boundary: entity.boundary.map(rot),
+        angle: (entity.angle ?? 0) + (angleRad * 180) / Math.PI,
+      }
     case 'text':
       return { ...entity, position: rot(entity.position) }
     case 'dimension':

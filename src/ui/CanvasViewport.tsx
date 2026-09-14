@@ -29,13 +29,12 @@ import { isTransformTool, transformedBy } from '../core/commands'
 import { editableEntities, lineweightPixels, visibleEntities as visibleOnLayers } from '../core/layers'
 import { isPointNearEntity, mirrorEntity, moveEntity } from '../core/geometry'
 import { canFillet, chamferCorner, filletCorner, hasStraightSegments, offsetEntity } from '../core/modify'
-import { canBeTangent, circleOnDiameter, circleThroughPoints, cornerRadius, polygonOnEdge } from '../core/construct'
+import { canBeTangent, circleOnDiameter, circleThroughPoints, cornerRadius, polygonOnEdge, rectFromCenter, rectFromCorners, arcFromCenterStartEnd, arcFromStartCenterEnd, arcThroughPoints } from '../core/construct'
 import { polarArrayCopies, rectangularArrayCopies } from '../core/array'
 import { dragGrip, entityGrips, findGripAt, type Grip } from '../core/grips'
 import type { CadEntity, DimensionEntity, PolylineEntity, SnapMode } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
 import { COMMAND_INPUT_ID } from './CommandLine'
-import { HatchDefs } from './HatchDefs'
 import { renderDimension, renderEntity, splinePath } from './renderers'
 import { readableOnCanvas, useCanvasPalette } from './theme'
 
@@ -145,6 +144,9 @@ export function CanvasViewport() {
   const polygonSides = useCadStore((state) => state.polygonSides)
   const polygonFit = useCadStore((state) => state.polygonFit)
   const circleMode = useCadStore((state) => state.circleMode)
+  const arcMode = useCadStore((state) => state.arcMode)
+  const rectMode = useCadStore((state) => state.rectMode)
+  const rectRotation = useCadStore((state) => state.rectRotation)
   const tangentPicks = useCadStore((state) => state.tangentPicks)
   const arrayType = useCadStore((state) => state.arrayType)
   const arrayRows = useCadStore((state) => state.arrayRows)
@@ -1035,16 +1037,14 @@ export function CanvasViewport() {
     switch (activeTool) {
       case 'line':
         return <line x1={last.x} y1={last.y} x2={cursorWorld.x} y2={cursorWorld.y} {...style} />
-      case 'rect':
-        return (
-          <rect
-            x={Math.min(first.x, cursorWorld.x)}
-            y={Math.min(first.y, cursorWorld.y)}
-            width={Math.abs(cursorWorld.x - first.x)}
-            height={Math.abs(cursorWorld.y - first.y)}
-            {...style}
-          />
-        )
+      case 'rect': {
+        if (rectMode === 'dimensions') return null
+        const outline =
+          rectMode === 'center'
+            ? rectFromCenter(first, cursorWorld, rectRotation)
+            : rectFromCorners(first, cursorWorld, rectRotation)
+        return <polygon points={outline.map((p) => `${p.x},${p.y}`).join(' ')} {...style} />
+      }
       case 'circle': {
         // Three points need two of them down before there is a circle to show, so until then the
         // preview is just the chord being dragged out.
@@ -1085,6 +1085,52 @@ export function CanvasViewport() {
         return <polygon points={outline.map((p) => `${p.x},${p.y}`).join(' ')} {...style} />
       }
       case 'arc': {
+        if (arcMode === '3p') {
+          if (draftPoints.length === 1) {
+            return <line x1={first.x} y1={first.y} x2={cursorWorld.x} y2={cursorWorld.y} {...style} />
+          }
+          const shape = arcThroughPoints(first, draftPoints[1], cursorWorld)
+          if (!shape) {
+            return (
+              <polyline
+                points={[first, draftPoints[1], cursorWorld].map((p) => `${p.x},${p.y}`).join(' ')}
+                {...style}
+              />
+            )
+          }
+          return <path d={arcPreviewPath(shape.center, shape.radius, shape.startAngle, shape.endAngle)} {...style} />
+        }
+        if (arcMode === 'sce' || arcMode === 'sca') {
+          if (draftPoints.length === 1) {
+            return (
+              <g>
+                <line x1={first.x} y1={first.y} x2={cursorWorld.x} y2={cursorWorld.y} {...style} />
+                <circle
+                  cx={cursorWorld.x}
+                  cy={cursorWorld.y}
+                  r={Math.hypot(cursorWorld.x - first.x, cursorWorld.y - first.y)}
+                  {...style}
+                  strokeDasharray="2 4"
+                />
+              </g>
+            )
+          }
+          const shape = arcFromStartCenterEnd(first, draftPoints[1], cursorWorld)
+          if (!shape) return null
+          return (
+            <g>
+              <line
+                x1={draftPoints[1].x}
+                y1={draftPoints[1].y}
+                x2={first.x}
+                y2={first.y}
+                {...style}
+                strokeDasharray="2 4"
+              />
+              <path d={arcPreviewPath(shape.center, shape.radius, shape.startAngle, shape.endAngle)} {...style} />
+            </g>
+          )
+        }
         if (draftPoints.length === 1) {
           return (
             <g>
@@ -1093,11 +1139,9 @@ export function CanvasViewport() {
             </g>
           )
         }
-        const start = draftPoints[1]
-        const arcRadius = Math.hypot(start.x - first.x, start.y - first.y)
-        const startAngle = Math.atan2(start.y - first.y, start.x - first.x)
-        const endAngle = Math.atan2(cursorWorld.y - first.y, cursorWorld.x - first.x)
-        return <path d={arcPreviewPath(first, arcRadius, startAngle, endAngle)} {...style} />
+        const shape = arcFromCenterStartEnd(first, draftPoints[1], cursorWorld)
+        if (!shape) return null
+        return <path d={arcPreviewPath(shape.center, shape.radius, shape.startAngle, shape.endAngle)} {...style} />
       }
       case 'polyline':
         return <polyline points={[...draftPoints, cursorWorld].map((p) => `${p.x},${p.y}`).join(' ')} {...style} />
@@ -1149,6 +1193,7 @@ export function CanvasViewport() {
     }
   }, [
     activeTool,
+    arcMode,
     circleMode,
     commandPoint,
     dimScale,
@@ -1157,6 +1202,8 @@ export function CanvasViewport() {
     draftPoints,
     polygonFit,
     polygonSides,
+    rectMode,
+    rectRotation,
   ])
 
   const grips = useMemo(() => {
@@ -1256,7 +1303,6 @@ export function CanvasViewport() {
           else repeatLastCommand()
         }}
       >
-        <HatchDefs />
         <rect x={0} y={0} width={width} height={height} fill={palette.background} />
 
         <g transform={`translate(${camera.x}, ${camera.y}) scale(${camera.zoom})`}>

@@ -1,7 +1,8 @@
 import { useCadStore } from '../core/store'
 import { shortestAlias, resolveCommand } from '../core/commandRegistry'
 import { Icon, type IconName } from './Icon'
-import type { ArrayType, CircleMode, DimensionType, HatchPattern, PolygonFit, ToolMode } from '../core/types'
+import { HATCH_PATTERN_LABELS, HATCH_PATTERNS } from '../core/hatch'
+import type { ArcMode, ArrayType, CircleMode, DimensionType, HatchPattern, PolygonFit, RectMode, ToolMode } from '../core/types'
 
 type ToolItem = { tool: ToolMode; label: string; icon: IconName; command: string; hint?: string }
 
@@ -67,6 +68,56 @@ const circleModes: Choice<CircleMode>[] = [
   },
 ]
 
+/** The ways ARC can be pinned down, offered while the command is running. */
+const arcModes: Choice<ArcMode>[] = [
+  {
+    value: 'cse',
+    label: 'Centre, start, end',
+    icon: 'arc-cse',
+    hint: 'Pick the centre, then the start of the arc, then the end',
+  },
+  {
+    value: '3p',
+    label: '3 point',
+    icon: 'arc-3p',
+    hint: 'Pick three points the arc should pass through',
+  },
+  {
+    value: 'sce',
+    label: 'Start, centre, end',
+    icon: 'arc-sce',
+    hint: 'Pick the start, then the centre, then the end',
+  },
+  {
+    value: 'sca',
+    label: 'Start, centre, angle',
+    icon: 'arc-sca',
+    hint: 'Pick the start and centre, then type the included angle or pick the end ray',
+  },
+]
+
+/** The ways RECTANG can be pinned down, offered while the command is running. */
+const rectModes: Choice<RectMode>[] = [
+  {
+    value: 'corners',
+    label: 'Two corners',
+    icon: 'rect-corners',
+    hint: 'Pick two opposite corners',
+  },
+  {
+    value: 'center',
+    label: 'Centre, corner',
+    icon: 'rect-center',
+    hint: 'Pick the centre, then a corner',
+  },
+  {
+    value: 'dimensions',
+    label: 'Dimensions',
+    icon: 'rect-dimensions',
+    hint: 'Pick a corner, then type the length and width',
+  },
+]
+
 /** How POLYGON is sized, offered while the command is running. */
 const polygonFits: Choice<PolygonFit>[] = [
   {
@@ -96,8 +147,6 @@ const dimensionTypes: Array<{ value: DimensionType; label: string; icon: IconNam
   { value: 'diameter', label: 'Diameter', icon: 'dim-diameter', command: 'DIMDIAMETER' },
   { value: 'angular', label: 'Angular', icon: 'dim-angular', command: 'DIMANGULAR' },
 ]
-
-const hatchPatterns: HatchPattern[] = ['ansi31', 'ansi37', 'dots', 'solid']
 
 const modifyTools: ToolItem[] = [
   {
@@ -229,12 +278,20 @@ export function Toolbar() {
   const setPolygonFit = useCadStore((state) => state.setPolygonFit)
   const circleMode = useCadStore((state) => state.circleMode)
   const setCircleMode = useCadStore((state) => state.setCircleMode)
+  const arcMode = useCadStore((state) => state.arcMode)
+  const setArcMode = useCadStore((state) => state.setArcMode)
+  const rectMode = useCadStore((state) => state.rectMode)
+  const setRectMode = useCadStore((state) => state.setRectMode)
   const dimensionType = useCadStore((state) => state.dimensionType)
   const setDimensionType = useCadStore((state) => state.setDimensionType)
   const dimScale = useCadStore((state) => state.dimScale)
   const setDimScale = useCadStore((state) => state.setDimScale)
   const hatchPattern = useCadStore((state) => state.hatchPattern)
   const setHatchPattern = useCadStore((state) => state.setHatchPattern)
+  const hatchScale = useCadStore((state) => state.hatchScale)
+  const setHatchScale = useCadStore((state) => state.setHatchScale)
+  const hatchAngle = useCadStore((state) => state.hatchAngle)
+  const setHatchAngle = useCadStore((state) => state.setHatchAngle)
   const offsetDistance = useCadStore((state) => state.offsetDistance)
   const setOffsetDistance = useCadStore((state) => state.setOffsetDistance)
   const filletRadius = useCadStore((state) => state.filletRadius)
@@ -295,6 +352,32 @@ export function Toolbar() {
                 Circle by
                 <select value={circleMode} onChange={(event) => setCircleMode(event.target.value as CircleMode)}>
                   {circleModes.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {activeTool === 'arc' && (
+              <label className="ribbon-field" title={`How the arc is pinned down\n${chosen(arcModes, arcMode).hint}`}>
+                <Icon name={chosen(arcModes, arcMode).icon} />
+                Arc by
+                <select value={arcMode} onChange={(event) => setArcMode(event.target.value as ArcMode)}>
+                  {arcModes.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {activeTool === 'rect' && (
+              <label className="ribbon-field" title={`How the rectangle is pinned down\n${chosen(rectModes, rectMode).hint}`}>
+                <Icon name={chosen(rectModes, rectMode).icon} />
+                Rect by
+                <select value={rectMode} onChange={(event) => setRectMode(event.target.value as RectMode)}>
+                  {rectModes.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
@@ -543,22 +626,36 @@ export function Toolbar() {
           <label className="ribbon-field" title="Hatch pattern">
             Pattern
             <select value={hatchPattern} onChange={(event) => setHatchPattern(event.target.value as HatchPattern)}>
-              {hatchPatterns.map((pattern) => (
+              {HATCH_PATTERNS.map((pattern) => (
                 <option key={pattern} value={pattern}>
-                  {pattern}
+                  {HATCH_PATTERN_LABELS[pattern]}
                 </option>
               ))}
             </select>
           </label>
-          <button
-            type="button"
-            className={`ribbon-btn ${activeTool === 'insert' ? 'active' : ''}`}
-            onClick={() => setTool('insert')}
-            title={tooltip({ label: 'Insert block', command: 'INSERT' })}
-          >
-            <Icon name="insert" />
-            <span>Insert</span>
-          </button>
+          {activeTool === 'hatch' && (
+            <>
+              <label className="ribbon-field" title="Spacing of the hatch pattern, as a multiple of its built-in tile">
+                Scale
+                <input
+                  type="number"
+                  min={0.01}
+                  step={0.25}
+                  value={hatchScale}
+                  onChange={(event) => setHatchScale(Number(event.target.value))}
+                />
+              </label>
+              <label className="ribbon-field" title="Extra rotation of the hatch pattern, in degrees">
+                Angle
+                <input
+                  type="number"
+                  step={15}
+                  value={hatchAngle}
+                  onChange={(event) => setHatchAngle(Number(event.target.value))}
+                />
+              </label>
+            </>
+          )}
         </div>
       </section>
     </div>

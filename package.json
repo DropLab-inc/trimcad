@@ -1,7 +1,13 @@
-{
-  "name": "droplabcad",
-  "private": true,
+﻿{
+  "name": "trimcad",
   "version": "0.0.0",
+  "description": "Open-source browser-based 2D CAD drafting",
+  "homepage": "https://trimcad.com",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DropLabInc/trimcad.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

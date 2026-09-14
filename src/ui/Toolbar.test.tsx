@@ -117,6 +117,69 @@ describe('polygon fit dropdown', () => {
   })
 })
 
+describe('arc construction dropdown', () => {
+  beforeEach(() => {
+    useCadStore.getState().setTool('select')
+  })
+
+  it('stays out of the way until ARC is running', () => {
+    render(<Toolbar />)
+    expect(dropdown('how the arc is pinned down')).toBeNull()
+  })
+
+  it('lists every construction in the box', () => {
+    useCadStore.getState().setTool('arc')
+    render(<Toolbar />)
+
+    expect(optionLabels(dropdown('how the arc is pinned down')!)).toEqual([
+      'Centre, start, end',
+      '3 point',
+      'Start, centre, end',
+      'Start, centre, angle',
+    ])
+  })
+
+  it('switches construction when another is picked', () => {
+    useCadStore.getState().setTool('arc')
+    render(<Toolbar />)
+
+    fireEvent.change(dropdown('how the arc is pinned down')!, { target: { value: '3p' } })
+
+    expect(useCadStore.getState().arcMode).toBe('3p')
+  })
+})
+
+describe('rectangle construction dropdown', () => {
+  beforeEach(() => {
+    useCadStore.getState().setTool('select')
+  })
+
+  it('stays out of the way until RECTANG is running', () => {
+    render(<Toolbar />)
+    expect(dropdown('how the rectangle is pinned down')).toBeNull()
+  })
+
+  it('lists every construction in the box', () => {
+    useCadStore.getState().setTool('rect')
+    render(<Toolbar />)
+
+    expect(optionLabels(dropdown('how the rectangle is pinned down')!)).toEqual([
+      'Two corners',
+      'Centre, corner',
+      'Dimensions',
+    ])
+  })
+
+  it('switches construction when another is picked', () => {
+    useCadStore.getState().setTool('rect')
+    render(<Toolbar />)
+
+    fireEvent.change(dropdown('how the rectangle is pinned down')!, { target: { value: 'center' } })
+
+    expect(useCadStore.getState().rectMode).toBe('center')
+  })
+})
+
 describe('ribbon fields belong to the command that uses them', () => {
   const sidesBox = () => screen.queryByTitle('Number of polygon sides')
 

@@ -29,7 +29,7 @@ function App() {
       <header className="topbar">
         <div className="titlebar">
           <h1 className="wordmark">
-            <span className="wordmark-logo" role="img" aria-label="DropLab" />
+            <span className="wordmark-mark">Trim</span>
             <span className="wordmark-suffix">CAD</span>
           </h1>
         <FileMenu />

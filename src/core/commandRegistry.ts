@@ -24,9 +24,9 @@ export const COMMANDS: CommandDef[] = [
   // Draw
   { name: 'LINE', aliases: ['L'], category: 'Draw', summary: 'Straight segment', tool: 'line' },
   { name: 'PLINE', aliases: ['PL'], category: 'Draw', summary: 'Connected polyline', tool: 'polyline' },
-  { name: 'RECTANG', aliases: ['REC'], category: 'Draw', summary: 'Rectangle from two corners', tool: 'rect' },
+  { name: 'RECTANG', aliases: ['REC'], category: 'Draw', summary: 'Rectangle by corners, centre, or dimensions', tool: 'rect' },
   { name: 'CIRCLE', aliases: ['C'], category: 'Draw', summary: 'Circle by centre and radius', tool: 'circle' },
-  { name: 'ARC', aliases: ['A'], category: 'Draw', summary: 'Arc by centre, start and end', tool: 'arc' },
+  { name: 'ARC', aliases: ['A'], category: 'Draw', summary: 'Arc by centre, 3 points, or start-centre', tool: 'arc' },
   { name: 'ELLIPSE', aliases: ['EL'], category: 'Draw', summary: 'Ellipse by centre and axes', tool: 'ellipse' },
   { name: 'POLYGON', aliases: ['POL'], category: 'Draw', summary: 'Regular polygon', tool: 'polygon' },
   { name: 'SPLINE', aliases: ['SPL'], category: 'Draw', summary: 'Smooth curve through points', tool: 'spline' },
@@ -63,7 +63,6 @@ export const COMMANDS: CommandDef[] = [
   { name: 'BOUNDARY', aliases: ['BO'], category: 'Modify', summary: 'Trace a closed area as a polyline', tool: 'boundary' },
   { name: 'GROUP', aliases: ['G'], category: 'Modify', summary: 'Group the selection' },
   { name: 'UNGROUP', aliases: ['UNG'], category: 'Modify', summary: 'Break up the groups in the selection' },
-  { name: 'INSERT', aliases: ['I'], category: 'Modify', summary: 'Place a block', tool: 'insert' },
   { name: 'LAYMOV', aliases: ['MOVETOLAYER'], category: 'Modify', summary: 'Move the selection to a layer' },
   { name: 'LAYCUR', aliases: ['LAYMCUR'], category: 'Modify', summary: "Make the selected object's layer current" },
 

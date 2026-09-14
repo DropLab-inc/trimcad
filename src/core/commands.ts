@@ -1,6 +1,6 @@
 import { uid, offsetCircle, offsetLine } from './geometry'
 import { add, mul, sub, type Vec2 } from './math/vec2'
-import type { CadEntity, CircleEntity, DrawingDocument, LineEntity } from './types'
+import type { ArcEntity, CadEntity, CircleEntity, DrawingDocument, LineEntity } from './types'
 
 export const createLine = (layerId: string, start: Vec2, end: Vec2): LineEntity => ({
   id: uid(),
@@ -18,18 +18,37 @@ export const createCircle = (layerId: string, center: Vec2, radius: number): Cir
   radius,
 })
 
-export const createRect = (layerId: string, a: Vec2, b: Vec2): CadEntity => ({
+export const createArc = (
+  layerId: string,
+  center: Vec2,
+  radius: number,
+  startAngle: number,
+  endAngle: number,
+): ArcEntity => ({
+  id: uid(),
+  type: 'arc',
+  layerId,
+  center,
+  radius,
+  startAngle,
+  endAngle,
+})
+
+export const createClosedPoly = (layerId: string, points: Vec2[]): CadEntity => ({
   id: uid(),
   type: 'polyline',
   layerId,
   closed: true,
-  points: [
+  points,
+})
+
+export const createRect = (layerId: string, a: Vec2, b: Vec2): CadEntity =>
+  createClosedPoly(layerId, [
     { x: a.x, y: a.y },
     { x: b.x, y: a.y },
     { x: b.x, y: b.y },
     { x: a.x, y: b.y },
-  ],
-})
+  ])
 
 export const createPolygon = (layerId: string, center: Vec2, radius: number, sides: number): CadEntity => {
   const clamped = Math.max(3, sides)
@@ -111,7 +130,11 @@ export const rotateEntities = (entities: CadEntity[], ids: string[], origin: Vec
       case 'spline':
         return { ...entity, controlPoints: entity.controlPoints.map(spin) }
       case 'hatch':
-        return { ...entity, boundary: entity.boundary.map(spin) }
+        return {
+          ...entity,
+          boundary: entity.boundary.map(spin),
+          angle: (entity.angle ?? 0) + angleDeg,
+        }
       case 'text':
         return { ...entity, position: spin(entity.position) }
       case 'dimension':

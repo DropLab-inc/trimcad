@@ -1,7 +1,8 @@
 import { DEFAULT_LAYER_COLOR } from '../core/layers'
+import { HATCH_PATTERN_LABELS, HATCH_PATTERNS } from '../core/hatch'
 import { useCadStore } from '../core/store'
 import { dimensionScale } from './renderers'
-import type { DimensionEntity } from '../core/types'
+import type { DimensionEntity, HatchEntity, HatchPattern } from '../core/types'
 
 export function PropertiesPanel() {
   const doc = useCadStore((state) => state.doc)
@@ -9,8 +10,10 @@ export function PropertiesPanel() {
   const updateDocument = useCadStore((state) => state.updateDocument)
   const moveSelectionToLayer = useCadStore((state) => state.moveSelectionToLayer)
   const resizeDimensions = useCadStore((state) => state.resizeDimensions)
+  const updateHatches = useCadStore((state) => state.updateHatches)
   const selected = doc.entities.filter((entity) => selectedIds.includes(entity.id))
   const dimensions = selected.filter((entity): entity is DimensionEntity => entity.type === 'dimension')
+  const hatches = selected.filter((entity): entity is HatchEntity => entity.type === 'hatch')
 
   if (selected.length === 0) {
     return (
@@ -106,6 +109,58 @@ export function PropertiesPanel() {
             }}
           />
         </label>
+      )}
+      {hatches.length > 0 && (
+        <>
+          <label title="Hatch pattern name">
+            Hatch pattern
+            <select
+              aria-label="Hatch pattern"
+              value={hatches[0].pattern}
+              onChange={(event) =>
+                updateHatches(
+                  hatches.map((entity) => entity.id),
+                  { pattern: event.target.value as HatchPattern },
+                )
+              }
+            >
+              {HATCH_PATTERNS.map((pattern) => (
+                <option key={pattern} value={pattern}>
+                  {HATCH_PATTERN_LABELS[pattern]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label title="Spacing of the hatch pattern">
+            Hatch scale
+            <input
+              type="number"
+              min={0.01}
+              step={0.25}
+              value={hatches[0].scale ?? 1}
+              onChange={(event) =>
+                updateHatches(
+                  hatches.map((entity) => entity.id),
+                  { scale: Number(event.target.value) },
+                )
+              }
+            />
+          </label>
+          <label title="Extra rotation of the hatch pattern, in degrees">
+            Hatch angle
+            <input
+              type="number"
+              step={15}
+              value={hatches[0].angle ?? 0}
+              onChange={(event) =>
+                updateHatches(
+                  hatches.map((entity) => entity.id),
+                  { angle: Number(event.target.value) },
+                )
+              }
+            />
+          </label>
+        </>
       )}
     </section>
   )

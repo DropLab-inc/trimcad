@@ -1,5 +1,5 @@
 /*
- * DropLab's palette: ink and cyan, taken from droplab.co, with Space Grotesk for headings and
+ * TrimCAD palette: ink and cyan, with Space Grotesk for headings and
  * IBM Plex Sans for everything else.
  *
  * Every colour in the interface comes from the tokens below, so the light theme is the same file
@@ -152,17 +152,12 @@ body,
 }
 
 /*
- * The DropLab logo ships as a white silhouette, so it is used as a mask rather than an image. That
- * lets it take the theme's own ink in light mode instead of disappearing into the background.
+ * Wordmark: Trim in ink, CAD in the accent colour.
  */
-.wordmark-logo {
-  display: block;
-  width: 5.4rem;
-  height: 1.3rem;
-  align-self: center;
-  background-color: var(--text-bright);
-  -webkit-mask: url('/droplab-logo.png') left center / contain no-repeat;
-  mask: url('/droplab-logo.png') left center / contain no-repeat;
+.wordmark-mark {
+  color: var(--text-bright);
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .wordmark-suffix {

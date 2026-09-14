@@ -1,4 +1,4 @@
-import { pointSegmentDistance, uid } from './geometry'
+import { angleInSweep, pointSegmentDistance, uid } from './geometry'
 import {
   EPS,
   circleIntersections,
@@ -11,14 +11,17 @@ import { entityCircle, entitySegments } from './snap'
 import type { CadEntity, PolygonFit } from './types'
 
 /**
- * The ways a circle or a polygon can be pinned down by something other than a centre and a radius.
+ * The ways a circle, arc, rectangle or polygon can be pinned down by something other than the
+ * plain default construction.
  *
  * AutoCAD offers a circle three points to pass through, two ends of a diameter, or two objects to
- * sit tangent to at a given radius; and a polygon a choice of sitting inside its circle or around
- * it. All of them come down to working out a centre and a radius, which is what this file does.
+ * sit tangent to at a given radius; an arc several orders of its centre and ends; a rectangle a
+ * centre or typed dimensions; and a polygon a choice of sitting inside its circle or around it.
  */
 
 export type CircleShape = { center: Vec2; radius: number }
+
+export type ArcShape = { center: Vec2; radius: number; startAngle: number; endAngle: number }
 
 /** The circle with `a` and `b` at opposite ends of a diameter. */
 export const circleOnDiameter = (a: Vec2, b: Vec2): CircleShape | null => {
@@ -167,6 +170,112 @@ export const circleTangentToTwo = (
 
   const best = ranked[0]
   return best ? { center: best.centre, radius: magnitude } : null
+}
+
+/* ---------------------------------------------------------------------- arc */
+
+/** An arc whose centre is known, running counterclockwise from `start` out to the ray through `end`. */
+export const arcFromCenterStartEnd = (center: Vec2, start: Vec2, end: Vec2): ArcShape | null => {
+  const radius = distance(center, start)
+  if (radius < EPS) return null
+  return {
+    center,
+    radius,
+    startAngle: Math.atan2(start.y - center.y, start.x - center.x),
+    endAngle: Math.atan2(end.y - center.y, end.x - center.x),
+  }
+}
+
+/** Same geometry as centre-start-end, but the picks arrive start first. */
+export const arcFromStartCenterEnd = (start: Vec2, center: Vec2, end: Vec2): ArcShape | null =>
+  arcFromCenterStartEnd(center, start, end)
+
+/**
+ * An arc from a start point and centre, swept through an included angle in degrees. Positive
+ * angles run counterclockwise, which is how arcs are stored and drawn.
+ */
+export const arcFromStartCenterAngle = (start: Vec2, center: Vec2, angleDeg: number): ArcShape | null => {
+  const radius = distance(center, start)
+  if (radius < EPS) return null
+  if (!Number.isFinite(angleDeg) || Math.abs(angleDeg) < EPS) return null
+  const startAngle = Math.atan2(start.y - center.y, start.x - center.x)
+  return { center, radius, startAngle, endAngle: startAngle + (angleDeg * Math.PI) / 180 }
+}
+
+/**
+ * The arc that passes through three points in order. The middle point decides which way around
+ * the circle the curve takes, since the entity itself always sweeps counterclockwise.
+ */
+export const arcThroughPoints = (a: Vec2, b: Vec2, c: Vec2): ArcShape | null => {
+  const circle = circleThroughPoints(a, b, c)
+  if (!circle) return null
+  const start = Math.atan2(a.y - circle.center.y, a.x - circle.center.x)
+  const mid = Math.atan2(b.y - circle.center.y, b.x - circle.center.x)
+  const end = Math.atan2(c.y - circle.center.y, c.x - circle.center.x)
+  if (angleInSweep(mid, start, end)) {
+    return { ...circle, startAngle: start, endAngle: end }
+  }
+  return { ...circle, startAngle: end, endAngle: start }
+}
+
+/* ----------------------------------------------------------------- rectangle */
+
+/**
+ * The four corners of a rectangle from two opposite corners. When `rotation` is set, the second
+ * point is read in axes turned by that angle, the way AutoCAD's Rotation option does.
+ */
+export const rectFromCorners = (a: Vec2, b: Vec2, rotation = 0): Vec2[] => {
+  if (Math.abs(rotation) < EPS) {
+    return [
+      { x: a.x, y: a.y },
+      { x: b.x, y: a.y },
+      { x: b.x, y: b.y },
+      { x: a.x, y: b.y },
+    ]
+  }
+  const cos = Math.cos(rotation)
+  const sin = Math.sin(rotation)
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const localX = dx * cos + dy * sin
+  const localY = -dx * sin + dy * cos
+  const xAxis = { x: cos, y: sin }
+  const yAxis = { x: -sin, y: cos }
+  return [a, add(a, mul(xAxis, localX)), add(a, add(mul(xAxis, localX), mul(yAxis, localY))), add(a, mul(yAxis, localY))]
+}
+
+/** The four corners of a rectangle whose centre and one corner are known. */
+export const rectFromCenter = (center: Vec2, corner: Vec2, rotation = 0): Vec2[] => {
+  const cos = Math.cos(rotation)
+  const sin = Math.sin(rotation)
+  const dx = corner.x - center.x
+  const dy = corner.y - center.y
+  const localX = Math.abs(rotation) < EPS ? dx : dx * cos + dy * sin
+  const localY = Math.abs(rotation) < EPS ? dy : -dx * sin + dy * cos
+  const xAxis = Math.abs(rotation) < EPS ? { x: 1, y: 0 } : { x: cos, y: sin }
+  const yAxis = Math.abs(rotation) < EPS ? { x: 0, y: 1 } : { x: -sin, y: cos }
+  return [
+    add(center, add(mul(xAxis, -localX), mul(yAxis, -localY))),
+    add(center, add(mul(xAxis, localX), mul(yAxis, -localY))),
+    add(center, add(mul(xAxis, localX), mul(yAxis, localY))),
+    add(center, add(mul(xAxis, -localX), mul(yAxis, localY))),
+  ]
+}
+
+/** The four corners of a rectangle from a corner, a length along its rotation, and a width. */
+export const rectFromDimensions = (origin: Vec2, length: number, width: number, rotation = 0): Vec2[] | null => {
+  if (!Number.isFinite(length) || !Number.isFinite(width)) return null
+  if (Math.abs(length) < EPS || Math.abs(width) < EPS) return null
+  const cos = Math.cos(rotation)
+  const sin = Math.sin(rotation)
+  const xAxis = { x: cos, y: sin }
+  const yAxis = { x: -sin, y: cos }
+  return [
+    origin,
+    add(origin, mul(xAxis, length)),
+    add(origin, add(mul(xAxis, length), mul(yAxis, width))),
+    add(origin, mul(yAxis, width)),
+  ]
 }
 
 /* ------------------------------------------------------------------ polygon */

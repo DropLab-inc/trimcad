@@ -1,7 +1,25 @@
 import type { DrawingDocument } from './types'
 
-const KEY = 'droplabcad.autosave.v1'
-const SESSION_KEY = 'droplabcad.session'
+const KEY = 'trimcad.autosave.v1'
+const SESSION_KEY = 'trimcad.session'
+const LEGACY_KEY = 'droplabcad.autosave.v1'
+const LEGACY_SESSION_KEY = 'droplabcad.session'
+
+const readLocal = (key: string, legacy: string): string | null => {
+  try {
+    return localStorage.getItem(key) ?? localStorage.getItem(legacy)
+  } catch {
+    return null
+  }
+}
+
+const readSession = (key: string, legacy: string): string | null => {
+  try {
+    return sessionStorage.getItem(key) ?? sessionStorage.getItem(legacy)
+  } catch {
+    return null
+  }
+}
 
 export type AutosavePayload = {
   savedAt: number
@@ -16,8 +34,11 @@ export type AutosavePayload = {
  */
 export const currentSessionId = (): string => {
   try {
-    const existing = sessionStorage.getItem(SESSION_KEY)
-    if (existing) return existing
+    const existing = readSession(SESSION_KEY, LEGACY_SESSION_KEY)
+    if (existing) {
+      sessionStorage.setItem(SESSION_KEY, existing)
+      return existing
+    }
     const id = crypto.randomUUID()
     sessionStorage.setItem(SESSION_KEY, id)
     return id
@@ -36,7 +57,7 @@ export const saveAutosave = (document: DrawingDocument) => {
 }
 
 export const loadAutosave = (): AutosavePayload | null => {
-  const raw = localStorage.getItem(KEY)
+  const raw = readLocal(KEY, LEGACY_KEY)
   if (!raw) return null
   try {
     return JSON.parse(raw) as AutosavePayload
@@ -46,7 +67,12 @@ export const loadAutosave = (): AutosavePayload | null => {
 }
 
 export const clearAutosave = () => {
-  localStorage.removeItem(KEY)
+  try {
+    localStorage.removeItem(KEY)
+    localStorage.removeItem(LEGACY_KEY)
+  } catch {
+    // Storage errors should never crash editing.
+  }
 }
 
 export type RecoveryDecision =

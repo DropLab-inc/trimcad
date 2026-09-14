@@ -1,19 +1,18 @@
-# DropLabCad
+# TrimCAD
 
 Lightweight browser-based 2D drafting software inspired by AutoCAD workflows.
 
 ## Implemented v1 scope
 
 - Draw: line, polyline, rectangle, circle (centre, 2P, 3P, tangent-tangent-radius), arc, ellipse,
-  polygon (inscribed, circumscribed, by edge), spline, hatch, text, block insert
-- Modify: move, copy, rotate, scale, mirror, offset, delete, fillet, chamfer, join, explode,
+  polygon (inscribed, circumscribed, by edge), spline, hatch, text, - Modify: move, copy, rotate, scale, mirror, offset, delete, fillet, chamfer, join, explode,
   overkill, boundary, rectangular/polar array
 - Drafting aids: OSNAP, polar tracking, grips for reshaping by hand, command line aliases,
   crosshair viewport, pan/zoom
 - Structure: layers, linetypes, lineweights, groups, blocks, document history (undo/redo)
 - Data I/O: JSON document model, DXF import/export subset, PDF print at drawing scale
 - Reliability: autosave + recovery prompt
-- Appearance: DropLab branding, with a dark and a light theme
+- Appearance: TrimCAD branding, with a dark and a light theme
 
 ## Project structure
 
@@ -132,7 +131,7 @@ between layers:
 Moving onto a locked or off layer still works, but those objects then drop out of the selection,
 since they can no longer be edited.
 
-### Drawing circles and polygons
+### Drawing circles, arcs, rectangles and polygons
 
 `CIRCLE` opens on a centre and a radius, and the options at that prompt pin the circle down other
 ways instead. `D` at the radius prompt reads the size across the circle rather than out from the
@@ -158,6 +157,15 @@ starts back at centre-and-radius, as AutoCAD's does.
 otherwise appear on the drawing to show how far it has got. The object under the crosshair is
 outlined in amber to show what the next click would take, and each object already chosen turns
 green with a marker where it was clicked, which stays put while you type the radius.
+
+`ARC` opens on a centre, start and end, with the same style of ribbon dropdown for the other
+constructions. `3P` takes three points on the curve; `S` starts from the arc's start point then the
+centre then the end; `A` is start, centre and an included angle (typed, or finished by picking the
+end ray). Each `ARC` starts back at centre-start-end.
+
+`RECTANG` opens on two opposite corners. `C` takes the centre then a corner; `D` takes a corner
+then a typed length and width. After the first corner, `R` sets a rotation angle so the other
+corner or the dimensions are read in that turned frame. Each `RECTANG` starts back at two corners.
 
 `POLYGON` sizes its shape by a circle, and `I` and `C` decide which part of the polygon sits on
 that circle. **Inscribed** puts the corners on it, which is the default; **circumscribed** puts the
@@ -456,7 +464,12 @@ applies to the selection if there is one.
 
 ### Hatching
 
-Choose a pattern in the ribbon, then click inside any enclosed area.
+Choose a pattern in the ribbon, then click inside any enclosed area. While `HATCH` is running, the
+ribbon also offers **Scale** (pattern spacing) and **Angle** (extra rotation in degrees), and the
+command prompt offers the same as `P` / `S` / `A`. Selected hatches show those properties in the
+properties panel so they can be changed afterwards. Hatches keep a light outline so a click on the
+fill or near an edge selects them, and a crossing window that sits inside a hatch without cutting
+an edge still catches it.
 
 The boundary does not have to be a single object. Every visible curve is split at its
 intersections and the resulting arrangement is searched for the smallest region surrounding
@@ -482,7 +495,7 @@ autocomplete list. Type `HELP` to print the whole table into the history panel.
 | --- | --- |
 | Draw | `LINE`/`L`, `PLINE`/`PL`, `RECTANG`/`REC`, `CIRCLE`/`C`, `ARC`/`A`, `ELLIPSE`/`EL`, `POLYGON`/`POL`, `SPLINE`/`SPL`, `HATCH`/`H` |
 | Annotate | `TEXT`/`DT`, `DIM`/`D`, `DIMLINEAR`/`DLI`, `DIMALIGNED`/`DAL`, `DIMRADIUS`/`DRA`, `DIMDIAMETER`/`DDI`, `DIMANGULAR`/`DAN`, `DIMSCALE`/`DSC` |
-| Modify | `MOVE`/`M`, `COPY`/`CO`, `ROTATE`/`RO`, `SCALE`/`SC`, `MIRROR`/`MI`, `ARRAY`/`AR`, `ARRAYRECT`, `ARRAYPOLAR`, `OFFSET`/`O`, `TRIM`/`TR`, `EXTEND`/`EX`, `FILLET`/`F`, `CHAMFER`/`CHA`, `ERASE`/`E`, `JOIN`/`J`, `GROUP`/`G`, `EXPLODE`/`X`, `OVERKILL`/`OV`, `BOUNDARY`/`BO`, `UNGROUP`/`UNG`, `INSERT`/`I`, `LAYMOV`/`MOVETOLAYER`, `LAYCUR`/`LAYMCUR` |
+| Modify | `MOVE`/`M`, `COPY`/`CO`, `ROTATE`/`RO`, `SCALE`/`SC`, `MIRROR`/`MI`, `ARRAY`/`AR`, `ARRAYRECT`, `ARRAYPOLAR`, `OFFSET`/`O`, `TRIM`/`TR`, `EXTEND`/`EX`, `FILLET`/`F`, `CHAMFER`/`CHA`, `ERASE`/`E`, `JOIN`/`J`, `GROUP`/`G`, `EXPLODE`/`X`, `OVERKILL`/`OV`, `BOUNDARY`/`BO`, `UNGROUP`/`UNG`, `LAYMOV`/`MOVETOLAYER`, `LAYCUR`/`LAYMCUR` |
 | Edit | `SELECT`/`SE`, `ALL`, `UNDO`/`U`, `REDO`/`RE` |
 | View | `ZOOM`/`Z`, `OSNAP`/`OS`, `ORTHO`/`OR`, `POLAR`/`PO`, `HELP` |
 | File | `DXFIN`, `DXFOUT`, `PLOT`/`PRINT` (opens the Plot dialog), `PLOT1` (Plot preset to 1:1) |
@@ -500,8 +513,8 @@ Coverage output:
 
 ## Themes and branding
 
-The interface uses DropLab's own palette from [droplab.co](https://droplab.co): a dark teal ink
-(`#0c161d`) with a cyan accent (`#35c8d2`), set in Space Grotesk and IBM Plex Sans.
+**TrimCAD** ([trimcad.com](https://trimcad.com)) uses a dark teal ink (`#0c161d`) with a cyan accent
+(`#35c8d2`), set in Space Grotesk and IBM Plex Sans.
 
 There is a dark and a light theme, switched with the sun/moon button at the right of the title bar.
 The first visit follows the operating system's own light/dark setting; after that your choice is

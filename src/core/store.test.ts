@@ -259,6 +259,121 @@ describe('circle constructions', () => {
   })
 })
 
+describe('arc constructions', () => {
+  beforeEach(() => {
+    resetDrawing()
+    useCadStore.getState().setTool('select')
+  })
+
+  const onlyArc = () => {
+    const found = useCadStore.getState().doc.entities.find((entity) => entity.type === 'arc')
+    if (!found || found.type !== 'arc') throw new Error('expected an arc')
+    return found
+  }
+
+  it('takes three clicks as points on the curve', () => {
+    useCadStore.getState().setTool('arc')
+    useCadStore.getState().setArcMode('3p')
+    applyDrawTool({ x: 10, y: 0 })
+    applyDrawTool({ x: 0, y: 10 })
+    applyDrawTool({ x: -10, y: 0 })
+
+    expect(onlyArc().center.x).toBeCloseTo(0)
+    expect(onlyArc().center.y).toBeCloseTo(0)
+    expect(onlyArc().radius).toBeCloseTo(10)
+  })
+
+  it('takes start, centre, then end', () => {
+    useCadStore.getState().setTool('arc')
+    useCadStore.getState().setArcMode('sce')
+    applyDrawTool({ x: 10, y: 0 })
+    applyDrawTool({ x: 0, y: 0 })
+    applyDrawTool({ x: 0, y: 10 })
+
+    expect(onlyArc().radius).toBeCloseTo(10)
+    expect(onlyArc().startAngle).toBeCloseTo(0)
+    expect(onlyArc().endAngle).toBeCloseTo(Math.PI / 2)
+  })
+
+  it('finishes start-centre-angle on a typed included angle', () => {
+    useCadStore.getState().setTool('arc')
+    useCadStore.getState().setArcMode('sca')
+    applyDrawTool({ x: 10, y: 0 })
+    applyDrawTool({ x: 0, y: 0 })
+    useCadStore.getState().executeCommand('90')
+
+    expect(onlyArc().endAngle).toBeCloseTo(Math.PI / 2)
+  })
+
+  it('starts the next arc back at centre-start-end', () => {
+    useCadStore.getState().setTool('arc')
+    useCadStore.getState().setArcMode('3p')
+    applyDrawTool({ x: 10, y: 0 })
+    applyDrawTool({ x: 0, y: 10 })
+    applyDrawTool({ x: -10, y: 0 })
+
+    expect(useCadStore.getState().arcMode).toBe('cse')
+  })
+})
+
+describe('rectangle constructions', () => {
+  beforeEach(() => {
+    resetDrawing()
+    useCadStore.getState().setTool('select')
+  })
+
+  const onlyRect = (): PolylineEntity => {
+    const found = useCadStore.getState().doc.entities.find((entity) => entity.type === 'polyline')
+    if (!found || found.type !== 'polyline') throw new Error('expected a rectangle')
+    return found
+  }
+
+  it('takes a centre and a corner', () => {
+    useCadStore.getState().setTool('rect')
+    useCadStore.getState().setRectMode('center')
+    applyDrawTool({ x: 5, y: 5 })
+    applyDrawTool({ x: 10, y: 8 })
+
+    expect(onlyRect().points[0]).toEqual({ x: 0, y: 2 })
+    expect(onlyRect().points[2]).toEqual({ x: 10, y: 8 })
+  })
+
+  it('takes a corner then typed length and width', () => {
+    useCadStore.getState().setTool('rect')
+    useCadStore.getState().setRectMode('dimensions')
+    applyDrawTool({ x: 0, y: 0 })
+    useCadStore.getState().executeCommand('20')
+    useCadStore.getState().executeCommand('10')
+
+    expect(onlyRect().points).toEqual([
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+      { x: 20, y: 10 },
+      { x: 0, y: 10 },
+    ])
+  })
+
+  it('switches to Dimensions mid-command after the first corner', () => {
+    useCadStore.getState().setTool('rect')
+    applyDrawTool({ x: 2, y: 3 })
+    useCadStore.getState().applyKeyword({ key: 'D', label: 'Dimensions' })
+    useCadStore.getState().executeCommand('8')
+    useCadStore.getState().executeCommand('4')
+
+    expect(onlyRect().points[0]).toEqual({ x: 2, y: 3 })
+    expect(onlyRect().points[2]).toEqual({ x: 10, y: 7 })
+  })
+
+  it('starts the next rectangle back at two corners', () => {
+    useCadStore.getState().setTool('rect')
+    useCadStore.getState().setRectMode('center')
+    applyDrawTool({ x: 5, y: 5 })
+    applyDrawTool({ x: 10, y: 8 })
+
+    expect(useCadStore.getState().rectMode).toBe('corners')
+  })
+})
+
 describe('ARRAY', () => {
   /** A single circle at the origin, selected and ready to be repeated. */
   const selectOneCircle = () => {

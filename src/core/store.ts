@@ -1,9 +1,10 @@
 import { create } from 'zustand'
 import {
+  createArc,
   createCircle,
+  createClosedPoly,
   createLine,
   createPolygon,
-  createRect,
   isTransformTool,
   moveEntities,
   rotateEntities,
@@ -25,13 +26,26 @@ import {
 } from './layers'
 import { findHatchBoundary, getEntityAnchorPoints, isPointNearEntity, mirrorEntity, uid } from './geometry'
 import {
+  arcFromCenterStartEnd,
+  arcFromStartCenterAngle,
+  arcFromStartCenterEnd,
+  arcThroughPoints,
   canBeTangent,
   circleOnDiameter,
   circleTangentToTwo,
   circleThroughPoints,
   cornerRadius,
   polygonOnEdge,
+  rectFromCenter,
+  rectFromCorners,
+  rectFromDimensions,
 } from './construct'
+import {
+  clampHatchAngle,
+  clampHatchScale,
+  HATCH_PATTERN_LABELS,
+  nextHatchPattern,
+} from './hatch'
 import { joinSelection, overkill, type CombineOptions } from './combine'
 import { explodeSelection } from './explode'
 import { getPreferences } from './preferences'
@@ -57,19 +71,23 @@ import {
   type Keyword,
   type Prompt,
   type PromptContext,
+  type RectPending,
 } from './prompts'
 import { applySelectionModifier, expandSelectionToGroups, type SelectionModifier } from './selection'
 import { polarArrayCopies, rectangularArrayCopies } from './array'
 import { distance as distanceBetween, sub, type Vec2 } from './math/vec2'
 import type {
+  ArcMode,
   ArrayType,
   CadEntity,
   CircleMode,
   PolygonFit,
   DimensionType,
   DrawingDocument,
+  HatchEntity,
   HatchPattern,
   Layer,
+  RectMode,
   SnapMode,
   ToolMode,
 } from './types'
@@ -140,6 +158,18 @@ type CadState = {
   circlePending: boolean
   /** The two objects picked for a Ttr circle, with the point each was clicked at. */
   tangentPicks: { id: string; point: Vec2 }[]
+  /** Which of ARC's constructions is running. */
+  arcMode: ArcMode
+  /** Start-centre-angle is waiting for the included angle. */
+  arcPending: boolean
+  /** Which of RECTANG's constructions is running. */
+  rectMode: RectMode
+  /** RECTANG is waiting for a typed length, width, or rotation. */
+  rectPending: RectPending | null
+  /** Length typed for a Dimensions rectangle, held until the width arrives. */
+  rectLength: number
+  /** Rotation applied to the next rectangle corner or dimensions, in radians. */
+  rectRotation: number
   /** Whether ARRAY repeats the selection in a grid or around a centre. */
   arrayType: ArrayType
   arrayRows: number
@@ -159,6 +189,12 @@ type CadState = {
   /** Size given to the next dimension, as a multiple of the drawing's dimension style. */
   dimScale: number
   hatchPattern: HatchPattern
+  /** Spacing given to the next hatch, as a multiple of the pattern's built-in tile. */
+  hatchScale: number
+  /** Extra rotation given to the next hatch pattern, in degrees. */
+  hatchAngle: number
+  /** HATCH is waiting for a typed scale or angle. */
+  hatchPending: 'scale' | 'angle' | null
   offsetDistance: number
   /** Radius FILLET rounds a corner with. Zero squares the corner off instead. */
   filletRadius: number
@@ -195,6 +231,10 @@ type CadState = {
   setPolygonFit: (fit: PolygonFit) => void
   /** Switches CIRCLE between its constructions, starting the new one from scratch. */
   setCircleMode: (mode: CircleMode) => void
+  /** Switches ARC between its constructions, starting the new one from scratch. */
+  setArcMode: (mode: ArcMode) => void
+  /** Switches RECTANG between its constructions, starting the new one from scratch. */
+  setRectMode: (mode: RectMode) => void
   setArrayType: (type: ArrayType) => void
   /** Changes one of ARRAY's counts or angles, keeping it inside a sensible range. */
   setArrayOption: (option: ArrayOption, value: number) => void
@@ -207,6 +247,13 @@ type CadState = {
   /** Resizes dimensions that are already drawn, as the properties panel does. */
   resizeDimensions: (ids: string[], scale: number) => void
   setHatchPattern: (pattern: HatchPattern) => void
+  setHatchScale: (scale: number) => void
+  setHatchAngle: (angle: number) => void
+  /** Updates pattern, scale or angle on hatches that are already drawn. */
+  updateHatches: (
+    ids: string[],
+    patch: Partial<Pick<HatchEntity, 'pattern' | 'scale' | 'angle'>>,
+  ) => void
   toggleSnapMode: (mode: SnapMode) => void
   finishDraft: () => void
   closeDraft: () => void
@@ -275,6 +322,13 @@ const perCommandOptions = {
   circleMode: 'center' as CircleMode,
   circlePending: false,
   tangentPicks: [] as { id: string; point: Vec2 }[],
+  arcMode: 'cse' as ArcMode,
+  arcPending: false,
+  rectMode: 'corners' as RectMode,
+  rectPending: null as RectPending | null,
+  rectLength: 0,
+  rectRotation: 0,
+  hatchPending: null as 'scale' | 'angle' | null,
   arrayPending: null as ArrayOption | null,
 }
 
@@ -311,6 +365,12 @@ export const useCadStore = create<CadState>((set, get) => ({
   circleMode: 'center' as CircleMode,
   circlePending: false,
   tangentPicks: [],
+  arcMode: 'cse' as ArcMode,
+  arcPending: false,
+  rectMode: 'corners' as RectMode,
+  rectPending: null,
+  rectLength: 0,
+  rectRotation: 0,
   arrayType: 'rect' as ArrayType,
   arrayRows: 3,
   arrayColumns: 4,
@@ -323,6 +383,9 @@ export const useCadStore = create<CadState>((set, get) => ({
   dimensionType: 'linear',
   dimScale: 1,
   hatchPattern: 'ansi31',
+  hatchScale: 1,
+  hatchAngle: 0,
+  hatchPending: null,
   offsetDistance: 10,
   filletRadius: 10,
   chamferDistance: 10,
@@ -383,6 +446,9 @@ export const useCadStore = create<CadState>((set, get) => ({
   setPolygonFit: (polygonFit) => set({ polygonFit }),
   // Half-collected picks belong to the old construction, so they go with it.
   setCircleMode: (circleMode) => set({ circleMode, circlePending: false, tangentPicks: [], draftPoints: [] }),
+  setArcMode: (arcMode) => set({ arcMode, arcPending: false, draftPoints: [] }),
+  setRectMode: (rectMode) =>
+    set({ rectMode, rectPending: null, rectLength: 0, rectRotation: 0, draftPoints: [] }),
   // Switching between a grid and a sweep abandons any base point picked for the other one.
   setArrayType: (arrayType) => set({ arrayType, draftPoints: [], arrayPending: null }),
   setArrayOption: (option, value) => {
@@ -422,6 +488,23 @@ export const useCadStore = create<CadState>((set, get) => ({
     }))
   },
   setHatchPattern: (hatchPattern) => set({ hatchPattern }),
+  setHatchScale: (scale) => set({ hatchScale: clampHatchScale(scale) }),
+  setHatchAngle: (angle) => set({ hatchAngle: clampHatchAngle(angle) }),
+  updateHatches: (ids, patch) => {
+    const wanted = new Set(ids)
+    get().updateDocument((doc) => ({
+      ...doc,
+      entities: doc.entities.map((entity) => {
+        if (entity.type !== 'hatch' || !wanted.has(entity.id)) return entity
+        return {
+          ...entity,
+          ...(patch.pattern !== undefined ? { pattern: patch.pattern } : {}),
+          ...(patch.scale !== undefined ? { scale: clampHatchScale(patch.scale) } : {}),
+          ...(patch.angle !== undefined ? { angle: clampHatchAngle(patch.angle) } : {}),
+        }
+      }),
+    }))
+  },
   toggleSnapMode: (mode) =>
     set((state) => ({
       snapModes: state.snapModes.includes(mode)
@@ -634,7 +717,7 @@ export const useCadStore = create<CadState>((set, get) => ({
     // Work from this same run is just a page reload, so it comes back quietly.
     if (decision.kind === 'offer') {
       const when = describeAge(decision.savedAt)
-      if (!window.confirm(`DropLabCad closed with unsaved work from ${when}. Recover it?`)) {
+      if (!window.confirm(`TrimCAD closed with unsaved work from ${when}. Recover it?`)) {
         clearAutosave()
         return
       }
@@ -1109,6 +1192,65 @@ const finishTangentCircle = (state: CadStoreState, radius: number): boolean => {
   return true
 }
 
+/** Places an arc from whichever construction ARC is currently using. */
+const runArc = (state: CadStoreState, point: Vec2, layerId: string): boolean => {
+  const { draftPoints, arcMode } = state
+
+  const place = (shape: ReturnType<typeof arcThroughPoints>, emptyMessage: string) => {
+    useCadStore.setState({ draftPoints: [], arcPending: false })
+    if (!shape) {
+      state.setStatusMessage(emptyMessage)
+      return
+    }
+    state.addEntity(createArc(layerId, shape.center, shape.radius, shape.startAngle, shape.endAngle))
+    state.endCommand()
+  }
+
+  if (arcMode === '3p') {
+    if (draftPoints.length < 2) {
+      state.addDraftPoint(point)
+      return true
+    }
+    place(
+      arcThroughPoints(draftPoints[0], draftPoints[1], point),
+      'Those three points lie in a straight line, so no arc passes through them.',
+    )
+    return true
+  }
+
+  if (arcMode === 'sce' || arcMode === 'sca') {
+    if (draftPoints.length === 0) {
+      state.addDraftPoint(point)
+      return true
+    }
+    if (draftPoints.length === 1) {
+      state.addDraftPoint(point)
+      if (arcMode === 'sca') {
+        useCadStore.setState({ arcPending: true })
+        state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      }
+      return true
+    }
+    // A third pick finishes start-centre-angle the same way as start-centre-end: by an end ray.
+    place(
+      arcFromStartCenterEnd(draftPoints[0], draftPoints[1], point),
+      'The start and centre are in the same place.',
+    )
+    return true
+  }
+
+  // Centre, start, end — the default.
+  if (draftPoints.length < 2) {
+    state.addDraftPoint(point)
+    return true
+  }
+  place(
+    arcFromCenterStartEnd(draftPoints[0], draftPoints[1], point),
+    'The centre and start are in the same place.',
+  )
+  return true
+}
+
 /**
  * Trims or extends everything a dragged fence line crosses, in one undo step.
  *
@@ -1290,6 +1432,85 @@ const applyTypedNumber = (state: CadStoreState, value: number): boolean => {
       return true
     }
     return finishTangentCircle(state, value)
+  }
+
+  // Start-centre-angle finishes on a typed included angle once the two points are down.
+  if (state.arcPending && state.activeTool === 'arc') {
+    const [start, center] = state.draftPoints
+    if (!start || !center) {
+      useCadStore.setState({ arcPending: false })
+      return true
+    }
+    const shape = arcFromStartCenterAngle(start, center, value)
+    useCadStore.setState({ arcPending: false, draftPoints: [] })
+    if (!shape) {
+      state.setStatusMessage('The start and centre are in the same place, or the angle is zero.')
+      return true
+    }
+    const layerId = state.activeLayerId || state.doc.layers[0].id
+    state.addEntity(createArc(layerId, shape.center, shape.radius, shape.startAngle, shape.endAngle))
+    state.endCommand()
+    return true
+  }
+
+  // RECTANG's Dimensions and Rotation options take typed numbers rather than picks.
+  if (state.rectPending && state.activeTool === 'rect') {
+    if (state.rectPending === 'rotation') {
+      useCadStore.setState({ rectRotation: (value * Math.PI) / 180, rectPending: null })
+      state.log('result', `Rotation ${value}\u00b0`)
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return true
+    }
+    if (state.rectPending === 'length') {
+      if (Math.abs(value) < 1e-9) {
+        state.log('error', 'The length must not be zero.')
+        return true
+      }
+      useCadStore.setState({ rectLength: value, rectPending: 'width' })
+      state.log('result', `Length ${value}`)
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return true
+    }
+    if (state.rectPending === 'width') {
+      if (Math.abs(value) < 1e-9) {
+        state.log('error', 'The width must not be zero.')
+        return true
+      }
+      const origin = state.draftPoints[0]
+      if (!origin) {
+        useCadStore.setState({ rectPending: null })
+        return true
+      }
+      const points = rectFromDimensions(origin, state.rectLength, value, state.rectRotation)
+      useCadStore.setState({ rectPending: null, draftPoints: [], rectLength: 0, rectRotation: 0 })
+      if (!points) {
+        state.setStatusMessage('Those dimensions do not make a rectangle.')
+        return true
+      }
+      const layerId = state.activeLayerId || state.doc.layers[0].id
+      state.addEntity(createClosedPoly(layerId, points))
+      state.endCommand()
+      return true
+    }
+  }
+
+  if (state.hatchPending && state.activeTool === 'hatch') {
+    if (state.hatchPending === 'scale') {
+      if (value <= 0) {
+        state.log('error', 'The hatch scale must be greater than zero.')
+        return true
+      }
+      state.setHatchScale(value)
+      useCadStore.setState({ hatchPending: null })
+      state.log('result', `Hatch scale ${useCadStore.getState().hatchScale}`)
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return true
+    }
+    state.setHatchAngle(value)
+    useCadStore.setState({ hatchPending: null })
+    state.log('result', `Hatch angle ${useCadStore.getState().hatchAngle}\u00b0`)
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return true
   }
 
   if (state.cornerPending && (state.activeTool === 'fillet' || state.activeTool === 'chamfer')) {
@@ -1645,6 +1866,14 @@ export const promptContextFor = (state: CadStoreState, swapped = false): PromptC
   circleMode: state.circleMode,
   // The tangent picks count as steps of their own, so the radius prompt only shows once both are in.
   circlePending: state.circlePending,
+  arcMode: state.arcMode,
+  arcPending: state.arcPending,
+  rectMode: state.rectMode,
+  rectPending: state.rectPending,
+  hatchPattern: state.hatchPattern,
+  hatchScale: state.hatchScale,
+  hatchAngle: state.hatchAngle,
+  hatchPending: state.hatchPending,
   pickingEdges: state.pickingEdges,
   edgeCount: state.edgeIds === null ? null : state.edgeIds.length,
   swapped,
@@ -1681,7 +1910,50 @@ const runKeyword = (state: CadStoreState, keyword: Keyword) => {
     case '3 Point':
     case '2 Point':
     case 'Ttr (tangent tangent radius)':
-      state.setCircleMode(keyword.key === '3P' ? '3p' : keyword.key === '2P' ? '2p' : 'ttr')
+      if (state.activeTool === 'arc') {
+        state.setArcMode('3p')
+      } else {
+        state.setCircleMode(keyword.key === '3P' ? '3p' : keyword.key === '2P' ? '2p' : 'ttr')
+      }
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'Start':
+      state.setArcMode('sce')
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'Center':
+      state.setRectMode('center')
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'Dimensions':
+      // Keep any first corner already picked, then ask for length.
+      if (state.draftPoints.length > 0) {
+        useCadStore.setState({ rectMode: 'dimensions', rectPending: 'length' })
+      } else {
+        state.setRectMode('dimensions')
+      }
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'Rotation':
+      useCadStore.setState({ rectPending: 'rotation' })
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'Pattern':
+      state.setHatchPattern(nextHatchPattern(state.hatchPattern))
+      state.log('result', `Pattern ${HATCH_PATTERN_LABELS[useCadStore.getState().hatchPattern]}`)
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'Scale':
+      useCadStore.setState({ hatchPending: 'scale' })
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'Angle':
+      if (state.activeTool === 'arc') {
+        state.setArcMode('sca')
+        state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+        return
+      }
+      useCadStore.setState({ hatchPending: 'angle' })
       state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
       return
     case 'Diameter':
@@ -2002,7 +2274,26 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
   }
 
   if (activeTool === 'rect') {
-    finishTwoPoint((a, b) => createRect(currentLayerId, a, b))
+    if (state.rectMode === 'dimensions') {
+      if (draftPoints.length === 0) {
+        addDraftPoint(point)
+        useCadStore.setState({ rectPending: 'length' })
+        state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+        return
+      }
+      return
+    }
+    if (state.rectMode === 'center') {
+      if (draftPoints.length === 0) {
+        addDraftPoint(point)
+        return
+      }
+      addEntity(createClosedPoly(currentLayerId, rectFromCenter(draftPoints[0], point, state.rectRotation)))
+      clearDraft()
+      state.endCommand()
+      return
+    }
+    finishTwoPoint((a, b) => createClosedPoly(currentLayerId, rectFromCorners(a, b, state.rectRotation)))
     return
   }
 
@@ -2041,23 +2332,7 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
   }
 
   if (activeTool === 'arc') {
-    if (draftPoints.length < 2) {
-      addDraftPoint(point)
-      return
-    }
-    const [center, start] = draftPoints
-    const radius = Math.hypot(start.x - center.x, start.y - center.y)
-    addEntity({
-      id: uid(),
-      type: 'arc',
-      layerId: currentLayerId,
-      center,
-      radius,
-      startAngle: Math.atan2(start.y - center.y, start.x - center.x),
-      endAngle: Math.atan2(point.y - center.y, point.x - center.x),
-    })
-    clearDraft()
-    state.endCommand()
+    runArc(state, point, currentLayerId)
     return
   }
 
@@ -2105,7 +2380,8 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
       layerId: currentLayerId,
       boundary,
       pattern: state.hatchPattern,
-      scale: 1,
+      scale: state.hatchScale,
+      angle: state.hatchAngle,
     })
     state.setStatusMessage('Hatch created')
     return

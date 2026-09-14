@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createCircle, createLine, createRect } from './commands'
-import { findHatchBoundary, polygonArea } from './geometry'
+import { findHatchBoundary, isPointNearEntity, polygonArea } from './geometry'
 import { applyDrawTool, useCadStore } from './store'
+import type { HatchEntity } from './types'
 
 describe('hatch boundary detection', () => {
   it('picks the region containing the clicked point, not the first shape in the drawing', () => {
@@ -57,7 +58,34 @@ describe('hatch tool', () => {
     if (hatch?.type === 'hatch') {
       expect(hatch.boundary).toHaveLength(4)
       expect(hatch.pattern).toBe('ansi31')
+      expect(hatch.scale).toBe(1)
+      expect(hatch.angle).toBe(0)
     }
+  })
+
+  it('stores the scale and angle chosen for the hatch', () => {
+    const layerId = useCadStore.getState().doc.layers[0].id
+    useCadStore.getState().updateDocument((draft) => ({
+      ...draft,
+      entities: [createRect(layerId, { x: 0, y: 0 }, { x: 40, y: 40 })],
+    }))
+
+    useCadStore.getState().setTool('hatch')
+    useCadStore.getState().setHatchScale(2)
+    useCadStore.getState().setHatchAngle(30)
+    useCadStore.getState().setHatchPattern('net')
+    applyDrawTool({ x: 20, y: 20 })
+
+    const hatch = useCadStore.getState().doc.entities.find((entity) => entity.type === 'hatch')
+    expect(hatch).toMatchObject({ pattern: 'net', scale: 2, angle: 30 })
+  })
+
+  it('accepts a typed scale from the Scale option', () => {
+    useCadStore.getState().setTool('hatch')
+    useCadStore.getState().applyKeyword({ key: 'S', label: 'Scale' })
+    useCadStore.getState().executeCommand('1.5')
+    expect(useCadStore.getState().hatchScale).toBe(1.5)
+    expect(useCadStore.getState().hatchPending).toBeNull()
   })
 
   it('reports a message instead of hatching when there is no boundary', () => {
@@ -101,5 +129,34 @@ describe('hatch tool', () => {
     expect(hatches).toHaveLength(2)
     expect(polygonArea(hatches[0].type === 'hatch' ? hatches[0].boundary : [])).toBeCloseTo(1600, 4)
     expect(polygonArea(hatches[1].type === 'hatch' ? hatches[1].boundary : [])).toBeCloseTo(1600, 4)
+  })
+})
+
+describe('hatch picking', () => {
+  const hatch: HatchEntity = {
+    id: 'h',
+    type: 'hatch',
+    layerId: 'L',
+    pattern: 'ansi31',
+    scale: 1,
+    angle: 0,
+    boundary: [
+      { x: 0, y: 0 },
+      { x: 40, y: 0 },
+      { x: 40, y: 40 },
+      { x: 0, y: 40 },
+    ],
+  }
+
+  it('selects a click inside the fill', () => {
+    expect(isPointNearEntity({ x: 20, y: 20 }, hatch, 2)).toBe(true)
+  })
+
+  it('selects a click within the pick box of an edge', () => {
+    expect(isPointNearEntity({ x: 20, y: -1 }, hatch, 2)).toBe(true)
+  })
+
+  it('ignores a click well outside the hatch', () => {
+    expect(isPointNearEntity({ x: 80, y: 80 }, hatch, 2)).toBe(false)
   })
 })

@@ -1,6 +1,6 @@
 import { useCallback, useState, type PointerEvent as ReactPointerEvent } from 'react'
 
-const WIDTH_KEY = 'droplabcad.sidebar-width'
+const WIDTH_KEY = 'trimcad.sidebar-width'
 const MIN_WIDTH = 240
 const MAX_WIDTH = 720
 const DEFAULT_WIDTH = 320
@@ -72,7 +72,7 @@ export const useSidebarWidth = () => {
  * squeezing out the panels below.
  */
 export const usePanelHeight = (key: string, defaultHeight: number, min = 80, max = 600) => {
-  const storageKey = `droplabcad.panel-height.${key}`
+  const storageKey = `trimcad.panel-height.${key}`
   const [height, setHeight] = useState(() => readStored(storageKey, defaultHeight, min, max))
 
   const startResize = useCallback(
