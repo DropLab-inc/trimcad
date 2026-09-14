@@ -1488,6 +1488,16 @@ export function CanvasViewport() {
                   className={isActive ? 'dynamic-field is-active' : 'dynamic-field'}
                   style={{ cursor: 'text', touchAction: 'none' }}
                   onPointerDown={tapField(index)}
+                  /*
+                   * iOS raises the keyboard for a focus taken in a touch handler, not always for one
+                   * taken in pointerdown, so the tap is honoured again at the end of the gesture.
+                   * Focusing what is already focused costs nothing.
+                   */
+                  onTouchEnd={(event) => {
+                    event.stopPropagation()
+                    focusCommandInput()
+                  }}
+                  onClick={() => focusCommandInput()}
                   onMouseDown={blockTap}
                   onTouchStart={blockTap}
                 >

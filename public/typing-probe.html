@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
+<title>TrimCAD typing probe</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 14px; background: #0c161d; color: #e8f3f5; font: 15px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  p.lede { margin: 0 0 14px; color: #8fb3bb; font-size: 13px; }
+  input {
+    width: 100%; box-sizing: border-box; font-size: 16px; padding: 12px;
+    background: #101f27; color: #e8f3f5; border: 1px solid #2b4a55; border-radius: 6px;
+  }
+  input:focus { outline: 2px solid #35c8d2; }
+  .row { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+  button { font: inherit; font-size: 14px; padding: 10px 14px; background: #10454c; color: #9fe8ee; border: 1px solid #2b4a55; border-radius: 6px; }
+  .stats { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 12px 0; font-size: 14px; }
+  .stats b { color: #35c8d2; font-weight: 600; }
+  #log { white-space: pre-wrap; font-size: 12.5px; background: #0a1218; border: 1px solid #1f3540; border-radius: 6px; padding: 10px; min-height: 40vh; }
+  .k { color: #35c8d2; }
+  .w { color: #ffcf70; }
+</style>
+</head>
+<body>
+<h1>TrimCAD typing probe</h1>
+<p class="lede">
+  Open this on the phone, tap the field, and type <b>20</b> (plus a backspace). Then screenshot the log
+  and send it. Nothing here is sent anywhere — it only draws what your keyboard does.
+</p>
+
+<input id="field" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="enter" placeholder="Tap here, then type 20" />
+
+<div class="row">
+  <button id="clear">Clear log</button>
+  <button id="focus">Focus field</button>
+</div>
+
+<div class="stats">
+  <span>value</span><b id="s-value">""</b>
+  <span>caret</span><b id="s-caret">0,0</b>
+  <span>keydown target</span><b id="s-target">-</b>
+  <span>activeElement</span><b id="s-active">-</b>
+  <span>keyCode seen</span><b id="s-keycode">-</b>
+  <span>window keydowns</span><b id="s-window">0</b>
+  <span>input events</span><b id="s-input">0</b>
+  <span>compositions</span><b id="s-comp">0</b>
+  <span>blur/focus</span><b id="s-focus">0/0</b>
+</div>
+
+<div id="log"></div>
+
+<script>
+/*
+ * Reproduces the app's own wiring so the log shows which of its paths a real keyboard hits:
+ *   - a window-level keydown listener (the app appends printable characters there and focuses
+ *     the field, which is the "type anywhere" feature and, before it was gated, the second writer
+ *     that scrambled values);
+ *   - the field's own input event, which is what a phone keyboard normally drives.
+ * Every event is timestamped relative to the first keystroke, in the order they arrive.
+ */
+const field = document.getElementById('field');
+const logEl = document.getElementById('log');
+let t0 = null;
+let counters = { window: 0, input: 0, comp: 0, focus: 0, blur: 0 };
+let lastKeyCode = '-';
+let lastTarget = '-';
+
+const now = () => (t0 === null ? 0 : Math.round(performance.now() - t0));
+
+function log(klass, text) {
+  logEl.textContent += `${String(now()).padStart(6)}ms  ${klass}  ${text}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function refresh() {
+  document.getElementById('s-value').textContent = JSON.stringify(field.value);
+  document.getElementById('s-caret').textContent = `${field.selectionStart},${field.selectionEnd}`;
+  document.getElementById('s-target').textContent = lastTarget;
+  document.getElementById('s-active').textContent = (document.activeElement && (document.activeElement.id || document.activeElement.tagName)) || '-';
+  document.getElementById('s-keycode').textContent = lastKeyCode;
+  document.getElementById('s-window').textContent = counters.window;
+  document.getElementById('s-input').textContent = counters.input;
+  document.getElementById('s-comp').textContent = counters.comp;
+  document.getElementById('s-focus').textContent = `${counters.focus}/${counters.blur}`;
+}
+
+// The app's global key handler, in miniature: append the character and focus the field.
+window.addEventListener('keydown', (event) => {
+  if (t0 === null) t0 = performance.now();
+  counters.window += 1;
+  lastKeyCode = `${event.keyCode}${event.key === 'Unidentified' ? ' (Unidentified)' : ''}`;
+  lastTarget = (event.target && (event.target.id || event.target.tagName)) || '-';
+  log('keydown ', `key=${JSON.stringify(event.key)} code=${event.keyCode} target=${lastTarget} activeElement=${document.activeElement && document.activeElement.id}`);
+  if (event.key.length === 1 && !event.altKey) {
+    log('  write', `window handler would append ${JSON.stringify(event.key)} to the value`);
+  }
+  refresh();
+}, true);
+
+field.addEventListener('input', (event) => {
+  if (t0 === null) t0 = performance.now();
+  counters.input += 1;
+  log('input   ', `value=${JSON.stringify(field.value)} caret=${field.selectionStart} type=${event.inputType || (event.data ? 'data' : '-')} data=${JSON.stringify(event.data)}`);
+  refresh();
+});
+
+field.addEventListener('beforeinput', (event) => {
+  log('before  ', `inputType=${event.inputType} data=${JSON.stringify(event.data)}`);
+});
+
+for (const name of ['compositionstart', 'compositionupdate', 'compositionend']) {
+  field.addEventListener(name, (event) => {
+    if (t0 === null) t0 = performance.now();
+    if (name === 'compositionstart') counters.comp += 1;
+    log('compose ', `${name} data=${JSON.stringify(event.data)} value=${JSON.stringify(field.value)}`);
+    refresh();
+  });
+}
+
+field.addEventListener('focus', () => { counters.focus += 1; log('focus   ', 'field took focus'); refresh(); });
+field.addEventListener('blur', () => { counters.blur += 1; log('blur    ', 'field lost focus'); refresh(); });
+field.addEventListener('keyup', (event) => log('keyup   ', `key=${JSON.stringify(event.key)}`));
+
+document.getElementById('clear').addEventListener('click', () => { logEl.textContent = ''; t0 = null; refresh(); });
+document.getElementById('focus').addEventListener('click', () => field.focus());
+
+refresh();
+log('ready   ', 'events will appear here, oldest first');
+</script>
+</body>
+</html>
