@@ -92,6 +92,7 @@ export type IconName =
   | 'external'
   | 'star'
   | 'thumb'
+  | 'panels'
 
 /** A small filled square, the way AutoCAD marks pick points and grips. */
 const grip = (x: number, y: number, key?: string) => (
@@ -700,6 +701,14 @@ const GLYPHS: Record<IconName, ReactElement> = {
     <g>
       <path d="M7 20.2 L7 10.6 L10.6 10.6 L10.6 6.4 A 2.3 2.3 0 0 1 15.2 6.4 L15.2 10.6 L18.5 10.6 A 1.7 1.7 0 0 1 20.2 12.6 L19 18.4 A 1.9 1.9 0 0 1 17.1 20.2 Z" />
       <path className="accent" d="M4 20.2 L4 10.6 L7 10.6 L7 20.2 Z" />
+    </g>
+  ),
+  // A window with the side panel picked out: the layers and snap panels.
+  panels: (
+    <g>
+      <rect x={3} y={5} width={18} height={14} rx={1.2} />
+      <path className="accent" d="M15 5 L15 19" />
+      <path className="accent" d="M17.5 9 L20 9 M17.5 12 L20 12 M17.5 15 L20 15" />
     </g>
   ),
 }

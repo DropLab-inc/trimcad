@@ -65,4 +65,10 @@ describe('renderDoc', () => {
     expect(headings.length).toBeGreaterThan(10)
     expect(html).toContain('<h2')
   })
+
+  it('wraps wide tables so a phone scrolls the table, not the page', () => {
+    const { html } = renderDoc('| Input | Action |\n| --- | --- |\n| Enter | Accept |\n')
+    expect(html).toContain('<div class="table-scroll"><table>')
+    expect(html).toContain('</table></div>')
+  })
 })

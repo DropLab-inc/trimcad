@@ -102,5 +102,16 @@ export function renderDoc(markdown: string): RenderedDoc {
     node.setAttribute('rel', 'noreferrer noopener')
   })
 
+  /*
+   * The manual is full of wide tables. Wrapping each one means a narrow window
+   * scrolls the table sideways instead of scrolling the whole page.
+   */
+  parsed.body.querySelectorAll('table').forEach((table) => {
+    const wrapper = parsed.createElement('div')
+    wrapper.className = 'table-scroll'
+    table.replaceWith(wrapper)
+    wrapper.append(table)
+  })
+
   return { html: parsed.body.innerHTML, headings }
 }

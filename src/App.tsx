@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useCadStore } from './core/store'
 import { CanvasViewport } from './ui/CanvasViewport'
 import { CommandLine } from './ui/CommandLine'
@@ -6,6 +6,7 @@ import { DocsView } from './ui/DocsView'
 import { FeatureRequestsView } from './ui/FeatureRequestsView'
 import { FileMenu } from './ui/FileMenu'
 import { HelpMenu } from './ui/HelpMenu'
+import { Icon } from './ui/Icon'
 import { PreferencesMenu } from './ui/PreferencesMenu'
 import { PrintDialog } from './ui/PrintDialog'
 import { LayerPanel } from './ui/LayerPanel'
@@ -18,12 +19,23 @@ import { ThemeToggle } from './ui/ThemeToggle'
 import { Toolbar } from './ui/Toolbar'
 import { useGlobalShortcuts } from './ui/useGlobalShortcuts'
 import { useRoute } from './ui/useHashRoute'
+import { NARROW_QUERY, useMediaQuery } from './ui/useMediaQuery'
 import { useSidebarWidth } from './ui/useSidebarWidth'
 
 function App() {
   const maybeRecoverAutosave = useCadStore((state) => state.maybeRecoverAutosave)
   const { width: sidebarWidth, startResize } = useSidebarWidth()
   const route = useRoute()
+  const narrow = useMediaQuery(NARROW_QUERY)
+  /*
+   * On a phone the layer and snap panels are a drawer rather than a column, and
+   * the drawing gets the whole width. The drawer remembers which page it was
+   * opened on, so walking to the manual and back never leaves it hanging open.
+   */
+  const routeKey = route.kind === 'docs' ? `docs:${route.docId}` : route.kind
+  const [drawerOn, setDrawerOn] = useState<string | null>(null)
+  const panelsOpen = narrow && drawerOn === routeKey
+
   // The drawing keys belong to the drawing: on a reader page they stand down.
   useGlobalShortcuts(route.kind === 'cad')
 
@@ -47,7 +59,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${narrow ? 'is-narrow' : ''}`}>
       <header className="topbar">
         <div className="titlebar">
           <h1 className="wordmark">
@@ -59,25 +71,53 @@ function App() {
         <QuickAccess />
         <HelpMenu />
           <ThemeToggle />
+          {narrow && (
+            <button
+              type="button"
+              className={`panels-toggle ${panelsOpen ? 'active' : ''}`}
+              aria-expanded={panelsOpen}
+              aria-controls="drawing-panels"
+              aria-label={panelsOpen ? 'Hide the panels' : 'Show the layers, snaps and properties panels'}
+              title="Layers, snaps and properties"
+              onClick={() => setDrawerOn(panelsOpen ? null : routeKey)}
+            >
+              <Icon name="panels" />
+              <span className="panels-toggle-label">Panels</span>
+            </button>
+          )}
         </div>
         <Toolbar />
       </header>
 
-      <main className="workspace" style={{ gridTemplateColumns: `minmax(0, 1fr) 6px ${sidebarWidth}px` }}>
+      <main
+        className="workspace"
+        style={narrow ? undefined : { gridTemplateColumns: `minmax(0, 1fr) 6px ${sidebarWidth}px` }}
+      >
         <CanvasViewport />
-        <div
-          className="sidebar-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize the side panels"
-          onPointerDown={startResize}
-        />
-        <aside className="rightbar">
+        {!narrow && (
+          <div
+            className="sidebar-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize the side panels"
+            onPointerDown={startResize}
+          />
+        )}
+        <aside className={`rightbar ${panelsOpen ? 'open' : ''}`} id="drawing-panels">
           <LayerPanel />
           <SnapPanel />
           <PropertiesPanel />
         </aside>
       </main>
+
+      {panelsOpen && (
+        <button
+          type="button"
+          className="panel-scrim"
+          aria-label="Close the panels"
+          onClick={() => setDrawerOn(null)}
+        />
+      )}
 
       <CommandLine />
       <StatusBar />

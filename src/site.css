@@ -12,6 +12,9 @@
 .site-view {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  /* One column clamped to the view: without this the widest child sizes the
+     whole grid and the reader scrolls sideways instead of the panel scrolling. */
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   background: var(--surface-1);
@@ -158,8 +161,13 @@
 }
 
 .docs-article {
+  /* min-width:0 keeps one long token in the manual from widening the column. */
   min-width: 0;
   max-width: 78ch;
+}
+
+.markdown {
+  overflow-wrap: break-word;
 }
 
 .docs-kicker {
@@ -311,6 +319,12 @@
 .markdown img {
   max-width: 100%;
   border-radius: 0.35rem;
+}
+
+/* Wide tables scroll inside their own box rather than widening the page. */
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 /* --------------------------------------------------------------- shared furniture */
@@ -961,22 +975,224 @@
   font-size: 0.72rem;
 }
 
-/* Narrow windows: the sidebar becomes a table of contents above the text. */
+/* ------------------------------------------------------------------ narrow windows */
+
+/*
+ * A phone is not a small desktop: the reader pages swap their sidebar for a row
+ * of chips, drop the taglines that cost three lines of scroll, and put the whole
+ * width behind the text. Nothing is hidden outright — icon-only tabs were a
+ * mistake, since the labels are the only thing that says where a tab goes.
+ */
 @media (max-width: 900px) {
+  .site-nav {
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+    padding: 0.45rem 0.5rem;
+  }
+
+  /* Tabs scroll sideways, labels intact, rather than collapsing to bare icons. */
+  .site-tabs {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 0.25rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .site-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .site-tab {
+    flex: none;
+    padding: 0.5rem 0.6rem;
+    font-size: 0.78rem;
+  }
+
+  .site-back {
+    flex: none;
+    padding: 0.5rem 0.6rem;
+  }
+
+  .site-body {
+    padding: 1rem 0.85rem 3.5rem;
+  }
+
+  .site-hero {
+    gap: 1rem;
+  }
+
+  .site-hero h1 {
+    font-size: 1.3rem;
+  }
+
+  .site-lead {
+    font-size: 0.92rem;
+  }
+
+  .site-hero-actions {
+    width: 100%;
+  }
+
+  .site-hero-actions > * {
+    flex: 1 1 auto;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  /* --- manual --- */
+
   .docs-body {
     grid-template-columns: minmax(0, 1fr);
-    gap: 1.25rem;
+    gap: 1rem;
   }
 
   .docs-nav {
     position: static;
+    gap: 0.9rem;
   }
 
-  .site-nav {
-    flex-wrap: wrap;
+  /* The manual switcher becomes three chips instead of three stacked blocks. */
+  .docs-nav-group:first-child ul {
+    display: flex;
+    gap: 0.35rem;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
-  .site-tab span {
+  .docs-nav-group:first-child ul::-webkit-scrollbar {
     display: none;
   }
+
+  .docs-nav-group:first-child li {
+    flex: none;
+  }
+
+  .docs-nav-group:first-child li a {
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+
+  .docs-nav-group:first-child li a.active {
+    border-color: var(--accent-deep);
+  }
+
+  /* Taglines are the first thing to go: they cost a screenful before the text. */
+  .docs-nav li p {
+    display: none;
+  }
+
+  /* The contents list scrolls in place rather than pushing the article down. */
+  .docs-toc {
+    max-height: 24dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .docs-toc li a {
+    padding: 0.4rem 0.5rem;
+  }
+
+  .docs-article {
+    max-width: none;
+  }
+
+  .markdown {
+    font-size: 0.95rem;
+  }
+
+  .markdown h1 {
+    font-size: 1.4rem;
+  }
+
+  .markdown h2 {
+    margin-top: 1.6rem;
+  }
+
+  /* --- feature requests --- */
+
+  .requests-toolbar {
+    gap: 0.45rem;
+  }
+
+  .requests-search {
+    flex: 1 1 100%;
+    min-height: 44px;
+  }
+
+  .requests-sort {
+    flex: 1 1 auto;
+  }
+
+  .requests-sort select,
+  .requests-refresh {
+    min-height: 44px;
+  }
+
+  .requests-refresh {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .request-card {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.65rem;
+    padding: 0.8rem 0.75rem;
+  }
+
+  .request-votes {
+    min-width: 2.6rem;
+  }
+
+  .request-excerpt {
+    font-size: 0.82rem;
+  }
+
+  /* --- support --- */
+
+  .support-card {
+    padding: 1rem;
+  }
+
+  .site-primary,
+  .site-secondary {
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  /* --- request form: a sheet rising from the bottom, where the thumb is --- */
+
+  .site-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+
+  .site-dialog {
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: 0.8rem 0.8rem 0 0;
+  }
+
+  .site-field input,
+  .site-field select,
+  .site-field textarea {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .site-dialog-footer {
+    padding: 0.7rem 0.85rem calc(0.7rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .site-dialog-footer > button {
+    min-height: 44px;
+  }
+
+  .site-dialog-footer .site-primary {
+    flex: 1 1 auto;
+  }
 }
+
