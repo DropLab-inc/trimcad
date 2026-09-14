@@ -2,7 +2,10 @@ import { useEffect } from 'react'
 import { useCadStore } from './core/store'
 import { CanvasViewport } from './ui/CanvasViewport'
 import { CommandLine } from './ui/CommandLine'
+import { DocsView } from './ui/DocsView'
+import { FeatureRequestsView } from './ui/FeatureRequestsView'
 import { FileMenu } from './ui/FileMenu'
+import { HelpMenu } from './ui/HelpMenu'
 import { PreferencesMenu } from './ui/PreferencesMenu'
 import { PrintDialog } from './ui/PrintDialog'
 import { LayerPanel } from './ui/LayerPanel'
@@ -10,19 +13,38 @@ import { PropertiesPanel } from './ui/PropertiesPanel'
 import { QuickAccess } from './ui/QuickAccess'
 import { SnapPanel } from './ui/SnapPanel'
 import { StatusBar } from './ui/StatusBar'
+import { SupportView } from './ui/SupportView'
 import { ThemeToggle } from './ui/ThemeToggle'
 import { Toolbar } from './ui/Toolbar'
 import { useGlobalShortcuts } from './ui/useGlobalShortcuts'
+import { useRoute } from './ui/useHashRoute'
 import { useSidebarWidth } from './ui/useSidebarWidth'
 
 function App() {
   const maybeRecoverAutosave = useCadStore((state) => state.maybeRecoverAutosave)
   const { width: sidebarWidth, startResize } = useSidebarWidth()
-  useGlobalShortcuts()
+  const route = useRoute()
+  // The drawing keys belong to the drawing: on a reader page they stand down.
+  useGlobalShortcuts(route.kind === 'cad')
 
   useEffect(() => {
     maybeRecoverAutosave()
   }, [maybeRecoverAutosave])
+
+  /*
+   * Documentation, requests and support are pages, not modals, so they take the
+   * whole shell. The drawing stays in the store untouched and is exactly as it
+   * was when the reader goes back to it.
+   */
+  if (route.kind !== 'cad') {
+    return (
+      <div className="app-shell is-page">
+        {route.kind === 'docs' && <DocsView docId={route.docId} />}
+        {route.kind === 'requests' && <FeatureRequestsView />}
+        {route.kind === 'support' && <SupportView />}
+      </div>
+    )
+  }
 
   return (
     <div className="app-shell">
@@ -35,6 +57,7 @@ function App() {
         <FileMenu />
         <PreferencesMenu />
         <QuickAccess />
+        <HelpMenu />
           <ThemeToggle />
         </div>
         <Toolbar />

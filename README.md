@@ -579,6 +579,31 @@ ellipse leads with its longer radius. Fingerprinting the in-memory document inst
 match on reload, and the embedded copy would be discarded every time a drawing contained one of
 those.
 
+## Documentation, requests and sponsorship
+
+The **Help** menu in the titlebar opens three pages inside the app. They are reached by hash
+(`#/docs/guide`, `#/requests`, `#/support`) so a link can be sent to anyone, and Escape goes back
+to the drawing with the drawing untouched.
+
+- **Documentation** renders this README, `docs/ARCHITECTURE.md` and `docs/TESTING.md` from the
+  repository's own markdown, bundled at build time. There is one manual, and it is the one in git.
+- **Feature requests** reads the open issues labelled `feature request` from the GitHub API, with
+  search, sorting by most-wanted, newest or most discussed, and a short-lived local cache so a
+  visitor is never rate-limited by their own reloads. The form inside the app collects a title, a
+  category and the point of the request, then opens a prefilled issue on GitHub — nothing is filed
+  until a signed-in person presses *Submit new issue* there, and the app holds no token that could
+  do it for them. Before the first labelled issue exists the page falls back to showing every open
+  issue and says so.
+- **Support TrimCAD** explains what sponsorship pays for and links to GitHub Sponsors. The button
+  appears only when a build supplies a real profile:
+
+```bash
+VITE_SPONSOR_URL=https://github.com/sponsors/<handle> npm run build
+```
+
+Left unset, that page says sponsorship is not switched on rather than offering a dead link, and
+`github:` in `.github/FUNDING.yml` adds GitHub's own Sponsor button once the profile exists.
+
 ## Notes
 
 - DXF support is intentionally a subset for lightweight interoperability.
