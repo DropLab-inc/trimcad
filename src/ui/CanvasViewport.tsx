@@ -336,9 +336,10 @@ export function CanvasViewport() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Shift') setOrthoHeld(true)
       const target = event.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+      const typing =
+        document.activeElement?.id === COMMAND_INPUT_ID ||
+        (target !== null && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA'))
       /*
        * The element that has focus matters more than the event's own target. Some phone keyboards
        * dispatch key events to the document rather than to the field that is focused, and when that
@@ -346,7 +347,9 @@ export function CanvasViewport() {
        * doubled or, because this handler focuses the input halfway through, out of order — "20"
        * arriving as "02". While the command input has the caret, its text is the input's business.
        */
-      if (document.activeElement?.id === COMMAND_INPUT_ID) return
+      if (typing) return
+      // Ortho belongs to the drawing, so Shift only arms it when the keyboard is not on a field.
+      if (event.key === 'Shift') setOrthoHeld(true)
 
       // Ctrl and Cmd chords are application-wide accelerators, handled by useGlobalShortcuts.
       if (event.ctrlKey || event.metaKey) return
@@ -404,7 +407,13 @@ export function CanvasViewport() {
         else applySelection([], 'replace')
         return
       }
-      if (event.key === 'Enter' || event.key === ' ') {
+      /*
+       * Enter accepts the point, as it does in AutoCAD. Space does the same, but only from a
+       * keyboard that cannot insert a space by itself: predictive keyboards add one as the user
+       * types, and treating that as Enter commits a half-typed value.
+       */
+      const spaceAccepts = event.key === ' ' && !navigator.maxTouchPoints
+      if (event.key === 'Enter' || spaceAccepts) {
         event.preventDefault()
         if (pickingEdges) {
           finishEdgeSelection()

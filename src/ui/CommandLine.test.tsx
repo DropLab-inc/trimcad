@@ -194,5 +194,46 @@ describe('the command line', () => {
       expect(input.selectionStart).toBe(2)
       expect(input.selectionEnd).toBe(2)
     })
+
+    /*
+     * An on-screen keyboard composes, and Android composes for plain digits. Re-rendering the input
+     * from the store while the browser still owns the composing text is how characters vanish,
+     * double, or land in the wrong order.
+     */
+    it('keeps composing text out of the store until the keyboard commits it', () => {
+      render(<CommandLine />)
+      const input = screen.getByRole('textbox') as HTMLInputElement
+
+      fireEvent.compositionStart(input)
+      fireEvent.change(input, { target: { value: '2' } })
+      expect(input.value).toBe('2')
+      expect(state().commandInput).toBe('')
+
+      fireEvent.change(input, { target: { value: '20' } })
+      expect(input.value).toBe('20')
+      expect(state().commandInput).toBe('')
+
+      fireEvent.compositionEnd(input, { data: '20' })
+      expect(state().commandInput).toBe('20')
+    })
+
+    it('does not run a command from a space a predictive keyboard inserted', () => {
+      // A phone keyboard adds the space itself, so a space must not submit there.
+      const descriptor = Object.getOwnPropertyDescriptor(navigator, 'maxTouchPoints')
+      Object.defineProperty(navigator, 'maxTouchPoints', { value: 1, configurable: true })
+      try {
+        render(<CommandLine />)
+        const input = screen.getByRole('textbox')
+        fireEvent.change(input, { target: { value: 'LINE' } })
+        fireEvent.keyDown(input, { key: ' ' })
+
+        // Nothing ran, and the half-typed word is still there.
+        expect(state().activeTool).toBe('select')
+        expect(input).toHaveValue('LINE')
+      } finally {
+        if (descriptor) Object.defineProperty(navigator, 'maxTouchPoints', descriptor)
+        else Object.defineProperty(navigator, 'maxTouchPoints', { value: 0, configurable: true })
+      }
+    })
   })
 })
