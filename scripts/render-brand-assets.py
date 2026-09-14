@@ -85,13 +85,17 @@ flat.save('public/apple-touch-icon.png', optimize=True)
 print('  public/apple-touch-icon.png (180, full bleed)')
 
 # Social preview: the one place a wordmark earns its keep.
+#
+# The file name is load-bearing: crawlers (Telegram, Slack, X) cache a preview against the image
+# URL and will keep showing a retired card for a long time. Changing this name — and the og:image
+# in index.html with it — is how a new card reaches them.
 FONTS = [
     '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
     '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
 ]
 font_path = next((p for p in FONTS if Path(p).exists()), None)
 if font_path is None:
-    print('  skipped public/og.png: no font file found')
+    print('  skipped public/og-card.png: no font file found')
 else:
     W, H = 1200, 630
     card = Image.new('RGB', (W, H), SURFACE)
@@ -108,5 +112,5 @@ else:
     pen.text((500 + width, 250), 'CAD', font=wordmark, fill=ACCENT)
     pen.text((504, 396), '2D CAD drafting in the browser', font=tagline, fill=(143, 179, 187))
 
-    card.save('public/og.png', optimize=True)
-    print('  public/og.png (1200x630)')
+    card.save('public/og-card.png', optimize=True)
+    print('  public/og-card.png (1200x630)')
