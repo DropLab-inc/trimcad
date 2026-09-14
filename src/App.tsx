@@ -68,7 +68,7 @@ function App() {
       <header className="topbar">
         <div className="titlebar">
           <h1 className="brand">
-            <img className="brand-mark" src="/trimcad-mark-64.png" alt="TrimCAD" width={32} height={32} />
+            <img className="brand-mark" src="/logo.svg" alt="TrimCAD" width={32} height={32} />
           </h1>
         <FileMenu />
         <PreferencesMenu />

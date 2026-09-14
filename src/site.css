@@ -347,13 +347,12 @@
   color: var(--text-bright);
 }
 
-/* The project's own mark, at the one size where its wordmark is legible. */
+/* The mark. The tile carries its own rounding, so no radius here. */
 .site-logo {
   display: block;
   width: 76px;
   height: 76px;
   margin-bottom: 0.9rem;
-  border-radius: 0.7rem;
   box-shadow: 0 6px 18px var(--shadow-color);
 }
 

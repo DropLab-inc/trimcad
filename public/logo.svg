@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="TrimCAD">
+  <title>TrimCAD</title>
+  <!--
+    The TrimCAD mark.
+
+    A T-square, drawn as the tile's negative space: a wide head on a short stem,
+    in the proportions of the tool rather than of the letter, so it reads as a
+    drafting square at 200px and still holds as a bold silhouette at 16px.
+
+    Constraints that shaped it, from rendering candidates at 16-32px on both dark
+    and light chrome (see README, "The mark"):
+
+      * The tile is bright and the mark is dark. Artwork in the accent colour on a
+        dark chip loses its edges on dark chrome, which is where this icon spends
+        its life: a browser tab strip and the app's own title bar. The inverted
+        pair holds on either.
+      * No detached pieces and no hairlines. A cut-off fragment, a mitre, or a 1px
+        channel all vanish or turn into a smudge by 16px.
+      * No strokes thinner than 10 units of this 64 unit box: the head is 34x10,
+        the stem 11x21, and both survive the downscale undistorted.
+
+    The tile is the app's accent colour, so icon and interface agree. Note that a
+    double hyphen is illegal inside an XML comment: writing the CSS variable's
+    name in full here made this file fail a strict XML parse, which some browsers
+    answer with a blank tab icon rather than the mark.
+  -->
+  <rect width="64" height="64" rx="15" fill="#35c8d2"/>
+  <path fill="#0c161d" d="M15 16h34v10H15z M26.5 26h11v21h-11z"/>
+</svg>

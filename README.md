@@ -535,22 +535,33 @@ theme-specific in the file. Only plain white and plain black flip like this; eve
 colour is drawn exactly as specified. Printing applies the same idea, plotting anything too light
 to show on paper as black.
 
-### The logo
+### The mark
 
-`public/trimcad-logo.png` is the master asset and is never edited: a 1024px lockup — the drawing on
-top, "TrimCAD" underneath — drawn as a dark rounded square on white. `scripts/make-logo-derivatives.py`
-turns it into the sizes the app actually asks for, and re-measures nothing itself: `scripts/inspect-logo.py`
-prints the numbers (19px white margin, 18.8% corner radius, and the box holding the drawing alone) after
-the master changes.
+`public/logo.svg` is the mark and the source of truth: a T-square as the tile's negative space — a
+wide head on a short stem, in the proportions of the tool rather than of the letter. A bright tile
+with a dark mark, because the pair that came before it (accent artwork on a dark chip) lost its edges
+on dark chrome, which is exactly where an icon lives: a tab strip and the app's own title bar.
 
-- **Lockup** (`trimcad-logo-180.png`) — the home-screen icon and the mark on the Support page, where
-  the wordmark is big enough to read. The master itself is the social preview.
-- **Drawing alone** (`trimcad-mark-64.png`, `favicon-16/32/48.png`, `favicon.ico`) — the title bar and
-  the browser tab. Below about 100px the lockup's wordmark is a smear and its drawing is half the size
-  it could be; a favicon is a picture of the mark, not of the name.
+The shape is the result of rendering candidates at 16, 20, 24 and 32px on both dark and light chrome
+and keeping what survived:
 
-Derived files have their corners made transparent to match the chip, and the master's JPEG is served
-with its true `image/jpeg` type rather than the `.png` name it was committed under.
+- **No detached pieces, no hairlines, no mitres.** A cut-off fragment, a 1px channel, or a 45° detail
+  either disappears or reads as a smudge by 16px; one variant's offcut turned into what looked like a
+  speck of dirt in the corner of the tile.
+- **Nothing thinner than 10 units of the 64-unit box** — the head is 34×10, the stem 11×21.
+- **The tile carries the colour, the mark carries the contrast.** A tileless teal glyph reads on dark
+  chrome and goes weak on light chrome; the bright tile holds on both.
+- **One glyph, not a lockup.** Below about 100px a wordmark is a smear, so the icon is the drawing and
+  the name is set as text wherever there is room for it.
+
+`scripts/render-brand-assets.py` draws the bitmap fallbacks from the same numbers (supersampled 8× so
+the small sizes are clean): `favicon-16/32/48.png`, `favicon.ico` and `apple-touch-icon.png`. The
+home-screen icon is full-bleed and square because iOS applies its own mask, and double-rounded corners
+look like a mistake. `og.png` is the social card, the one place a wordmark helps.
+
+The app uses the SVG everywhere, so the title bar, the Support page and the tab all agree and stay
+sharp on any display. `public/trimcad-logo.png` — the earlier lockup — is kept but no longer referenced
+by anything.
 
 ## Build
 

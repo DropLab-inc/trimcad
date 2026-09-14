@@ -31,7 +31,7 @@ export function SupportView() {
           <div>
             <img
               className="site-logo"
-              src="/trimcad-logo-180.png"
+              src="/logo.svg"
               alt="TrimCAD"
               width={76}
               height={76}
