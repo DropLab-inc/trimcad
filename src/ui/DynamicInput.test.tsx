@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createCircle, createLine } from '../core/commands'
 import { useCadStore, EMPTY_TYPED } from '../core/store'
@@ -568,16 +568,20 @@ describe('the dimension boxes as controls', () => {
     expect(useCadStore.getState().doc.entities).toHaveLength(0)
   })
 
-  it('sends typed digits to the field that was tapped', () => {
+  it('sends the value to the box that was tapped, through the field', () => {
+    // The box tap puts the caret in the command line, so the digits belong to that input: the
+    // window key path deliberately stands aside once it has focus (see the single-writer test).
     commandInput()
     const { container } = render(<CanvasViewport />)
     startLine(container)
 
-    // The second box is Angle. Making it active is what sends "90" there rather than
-    // to the length, which is the whole point of tapping a specific box.
+    // The second box is Angle. Making it active is what sends "90" there rather than to the
+    // length, which is the whole point of tapping a specific box.
     tap(fields(container)[1])
-    type('90')
-    fireEvent.keyDown(window, { key: 'Enter' })
+    act(() => useCadStore.getState().mirrorTypedValue('90'))
+    expect(fields(container)[1].textContent).toContain('90')
+
+    useCadStore.getState().executeCommand('90')
 
     const line = useCadStore.getState().doc.entities.at(-1)!
     expect(line.type).toBe('line')
@@ -693,5 +697,55 @@ describe('the dimension boxes as controls', () => {
       expect(line.end.x).toBeCloseTo(100, 6)
       expect(line.end.y).toBeCloseTo(250, 6)
     }
+  })
+
+  it('shows a value being typed on the command line in the box it will fill', () => {
+    const { container } = render(<CanvasViewport />)
+    startLine(container)
+
+    // The keyboard is on the command line, so this is the only place the digits can appear in the
+    // drawing: without it the box keeps reading 0.00 and the input looks ignored. act() because
+    // the call is a store write from outside React, not a rendered event.
+    act(() => useCadStore.getState().mirrorTypedValue('175'))
+    expect(fields(container)[0].textContent).toContain('175')
+
+    // A command or a coordinate is not a field value, and must not be shown as one.
+    act(() => useCadStore.getState().mirrorTypedValue(''))
+    expect(fields(container)[0].textContent).not.toContain('175')
+
+    // And what is on the box is what a press in the drawing uses: type a length, tap a direction.
+    act(() => useCadStore.getState().mirrorTypedValue('175'))
+    fireEvent.mouseMove(container.querySelector('svg')!, { clientX: 300, clientY: 100 })
+    fireEvent.mouseDown(container.querySelector('svg')!, { clientX: 300, clientY: 100, button: 0 })
+
+    const line = useCadStore.getState().doc.entities.at(-1)!
+    expect(line.type).toBe('line')
+    if (line.type === 'line') {
+      expect(Math.hypot(line.end.x - line.start.x, line.end.y - line.start.y)).toBeCloseTo(175, 6)
+    }
+  })
+
+  /*
+   * One writer per keystroke. The canvas has its own global key handler — that is what lets typing
+   * anywhere start a command — and it writes to the same value the browser puts in the focused
+   * field. Two writers with a focus() in between is how "20" arrives as "02" on a phone: the key
+   * event reaches the document rather than the field, so the canvas appends it, focuses the input
+   * halfway through the word, and the browser inserts the next one at a caret that has moved.
+   */
+  it('leaves the typing to the field while the command input has the caret', () => {
+    const input = commandInput()
+    const { container } = render(<CanvasViewport />)
+    startLine(container)
+
+    // Nothing focused: the canvas takes the keystroke, which is how typing anywhere starts a command.
+    fireEvent.keyDown(document.body, { key: '2' })
+    expect(fields(container)[0].textContent).toContain('2')
+
+    // Caret in the field: the same keystroke must now leave the canvas alone, or it is written twice.
+    input.focus()
+    const boxBefore = fields(container)[0].textContent
+    fireEvent.keyDown(document.body, { key: '0' })
+    expect(fields(container)[0].textContent).toBe(boxBefore)
+    expect(useCadStore.getState().commandInput).toBe('')
   })
 })

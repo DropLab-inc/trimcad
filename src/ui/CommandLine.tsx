@@ -67,6 +67,9 @@ export function CommandLine() {
   const runCommand = (line: string) => {
     const command = line.trim().toUpperCase()
     setValue('')
+    // The mirrored value in the on-canvas box belongs to the text that is being submitted, so it
+    // goes with it rather than lingering in the box.
+    mirrorTypedValue('')
     setHighlight(0)
 
     const fileCommand = fileCommands[command]
@@ -78,6 +81,18 @@ export function CommandLine() {
     executeCommand(line)
   }
 
+  /**
+   * Shows what is being typed in the box it is going to fill.
+   *
+   * The keyboard on a phone is attached to this input, not to the drawing, so without this the
+   * digits appear only in the bar at the bottom while the box the user tapped still reads its
+   * tracked value — which looks exactly like the app ignoring the input.
+   */
+  const mirrorTypedValue = (text: string) => {
+    if (text !== '' && !/^-?\d*\.?\d*$/.test(text)) return
+    useCadStore.getState().mirrorTypedValue(text)
+  }
+
   /** Earlier inputs, newest first, for arrow-key recall. */
   const recallable = useMemo(
     () => history.filter((line) => line.kind === 'input').map((line) => line.text).reverse(),
@@ -86,8 +101,13 @@ export function CommandLine() {
   const [recallIndex, setRecallIndex] = useState(-1)
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    // Space submits just like Enter, which is how AutoCAD accepts a command.
-    if (event.key === 'Enter' || event.key === ' ') {
+    /*
+     * Enter, or the space bar, which is how AutoCAD accepts a command. The keyCode check is for
+     * the soft keyboards that report their action key as "Unidentified" — on Android the Go key
+     * arrives that way on plenty of builds, and matching on `key` alone left the typed value
+     * sitting in the field, looking ignored.
+     */
+    if (event.key === 'Enter' || event.key === ' ' || event.keyCode === 13) {
       event.preventDefault()
       // Arrowing onto a suggestion runs that command rather than the raw text.
       const chosen = highlight > 0 ? suggestions[highlight] : null
@@ -184,22 +204,37 @@ export function CommandLine() {
           {prompt.defaultValue ? ` <${prompt.defaultValue}>` : ''}:
         </span>
         <div className="command-input-wrap">
-          <input
-            id={COMMAND_INPUT_ID}
-            value={value}
-            onChange={(event) => {
-              setValue(event.target.value)
-              setHighlight(0)
+          {/*
+            * A form so the soft keyboard's action key has something to submit. Android and iOS
+            * both submit a form from the Go/Done key even when the key event itself arrives as
+            * "Unidentified", which is the shape the key handler cannot catch on its own.
+            */}
+          <form
+            className="command-entry-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              runCommand(highlight > 0 ? suggestions[highlight].name : value)
               setRecallIndex(-1)
             }}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a command, or press Enter to repeat the last one"
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            enterKeyHint="enter"
-            spellCheck={false}
-          />
+          >
+            <input
+              id={COMMAND_INPUT_ID}
+              value={value}
+              onChange={(event) => {
+                setValue(event.target.value)
+                mirrorTypedValue(event.target.value)
+                setHighlight(0)
+                setRecallIndex(-1)
+              }}
+              onKeyDown={handleKeyDown}
+              placeholder="Type a command, or press Enter to repeat the last one"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              enterKeyHint="enter"
+              spellCheck={false}
+            />
+          </form>
           {suggestions.length > 0 && (
             <ul className="command-suggestions">
               {suggestions.map((command, index) => (

@@ -296,6 +296,8 @@ type CadState = {
   clearDraft: () => void
   addDraftPoint: (point: Vec2) => void
   setTypedState: (typed: TypedState) => void
+  /** Mirrors the command line's text into the active dimension field, for the box to show. */
+  mirrorTypedValue: (text: string) => void
   executeCommand: (line: string) => void
   addEntity: (entity: CadEntity) => void
   updateDocument: (updater: (doc: DrawingDocument) => DrawingDocument) => void
@@ -632,6 +634,27 @@ export const useCadStore = create<CadState>((set, get) => ({
   clearDraft: () => set({ draftPoints: [] }),
   addDraftPoint: (point) => set((state) => ({ draftPoints: [...state.draftPoints, point] })),
   setTypedState: (typed) => set({ typed }),
+  /*
+   * The command line shows what is being typed in the box it will fill. Text that is not a number
+   * is not a field value — it is a command or a coordinate — so it clears the mirrored value
+   * rather than being written into the field, where it would resolve to nonsense in the preview.
+   */
+  mirrorTypedValue: (text) => {
+    const state = get()
+    const cursor = state.cursorWorld
+    if (!cursor) return
+    const fields = fieldsForTool(state.activeTool, state.draftPoints, cursor)
+    if (!fields || fields.length === 0) return
+
+    const step = typedStepKey(state)
+    const carried = state.typed.step === step ? state.typed : EMPTY_TYPED
+    const index = Math.min(carried.field, fields.length - 1)
+    const key = fields[index].key
+    const values = { ...carried.values }
+    if (text === '') delete values[key]
+    else values[key] = text
+    set({ typed: { step, values, field: index } })
+  },
   executeCommand: (line) => {
     const raw = line.trim()
     const state = get()

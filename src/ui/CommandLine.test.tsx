@@ -151,5 +151,48 @@ describe('the command line', () => {
       // The keyword ran; the caret did not jump into the field as a side effect.
       expect(document.activeElement).not.toBe(input)
     })
+
+    /*
+     * A soft keyboard's action key is not a normal key event on every device. Android's Go key
+     * arrives as "Unidentified" with keyCode 229 on plenty of builds, and matching on `key` alone
+     * left the typed value sitting in the field, which reads as the app ignoring the input.
+     */
+    it('submits when the soft keyboard sends an unlabelled action key', () => {
+      render(<CommandLine />)
+      const input = screen.getByRole('textbox')
+
+      fireEvent.change(input, { target: { value: 'LINE' } })
+      fireEvent.keyDown(input, { key: 'Unidentified', keyCode: 13 })
+
+      expect(screen.getByText('Command: LINE')).toBeInTheDocument()
+    })
+
+    it('has a form for the action key to submit, and submits what is in it', () => {
+      render(<CommandLine />)
+      const input = screen.getByRole('textbox')
+      // The IME action submits the form natively; without one there is nothing to submit.
+      const form = input.closest('form')
+      expect(form).not.toBeNull()
+
+      fireEvent.change(input, { target: { value: 'CIRCLE' } })
+      fireEvent.submit(form as HTMLFormElement)
+
+      expect(screen.getByText('Command: CIRCLE')).toBeInTheDocument()
+      expect((input as HTMLInputElement).value).toBe('')
+    })
+
+    it('puts the caret at the end of whatever is already in the field', () => {
+      render(<CommandLine />)
+      const input = screen.getByRole('textbox') as HTMLInputElement
+      fireEvent.change(input, { target: { value: '20' } })
+      // A tap can leave the caret in the middle, and text inserted there is how a value comes out
+      // as "02" instead of "20".
+      input.setSelectionRange(0, 0)
+
+      fireEvent.pointerDown(screen.getByRole('button', { name: /type a value/i }))
+
+      expect(input.selectionStart).toBe(2)
+      expect(input.selectionEnd).toBe(2)
+    })
   })
 })

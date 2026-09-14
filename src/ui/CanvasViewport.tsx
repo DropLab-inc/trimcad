@@ -339,6 +339,14 @@ export function CanvasViewport() {
       if (event.key === 'Shift') setOrthoHeld(true)
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+      /*
+       * The element that has focus matters more than the event's own target. Some phone keyboards
+       * dispatch key events to the document rather than to the field that is focused, and when that
+       * happens this handler and the browser both write the same character: the value comes out
+       * doubled or, because this handler focuses the input halfway through, out of order — "20"
+       * arriving as "02". While the command input has the caret, its text is the input's business.
+       */
+      if (document.activeElement?.id === COMMAND_INPUT_ID) return
 
       // Ctrl and Cmd chords are application-wide accelerators, handled by useGlobalShortcuts.
       if (event.ctrlKey || event.metaKey) return
@@ -575,7 +583,12 @@ export function CanvasViewport() {
       setFenceEnd(local)
       return
     }
-    applyDrawTool(resolvePoint(local).point)
+    /*
+     * A value typed for this step wins over the press position: typing a length and then tapping
+     * the direction is how a phone places an exact segment, since there is no cursor to hover and
+     * no second click to measure from. With nothing typed this is the press point as before.
+     */
+    applyDrawTool(hasTypedValue(dynamicFields) ? commandPoint ?? resolvePoint(local).point : resolvePoint(local).point)
   }
 
   const handleMouseMove = (event: MouseEvent<SVGSVGElement>) =>
