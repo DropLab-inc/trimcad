@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/DropLabInc/trimcad.git"
+    "url": "https://github.com/DropLab-inc/trimcad.git"
   },
   "type": "module",
   "scripts": {
