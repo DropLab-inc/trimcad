@@ -616,6 +616,12 @@ button:disabled .icon .accent {
 }
 
 .viewport {
+  /*
+   * The canvas owns its gestures. Without this a finger dragged across the drawing is
+   * taken as a page scroll, which on a phone means a drag neither draws nor pans, and the
+   * pointer never reaches the dimension boxes.
+   */
+  touch-action: none;
   width: 100%;
   height: 100%;
   display: block;

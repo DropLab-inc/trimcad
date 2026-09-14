@@ -51,7 +51,7 @@ import { explodeSelection } from './explode'
 import { getPreferences } from './preferences'
 import { distanceToEntity } from './flatten'
 import { dragGrip, type Grip } from './grips'
-import { parseCoordinate } from './dynamicInput'
+import { fieldsForTool, parseCoordinate, resolveDynamicPoint } from './dynamicInput'
 import {
   canFillet,
   chamferCorner,
@@ -100,6 +100,19 @@ type CameraState = {
   zoom: number
 }
 
+/**
+ * The dynamic input's state: the command step the typed values belong to, the values keyed by
+ * field, and which field is active. Keyed by step so a value typed for one prompt cannot leak
+ * into the next, and it is a fresh object each time so nothing mutates in place.
+ */
+export type TypedState = {
+  step: string
+  values: Record<string, string>
+  field: number
+}
+
+export const EMPTY_TYPED: TypedState = { step: '', values: {}, field: 0 }
+
 const defaultSnapModes: SnapMode[] = [
   'endpoint',
   'midpoint',
@@ -144,6 +157,13 @@ type CadState = {
   clipboard: CadEntity[]
   camera: CameraState
   draftPoints: Vec2[]
+  /**
+   * What the dynamic input is holding: which step of which command the typed values belong
+   * to, the values themselves, and which field is active. It lives here rather than in the
+   * canvas because the command line writes to it too — on a phone the keyboard is attached
+   * to that input, so the canvas never sees the keystrokes.
+   */
+  typed: TypedState
   snapModes: SnapMode[]
   osnapEnabled: boolean
   polarEnabled: boolean
@@ -275,6 +295,7 @@ type CadState = {
   selectAll: () => void
   clearDraft: () => void
   addDraftPoint: (point: Vec2) => void
+  setTypedState: (typed: TypedState) => void
   executeCommand: (line: string) => void
   addEntity: (entity: CadEntity) => void
   updateDocument: (updater: (doc: DrawingDocument) => DrawingDocument) => void
@@ -356,6 +377,7 @@ export const useCadStore = create<CadState>((set, get) => ({
   clipboard: [],
   camera: { x: 400, y: 300, zoom: 1 },
   draftPoints: [],
+  typed: EMPTY_TYPED,
   snapModes: defaultSnapModes,
   osnapEnabled: true,
   polarEnabled: true,
@@ -609,6 +631,7 @@ export const useCadStore = create<CadState>((set, get) => ({
   },
   clearDraft: () => set({ draftPoints: [] }),
   addDraftPoint: (point) => set((state) => ({ draftPoints: [...state.draftPoints, point] })),
+  setTypedState: (typed) => set({ typed }),
   executeCommand: (line) => {
     const raw = line.trim()
     const state = get()
@@ -660,8 +683,13 @@ export const useCadStore = create<CadState>((set, get) => ({
     }
 
     // A bare number is a distance along the direction the crosshair is pointing, or the angle or
-    // factor a transform is waiting for.
+    // factor a transform is waiting for. Before that, it belongs to whichever dimension field the
+    // drawing has active: that is what the dynamic input means, and it is the phone's only route
+    // to a typed value, because tapping a box puts the keyboard on the command line and the canvas
+    // never sees the keystrokes. Prompts that take a number of their own are left to the fallback.
     const value = Number(raw)
+    if (Number.isFinite(value) && !promptTakesItsOwnNumber(state) && applyTypedFieldValue(state, value))
+      return
     if (Number.isFinite(value) && applyTypedNumber(state, value)) return
 
     // Settings commands take their value on the same line, as `DIMSCALE 2`.
@@ -1385,6 +1413,70 @@ const applyTransformValue = (state: CadStoreState, value: number): boolean => {
   state.clearDraft()
   state.endCommand()
   state.setStatusMessage(`${finished} complete`)
+  return true
+}
+
+/**
+ * Prompts whose bare number answers the prompt itself rather than a dimension field: OFFSET's
+ * distance, ARRAY's counts, RECTANG's length and width, HATCH's scale, and the pending steps of
+ * ARC and a Ttr CIRCLE. Those keep precedence; everything else waiting for a point takes the
+ * number into whichever dynamic field is active.
+ */
+const promptTakesItsOwnNumber = (state: CadStoreState): boolean =>
+  Boolean(
+    state.offsetPending ||
+      state.arrayPending ||
+      state.circlePending ||
+      state.arcPending ||
+      state.rectPending ||
+      state.hatchPending,
+  )
+
+/** The command step the current draft is on: typed values belong to one step and no other. */
+const typedStepKey = (state: CadStoreState) => `${state.activeTool}:${state.draftPoints.length}`
+
+/**
+ * Writes a number into the active dimension field and places the point the command was waiting
+ * for — the same result as typing it over the drawing, which is what a phone user is doing when
+ * they tap a box and type. Returns false when no field is waiting, so the caller can fall back to
+ * reading the number as a command or a prompt answer.
+ */
+const applyTypedFieldValue = (state: CadStoreState, value: number): boolean => {
+  // Without a cursor there is nothing to measure a field against, which is also what the canvas
+  // requires before it draws the boxes at all.
+  const cursor = state.cursorWorld
+  if (!cursor) return false
+
+  const fields = fieldsForTool(state.activeTool, state.draftPoints, cursor)
+  if (!fields || fields.length === 0) return false
+
+  const step = typedStepKey(state)
+  const carried = state.typed.step === step ? state.typed : EMPTY_TYPED
+  const index = Math.min(carried.field, fields.length - 1)
+  const values = { ...carried.values, [fields[index].key]: String(value) }
+  const withValues = fields.map((field) => ({ ...field, typed: values[field.key] }))
+  const point = resolveDynamicPoint(state.activeTool, withValues, state.draftPoints, cursor)
+  if (!point) return false
+
+  // An angle on its own has no distance to travel: on a phone the finger is sitting on the last
+  // point, so the tracked length is zero and the segment would be a speck. Record the value and
+  // ask for the rest instead — the value stays in the box, and the next number submitted joins it,
+  // so "set the angle, then the length" works in two steps.
+  const anchor = state.draftPoints.at(-1)
+  if (anchor && Math.abs(point.x - anchor.x) < 1e-9 && Math.abs(point.y - anchor.y) < 1e-9) {
+    // The field advances so the next number submitted lands on the other one, as Tab does while
+    // typing over the drawing. Together the two numbers describe a segment.
+    state.setTypedState({ step, values, field: (index + 1) % fields.length })
+    state.log('result', `${fields[index].label} ${value}${fields[index].suffix ?? ''}`)
+    state.log('prompt', formatPrompt(currentPrompt(state)))
+    return true
+  }
+
+  state.setTypedState(EMPTY_TYPED)
+  applyDrawTool(point)
+  const now = useCadStore.getState()
+  now.log('result', `${fields[index].label} ${value}${fields[index].suffix ?? ''}`)
+  now.log('prompt', formatPrompt(currentPrompt(now)))
   return true
 }
 

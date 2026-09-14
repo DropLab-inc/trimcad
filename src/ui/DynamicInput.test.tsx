@@ -1,10 +1,11 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createCircle, createLine } from '../core/commands'
-import { useCadStore } from '../core/store'
+import { useCadStore, EMPTY_TYPED } from '../core/store'
 import type { Vec2 } from '../core/math/vec2'
 import type { CadEntity } from '../core/types'
 import { CanvasViewport } from './CanvasViewport'
+import { COMMAND_INPUT_ID } from './commandFocus'
 
 const seed = (entities: CadEntity[] = []) => {
   const state = useCadStore.getState()
@@ -12,6 +13,8 @@ const seed = (entities: CadEntity[] = []) => {
   state.setSelection([])
   state.updateDocument((doc) => ({ ...doc, entities, groups: [] }))
   state.setCamera({ x: 0, y: 0, zoom: 1 })
+  // Typed field values live in the store now, so they survive a test unless cleared here.
+  state.setTypedState(EMPTY_TYPED)
 }
 
 const layerId = () => useCadStore.getState().doc.layers[0].id
@@ -505,6 +508,190 @@ describe('drawing with ortho latched on', () => {
     if (ellipse.type === 'ellipse') {
       expect(ellipse.rx).toBeGreaterThan(0)
       expect(ellipse.ry).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('the dimension boxes as controls', () => {
+  beforeEach(() => {
+    seed()
+    // Snapping would pull the cursor onto geometry and obscure what is being tested.
+    useCadStore.setState({ osnapEnabled: false, polarEnabled: false })
+  })
+
+  /**
+   * The command input lives in the shell, so it is not rendered here. What matters is
+   * that tapping a box focuses it, which a stand-in with the same id answers.
+   */
+  const commandInput = () => {
+    const input = document.createElement('input')
+    input.id = COMMAND_INPUT_ID
+    document.body.append(input)
+    return input
+  }
+
+  /** A line with its first point placed and the cursor away from it. */
+  const startLine = (container: HTMLElement) => {
+    useCadStore.getState().setTool('line')
+    const svg = container.querySelector('svg')!
+    fireEvent.mouseMove(svg, { clientX: 100, clientY: 100 })
+    fireEvent.mouseDown(svg, { clientX: 100, clientY: 100, button: 0 })
+    fireEvent.mouseMove(svg, { clientX: 220, clientY: 140 })
+    return svg
+  }
+
+  const fields = (container: HTMLElement) => Array.from(container.querySelectorAll('.dynamic-field'))
+
+  /**
+   * What a finger does: a pointer event, then the mousedown the browser synthesises
+   * afterwards. Both have to be absorbed, because the canvas draws on mousedown.
+   */
+  const tap = (element: Element) => {
+    fireEvent.pointerDown(element, { pointerType: 'touch' })
+    fireEvent.touchStart(element)
+    fireEvent.mouseDown(element, { button: 0 })
+    fireEvent.mouseUp(element, { button: 0 })
+  }
+
+  it('focuses the command input on a tap instead of placing a point', () => {
+    const input = commandInput()
+    const { container } = render(<CanvasViewport />)
+    startLine(container)
+
+    expect(useCadStore.getState().draftPoints).toHaveLength(1)
+
+    tap(fields(container)[0])
+
+    expect(document.activeElement).toBe(input)
+    // The tap must not have reached the canvas: no second point, nothing drawn.
+    expect(useCadStore.getState().draftPoints).toHaveLength(1)
+    expect(useCadStore.getState().doc.entities).toHaveLength(0)
+  })
+
+  it('sends typed digits to the field that was tapped', () => {
+    commandInput()
+    const { container } = render(<CanvasViewport />)
+    startLine(container)
+
+    // The second box is Angle. Making it active is what sends "90" there rather than
+    // to the length, which is the whole point of tapping a specific box.
+    tap(fields(container)[1])
+    type('90')
+    fireEvent.keyDown(window, { key: 'Enter' })
+
+    const line = useCadStore.getState().doc.entities.at(-1)!
+    expect(line.type).toBe('line')
+    if (line.type === 'line') {
+      // A typed angle turns the segment onto that bearing: vertical from x=100. Had the
+      // digits gone to Length instead, "90" would have run along the cursor's own
+      // bearing and ended near x=185, which is what makes this a real check.
+      expect(line.end.x).toBeCloseTo(100, 6)
+      expect(line.end.y).toBeGreaterThan(100)
+      // The length is whatever the command tracks from the cursor, not the typed digits.
+      expect(Math.hypot(line.end.x - line.start.x, line.end.y - line.start.y)).toBeCloseTo(120, 6)
+    }
+  })
+
+  it('still places points on the canvas away from the boxes', () => {
+    const { container } = render(<CanvasViewport />)
+    const svg = startLine(container)
+
+    fireEvent.mouseDown(svg, { clientX: 600, clientY: 500, button: 0 })
+
+    expect(useCadStore.getState().doc.entities).toHaveLength(1)
+  })
+
+  it('sizes the boxes for a finger and keeps them inside the viewport', () => {
+    // jsdom has no matchMedia, which useMediaQuery reads as desktop, so a phone has to
+    // be reported explicitly. This is the only part of the geometry a phone changes.
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes('820px'),
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia
+
+    const { container } = render(<CanvasViewport />)
+    startLine(container)
+
+    const boxes = fields(container).map((field) => field.querySelector('rect')!)
+    expect(boxes).toHaveLength(2)
+    for (const box of boxes) {
+      expect(Number(box.getAttribute('height'))).toBe(36)
+      expect(Number(box.getAttribute('x'))).toBeGreaterThanOrEqual(4)
+    }
+    // Rows are 36 tall with an 8 gap: 44 of separation, which is a thumb's worth.
+    const gap = Number(boxes[1].getAttribute('y')) - Number(boxes[0].getAttribute('y'))
+    expect(gap).toBe(44)
+
+    delete (window as { matchMedia?: unknown }).matchMedia
+  })
+
+  it('fills the length field from a number submitted at the command line', () => {
+    const { container } = render(<CanvasViewport />)
+    startLine(container)
+
+    // The phone's route, in order: tap the box (which puts the keyboard on the command line),
+    // type a number, submit it. Nothing here touches the canvas with a mouse.
+    useCadStore.getState().executeCommand('150')
+
+    const line = useCadStore.getState().doc.entities.at(-1)!
+    expect(line.type).toBe('line')
+    if (line.type === 'line') {
+      const length = Math.hypot(line.end.x - line.start.x, line.end.y - line.start.y)
+      expect(length).toBeCloseTo(150, 6)
+    }
+    // The value belonged to that one step and is not left hanging around.
+    expect(useCadStore.getState().typed).toEqual(EMPTY_TYPED)
+  })
+
+  it('sends a command-line number to the angle when the angle box was tapped', () => {
+    const { container } = render(<CanvasViewport />)
+    startLine(container)
+
+    tap(fields(container)[1])
+    useCadStore.getState().executeCommand('90')
+
+    const line = useCadStore.getState().doc.entities.at(-1)!
+    expect(line.type).toBe('line')
+    if (line.type === 'line') {
+      // Vertical from the first point: the number went to the angle, not to the length. Had it
+      // gone to the length, the segment would have run along the cursor's own bearing instead, and
+      // its end would sit far from x=100. How far it travels on a typed angle alone is the command's
+      // own business, so that is not asserted here.
+      expect(line.end.x).toBeCloseTo(100, 6)
+      expect(line.end.y).toBeGreaterThan(100)
+    }
+  })
+
+  it('holds an angle typed with no distance to travel and waits for the length', () => {
+    const { container } = render(<CanvasViewport />)
+    const svg = startLine(container)
+
+    // The phone's situation: the finger is still on the first point, so the tracked length is
+    // zero and an angle alone describes a segment of no length.
+    fireEvent.mouseMove(svg, { clientX: 100, clientY: 100 })
+    tap(fields(container)[1])
+    useCadStore.getState().executeCommand('90')
+
+    // Nothing is drawn — a zero-length object is junk — and the value is kept.
+    expect(useCadStore.getState().doc.entities).toHaveLength(0)
+    expect(useCadStore.getState().typed.values.angle).toBe('90')
+
+    // The length then joins it, describing the segment both numbers were for.
+    useCadStore.getState().executeCommand('150')
+
+    const line = useCadStore.getState().doc.entities.at(-1)!
+    expect(line.type).toBe('line')
+    if (line.type === 'line') {
+      expect(line.start.x).toBeCloseTo(100, 6)
+      expect(line.start.y).toBeCloseTo(100, 6)
+      expect(line.end.x).toBeCloseTo(100, 6)
+      expect(line.end.y).toBeCloseTo(250, 6)
     }
   })
 })

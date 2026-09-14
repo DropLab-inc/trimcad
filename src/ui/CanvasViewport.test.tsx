@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createCircle, createLine, createPolygon, createRect } from '../core/commands'
 import { resetPreferences, setPreference } from '../core/preferences'
-import { useCadStore } from '../core/store'
+import { useCadStore, EMPTY_TYPED } from '../core/store'
 import type { Vec2 } from '../core/math/vec2'
 import type { CadEntity, PolylineEntity } from '../core/types'
 import { CanvasViewport } from './CanvasViewport'
@@ -22,6 +22,8 @@ const seed = (entities: CadEntity[]) => {
   state.setSelection([])
   state.updateDocument((doc) => ({ ...doc, entities, groups: [] }))
   state.setCamera({ x: 0, y: 0, zoom: 1 })
+  // Typed field values live in the store now, so they survive a test unless cleared here.
+  state.setTypedState(EMPTY_TYPED)
   // Preferences persist across tests, so each one starts from the settings as shipped.
   resetPreferences()
 }

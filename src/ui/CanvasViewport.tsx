@@ -5,6 +5,8 @@ import {
   useState,
   type MouseEvent,
   type ReactElement,
+  type SyntheticEvent,
+  type TouchEvent,
   type WheelEvent,
 } from 'react'
 import { applyDrawTool, currentPrompt, previewTrimExtend, useCadStore } from '../core/store'
@@ -35,12 +37,11 @@ import { dragGrip, entityGrips, findGripAt, type Grip } from '../core/grips'
 import type { CadEntity, DimensionEntity, PolylineEntity, SnapMode } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
 import { COMMAND_INPUT_ID, focusCommandInput } from './commandFocus'
+import { NARROW_QUERY, useMediaQuery } from './useMediaQuery'
 import { renderDimension, renderEntity, splinePath } from './renderers'
 import { readableOnCanvas, useCanvasPalette } from './theme'
 
 type Camera = { x: number; y: number; zoom: number }
-
-type TypedState = { step: string; values: Record<string, string>; field: number }
 
 /** Stable empty object so memo dependencies do not change on every render. */
 const NO_VALUES: Record<string, string> = {}
@@ -203,7 +204,13 @@ export function CanvasViewport() {
   /** A press on an already-selected object, which becomes a move once the cursor travels. */
   const [objectDrag, setObjectDrag] = useState<{ from: Vec2; to: Vec2 } | null>(null)
   const [hoverGrip, setHoverGrip] = useState<{ entityId: string; grip: Grip } | null>(null)
-  const [typedState, setTypedState] = useState<TypedState>({ step: '', values: NO_VALUES, field: 0 })
+  /*
+   * The dynamic input's field state lives in the store rather than here, because the command
+   * line writes to it as well: on a phone the keyboard belongs to that input, so the canvas
+   * never sees the keystrokes that fill a box.
+   */
+  const typedState = useCadStore((state) => state.typed)
+  const setTypedState = useCadStore((state) => state.setTypedState)
   const [size, setSize] = useState({ width: 1000, height: 700 })
   const preferences = usePreferences()
   const printSession = usePrintSession()
@@ -281,6 +288,51 @@ export function CanvasViewport() {
   }, [activeTool, cursorWorld, draftPoints, dynamicFields])
 
   const fieldIndex = Math.min(activeFieldIndex, Math.max(0, dynamicFields.length - 1))
+
+  /*
+   * A phone has no cursor to hover with, so the dimension boxes are the only thing
+   * that says what a command is waiting for, and they are the only way to type a
+   * value. That makes them a control rather than a readout: sized for a finger, kept
+   * inside the viewport, and tappable anywhere on the row — label and number included,
+   * because that is what "tapping the box" actually means.
+   */
+  const narrow = useMediaQuery(NARROW_QUERY)
+  const boxHeight = narrow ? 36 : 19
+  const boxWidth = narrow ? 176 : 140
+  const boxGap = narrow ? 8 : 2
+  const boxFont = narrow ? 13 : 11
+  const boxPad = narrow ? 11 : 7
+  const boxOffset = narrow ? 18 : 14
+
+  /** Screen-space top-left for the Nth box, flipped rather than run off the edge. */
+  const boxAt = (anchor: Vec2, index: number, total: number) => {
+    const stack = total * boxHeight + (total - 1) * boxGap
+    const below = anchor.y + boxOffset
+    const top = below + stack <= height - 4 ? below : Math.max(4, anchor.y - boxOffset - stack)
+    const left =
+      anchor.x + boxOffset + boxWidth <= width - 4
+        ? anchor.x + boxOffset
+        : Math.max(4, anchor.x - boxOffset - boxWidth)
+    return { x: left, y: top + index * (boxHeight + boxGap) }
+  }
+
+  /**
+   * Tapping a box makes that field the active one and raises the command input, where
+   * the value is typed. Without this the tap reached the canvas.
+   */
+  const tapField = (index: number) => (event: SyntheticEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setTypedState({ step: stepKey, values: typedValues, field: index })
+    focusCommandInput()
+  }
+
+  /**
+   * A tap on a phone also synthesises a mousedown, and the canvas places a point on
+   * mousedown. The pointer event is cancelled above; this is the belt to that braces,
+   * for the browsers that send the compatibility events anyway.
+   */
+  const blockTap = (event: SyntheticEvent) => event.stopPropagation()
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -468,7 +520,7 @@ export function CanvasViewport() {
     return { point: raw, snap: null, tracking: null }
   }
 
-  const localPoint = (event: MouseEvent): Vec2 => {
+  const localPoint = (event: { clientX: number; clientY: number }): Vec2 => {
     const box = svgRef.current!.getBoundingClientRect()
     return { x: event.clientX - box.left, y: event.clientY - box.top }
   }
@@ -526,8 +578,23 @@ export function CanvasViewport() {
     applyDrawTool(resolvePoint(local).point)
   }
 
-  const handleMouseMove = (event: MouseEvent<SVGSVGElement>) => {
-    const local = localPoint(event)
+  const handleMouseMove = (event: MouseEvent<SVGSVGElement>) =>
+    trackCursor(event.clientX, event.clientY)
+
+  /**
+   * A phone has no hover, so the finger is the only thing that says where the cursor is.
+   * Touch has to feed the same path as the mouse or the dimension boxes never appear at
+   * all on a touch screen: they are positioned from the cursor, and a tap produces no
+   * mousemove of its own. A touch drag does produce compatibility mouse events, but only
+   * while it stays inside the browser's tap slop.
+   */
+  const trackTouch = (event: TouchEvent<SVGSVGElement>) => {
+    const touch = event.touches[0] ?? event.changedTouches[0]
+    if (touch) trackCursor(touch.clientX, touch.clientY)
+  }
+
+  const trackCursor = (clientX: number, clientY: number) => {
+    const local = localPoint({ clientX, clientY })
     setCursorScreen(local)
     if (boxStart) setBoxEnd(local)
     if (fenceStart) setFenceEnd(local)
@@ -554,8 +621,8 @@ export function CanvasViewport() {
       return
     }
     if (panning && lastMouse) {
-      setCamera({ x: camera.x + (event.clientX - lastMouse.x), y: camera.y + (event.clientY - lastMouse.y) })
-      setLastMouse({ x: event.clientX, y: event.clientY })
+      setCamera({ x: camera.x + (clientX - lastMouse.x), y: camera.y + (clientY - lastMouse.y) })
+      setLastMouse({ x: clientX, y: clientY })
       return
     }
     const { point, snap, tracking } = resolvePoint(local)
@@ -710,6 +777,14 @@ export function CanvasViewport() {
     setObjectDrag(null)
     setHoverGrip(null)
     setHoverId(null)
+    /*
+     * The cursor survives a leave while a command is running. A finger lifting off the glass
+     * synthesises a mouseleave even though it never left the canvas, and the dimension boxes
+     * hang off the cursor — so clearing it here is what made them unreachable on a phone:
+     * they appeared with the tap and vanished the moment it ended. With a mouse this only
+     * means the crosshair waits where it was instead of disappearing, which is no worse.
+     */
+    if (activeTool !== 'select' || draftPoints.length > 0) return
     setCursorScreen(null)
     setCursorWorld(null)
     setActiveSnap(null)
@@ -1289,6 +1364,8 @@ export function CanvasViewport() {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
+        onTouchStart={trackTouch}
+        onTouchMove={trackTouch}
         onWheel={handleWheel}
         onContextMenu={(event) => {
           // Right-click stands in for Enter, matching AutoCAD with shortcut menus turned off.
@@ -1377,42 +1454,49 @@ export function CanvasViewport() {
                 {trackingLabel}
               </text>
             )}
+          </g>
+        )}
+
+        {/*
+         * The dimension boxes sit outside that overlay on purpose. Everything above is
+         * a readout and must not intercept the pointer; these are controls, so they take
+         * pointer events and the whole row — box, label and number — is the target.
+         */}
+        {cursorScreen && snapScreen && dynamicFields.length > 0 && (
+          <g className="dynamic-input">
             {dynamicFields.map((field, index) => {
-              const top = snapScreen.y + 14 + index * 21
+              const box = boxAt(snapScreen, index, dynamicFields.length)
               const isActive = index === fieldIndex
               const typed = field.typed !== undefined && field.typed !== ''
+              const middle = box.y + boxHeight / 2 + boxFont * 0.36
               return (
-                <g key={field.key}>
+                <g
+                  key={field.key}
+                  className={isActive ? 'dynamic-field is-active' : 'dynamic-field'}
+                  style={{ cursor: 'text', touchAction: 'none' }}
+                  onPointerDown={tapField(index)}
+                  onMouseDown={blockTap}
+                  onTouchStart={blockTap}
+                >
                   <rect
-                    x={snapScreen.x + 14}
-                    y={top}
-                    width={140}
-                    height={19}
-                    rx={3}
+                    x={box.x}
+                    y={box.y}
+                    width={boxWidth}
+                    height={boxHeight}
+                    rx={narrow ? 8 : 3}
                     fill={palette.tooltipBackground}
                     stroke={isActive ? palette.typed : palette.hint}
                     strokeWidth={1}
-                    style={{ cursor: 'text' }}
-                    /*
-                     * On a phone these boxes are the only place that says what the
-                     * command is waiting for, so tapping one raises the keyboard
-                     * for that value rather than placing another point.
-                     */
-                    onPointerDown={(event) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      focusCommandInput()
-                    }}
                   />
-                  <text x={snapScreen.x + 21} y={top + 13} fill={palette.hint} fontSize={11}>
+                  <text x={box.x + boxPad} y={middle} fill={palette.hint} fontSize={boxFont}>
                     {field.label}
                   </text>
                   <text
-                    x={snapScreen.x + 147}
-                    y={top + 13}
+                    x={box.x + boxWidth - boxPad}
+                    y={middle}
                     textAnchor="end"
                     fill={typed ? palette.typed : palette.hint}
-                    fontSize={11}
+                    fontSize={boxFont}
                   >
                     {`${typed ? field.typed : field.tracked.toFixed(2)}${field.suffix ?? ''}`}
                   </text>
