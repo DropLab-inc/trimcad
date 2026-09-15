@@ -179,11 +179,6 @@ export function CommandLine() {
       setRecallIndex(-1)
       return
     }
-    if (event.key === 'Tab' && suggestions.length > 0) {
-      event.preventDefault()
-      setValue((suggestions[highlight] ?? suggestions[0]).name)
-      return
-    }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       if (suggestions.length > 0) setHighlight((index) => (index + 1) % suggestions.length)

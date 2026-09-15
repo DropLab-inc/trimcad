@@ -40,6 +40,7 @@ import { COMMAND_INPUT_ID, focusCommandInput } from './commandFocus'
 import { NARROW_QUERY, useMediaQuery } from './useMediaQuery'
 import { renderDimension, renderEntity, splinePath } from './renderers'
 import { readableOnCanvas, useCanvasPalette } from './theme'
+import { snapToSpacing } from '../core/store'
 
 type Camera = { x: number; y: number; zoom: number }
 
@@ -175,6 +176,8 @@ export function CanvasViewport() {
   const setStatusMessage = useCadStore((state) => state.setStatusMessage)
   const snapModes = useCadStore((state) => state.snapModes)
   const osnapEnabled = useCadStore((state) => state.osnapEnabled)
+  const snapEnabled = useCadStore((state) => state.snapEnabled)
+  const snapSpacing = useCadStore((state) => state.snapSpacing)
   const polarEnabled = useCadStore((state) => state.polarEnabled)
   const lwDisplay = useCadStore((state) => state.lwDisplay)
   const draftPoints = useCadStore((state) => state.draftPoints)
@@ -582,23 +585,30 @@ export function CanvasViewport() {
         return { point: snap.point, snap: snap.mode, tracking: null }
       }
     }
+    /*
+     * Grid snap sits below object snap and above ortho and polar. A vertex is a better answer than a
+     * grid crossing, which is why it defers to object snap; but ortho and polar have the last word on
+     * direction, so they are applied to the snapped cursor rather than the raw one.
+     */
+    const landed = snapEnabled ? snapToSpacing(raw, snapSpacing) : raw
+
     // A drag tracks from where it began, so ortho and polar apply to it even with no draft running.
     const tracks = options?.from ? true : trackingAppliesTo(activeTool)
     if (!basePoint || !tracks) {
-      return { point: raw, snap: null, tracking: null }
+      return { point: landed, snap: null, tracking: null }
     }
     // Shift forces ortho on temporarily; the status bar toggle latches it on.
     if (orthoHeld || orthoEnabled) {
-      return { point: applyOrtho(basePoint, raw), snap: null, tracking: 'ortho' }
+      return { point: applyOrtho(basePoint, landed), snap: null, tracking: 'ortho' }
     }
     if (polarEnabled) {
-      const tracked = applyPolarTracking(basePoint, raw, preferences.polarAngle)
+      const tracked = applyPolarTracking(basePoint, landed, preferences.polarAngle)
       if (tracked.snapped) {
         const angle = (Math.atan2(tracked.point.y - basePoint.y, tracked.point.x - basePoint.x) * 180) / Math.PI
         return { point: tracked.point, snap: null, tracking: `polar ${((angle + 360) % 360).toFixed(0)}°` }
       }
     }
-    return { point: raw, snap: null, tracking: null }
+    return { point: landed, snap: null, tracking: null }
   }
 
   const localPoint = (event: { clientX: number; clientY: number }): Vec2 => {

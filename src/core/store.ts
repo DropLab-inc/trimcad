@@ -229,6 +229,10 @@ type CadState = {
   typed: TypedState
   snapModes: SnapMode[]
   osnapEnabled: boolean
+  /** AutoCAD's SNAP: the cursor lands on a grid of the spacing below rather than where it was put. */
+  snapEnabled: boolean
+  /** The grid SNAP rounds to, in the drawing's own units — AutoCAD's SNAPUNIT. */
+  snapSpacing: number
   polarEnabled: boolean
   /** AutoCAD's LWT: draw each object at its layer's plotted width instead of a hairline. */
   lwDisplay: boolean
@@ -403,6 +407,9 @@ type CadState = {
   toggleOsnap: () => void
   togglePolar: () => void
   toggleLwDisplay: () => void
+  /** AutoCAD's SNAP: the cursor lands on a grid of its own spacing rather than where it was put. */
+  toggleSnap: () => void
+  setSnapSpacing: (spacing: number) => void
   setSelection: (ids: string[]) => void
   applySelection: (ids: string[], modifier: SelectionModifier) => void
   selectAll: () => void
@@ -506,6 +513,8 @@ export const useCadStore = create<CadState>((set, get) => ({
   typed: EMPTY_TYPED,
   snapModes: defaultSnapModes,
   osnapEnabled: true,
+  snapEnabled: false,
+  snapSpacing: 10,
   polarEnabled: true,
   lwDisplay: false,
   polygonSides: 6,
@@ -890,6 +899,14 @@ export const useCadStore = create<CadState>((set, get) => ({
   },
   setCommandInput: (commandInput) => set({ commandInput }),
   setStatusMessage: (statusMessage) => set({ statusMessage }),
+  toggleSnap: () =>
+    set((state) => ({
+      snapEnabled: !state.snapEnabled,
+      statusMessage: !state.snapEnabled ? `Snap on, every ${state.snapSpacing}` : 'Snap off',
+    })),
+  setSnapSpacing: (spacing) =>
+    set({ snapSpacing: Math.min(1e6, Math.max(1e-6, Number.isFinite(spacing) ? spacing : 10)) }),
+
   toggleOsnap: () => set((state) => ({ osnapEnabled: !state.osnapEnabled })),
   togglePolar: () => set((state) => ({ polarEnabled: !state.polarEnabled })),
   toggleLwDisplay: () => set((state) => ({ lwDisplay: !state.lwDisplay })),
@@ -2236,7 +2253,19 @@ const runOverkill = (state: CadStoreState) => {
 }
 
 /**
- * The objects of the space that is open — the model, or the sheet being worked on.
+ /**
+  * The nearest grid intersection, which is what SNAP moves the cursor to.
+  *
+  * Rounding rather than flooring puts a pick at the closest crossing in every direction, so the cursor
+  * can be pulled up as well as down. Spacing is in the drawing's own units, as AutoCAD's SNAPUNIT is,
+  * which is what makes a drawing keep to a module without anyone measuring it.
+  */
+ export const snapToSpacing = (point: Vec2, spacing: number): Vec2 =>
+   spacing > 0
+     ? { x: Math.round(point.x / spacing) * spacing, y: Math.round(point.y / spacing) * spacing }
+     : point
+
+ /** The objects of the space that is open — the model, or the sheet being worked on.
  *
  * Commands that started life before paper space existed address "the entities" directly. Any of them
  * that can run while a sheet is open has to ask this instead, or it edits a drawing the user cannot

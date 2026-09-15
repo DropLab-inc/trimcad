@@ -16,6 +16,8 @@ export function StatusBar() {
   const cursorWorld = useCadStore((state) => state.cursorWorld)
   const statusMessage = useCadStore((state) => state.statusMessage)
   const osnapEnabled = useCadStore((state) => state.osnapEnabled)
+  const snapEnabled = useCadStore((state) => state.snapEnabled)
+  const toggleSnap = useCadStore((state) => state.toggleSnap)
   const polarEnabled = useCadStore((state) => state.polarEnabled)
   const orthoEnabled = useCadStore((state) => state.orthoEnabled)
   const lwDisplay = useCadStore((state) => state.lwDisplay)
@@ -45,6 +47,14 @@ export function StatusBar() {
       <span className="statusbar-message">{statusMessage}</span>
       <span className="statusbar-spacer" />
 
+      <button
+        type="button"
+        className={`statusbar-toggle ${snapEnabled ? 'on' : ''}`}
+        onClick={toggleSnap}
+        title="Snap the cursor to the grid (F9 in AutoCAD)"
+      >
+        SNAP
+      </button>
       <button
         type="button"
         className={`statusbar-toggle ${orthoEnabled ? 'on' : ''}`}
