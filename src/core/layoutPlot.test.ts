@@ -105,6 +105,22 @@ describe('plotting a sheet', () => {
     expect(start[1]).toBeCloseTo(105, 6)
   })
 
+  it('keeps the sheet the way the canvas draws it, rather than flipping it', () => {
+    reset()
+    const doc = makeDefaultDocument()
+    const layout = sheetWith(50)
+    layout.viewports[0].center = { x: 148.5, y: 40 }
+    const line = createLine(layerId(doc), { x: 0, y: 0 }, { x: 0, y: 500 })
+
+    exportLayoutPdf({ ...doc, entities: [line] }, layout)
+
+    const [{ start, deltas }] = captured.lines
+    // The frame's centre lands 40 mm down a 210 mm page — not mirrored to 170 mm.
+    expect(start[1]).toBeCloseTo(40, 6)
+    // And a larger drawing y runs further down the sheet, exactly as it does on screen.
+    expect(deltas[0][1]).toBeCloseTo(10, 6)
+  })
+
   it('scales with the viewport rather than the drawing', () => {
     reset()
     const doc = makeDefaultDocument()

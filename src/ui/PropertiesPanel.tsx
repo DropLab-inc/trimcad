@@ -65,7 +65,7 @@ export function PropertiesPanel() {
             onChange={(event) => patch({ locked: event.target.checked })}
           />
         </label>
-        <label title="Position of the frame on the paper, in millimetres from the bottom-left corner.">
+        <label title="Position of the frame on the sheet, in millimetres from its top-left corner.">
           X (mm)
           <input
             type="number"
@@ -76,7 +76,7 @@ export function PropertiesPanel() {
             }
           />
         </label>
-        <label title="Position of the frame on the paper, in millimetres from the bottom-left corner.">
+        <label title="Position of the frame on the sheet, in millimetres from its top-left corner.">
           Y (mm)
           <input
             type="number"

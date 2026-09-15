@@ -148,7 +148,7 @@ export type CadEntity =
  */
 export type Viewport = {
   id: string
-  /** Centre of the frame on the sheet, in millimetres from the paper's bottom-left corner. */
+  /** Centre of the frame on the sheet, in millimetres from the sheet's top-left corner. */
   center: Vec2
   widthMm: number
   heightMm: number

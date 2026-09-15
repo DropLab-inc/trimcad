@@ -364,19 +364,20 @@ export const exportLayoutPdf = (
   pdf.setLineCap('round')
 
   for (const viewport of layout.viewports) {
-    // Drawing units land on the sheet through the viewport's own scale, and PDF's y runs down the
-    // page where the drawing's runs up it, so the second axis is flipped about the paper's top.
+    // Drawing units land on the sheet through the viewport's own scale. The sheet's y runs down the
+    // page exactly as the canvas draws it — the same convention the DXF writer uses when it hands
+    // coordinates over verbatim — so the sheet plots as composed.
     const toPage = (point: Vec2): [number, number] => {
       const mmX = viewport.center.x + (point.x - viewport.modelCenter.x) / viewport.unitsPerMm
       const mmY = viewport.center.y + (point.y - viewport.modelCenter.y) / viewport.unitsPerMm
-      return [mmX, page.height - mmY]
+      return [mmX, mmY]
     }
 
     pdf.saveGraphicsState()
     // Clip to the frame exactly as the canvas does, so a viewport can never bleed across the sheet.
     pdf.rect(
       viewport.center.x - viewport.widthMm / 2,
-      page.height - viewport.center.y - viewport.heightMm / 2,
+      viewport.center.y - viewport.heightMm / 2,
       viewport.widthMm,
       viewport.heightMm,
     )
