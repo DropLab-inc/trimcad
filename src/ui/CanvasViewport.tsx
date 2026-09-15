@@ -6,7 +6,7 @@ import {
   type MouseEvent,
   type ReactElement,
   type SyntheticEvent,
-  type TouchEvent,
+  type TouchEvent as ReactTouchEvent,
   type WheelEvent,
 } from 'react'
 import { applyDrawTool, currentPrompt, previewTrimExtend, useCadStore } from '../core/store'
@@ -42,6 +42,24 @@ import { renderDimension, renderEntity, splinePath } from './renderers'
 import { readableOnCanvas, useCanvasPalette } from './theme'
 
 type Camera = { x: number; y: number; zoom: number }
+
+/**
+ * The wheel's zoom limits, shared with the two-finger pinch so a gesture cannot travel further
+ * than a mouse can. Below the floor the grid and the snap aperture are finer than a pixel;
+ * above the ceiling the coordinates the command line prints lose their precision.
+ */
+const ZOOM_MIN = 0.02
+const ZOOM_MAX = 50
+
+/** Where a two-finger gesture stood when it began, so each move is measured from its start. */
+type Pinch = {
+  /** Finger separation in screen pixels. Held above zero so the ratio is always finite. */
+  spread: number
+  /** The zoom the gesture began at; the change in separation scales this. */
+  zoom: number
+  /** The drawing point under the fingers when the gesture began. */
+  anchor: Vec2
+}
 
 /** Stable empty object so memo dependencies do not change on every render. */
 const NO_VALUES: Record<string, string> = {}
@@ -188,6 +206,8 @@ export function CanvasViewport() {
   const [orthoHeld, setOrthoHeld] = useState(false)
   const [panning, setPanning] = useState(false)
   const [lastMouse, setLastMouse] = useState<Vec2 | null>(null)
+  /** The live two-finger gesture, or null while fewer than two fingers are down. */
+  const pinch = useRef<Pinch | null>(null)
   const [boxStart, setBoxStart] = useState<Vec2 | null>(null)
   const [boxEnd, setBoxEnd] = useState<Vec2 | null>(null)
   /**
@@ -610,10 +630,93 @@ export function CanvasViewport() {
    * mousemove of its own. A touch drag does produce compatibility mouse events, but only
    * while it stays inside the browser's tap slop.
    */
-  const trackTouch = (event: TouchEvent<SVGSVGElement>) => {
+  const trackTouch = (event: ReactTouchEvent<SVGSVGElement>) => {
+    // Two fingers are a pinch, not a cursor: following the first one would drag the crosshair
+    // and the dimension boxes along behind a view that is already moving.
+    if (event.touches.length > 1) return
     const touch = event.touches[0] ?? event.changedTouches[0]
     if (touch) trackCursor(touch.clientX, touch.clientY)
   }
+
+  /*
+   * Two fingers move the view: the spread between them scales the zoom, and their midpoint
+   * carries the drawing along with it, so one gesture both zooms and pans — the gesture every
+   * map and drawing app has already taught the hand. On a phone it is the only way to do
+   * either, because panning is bound to the middle mouse button and zooming to the wheel, and
+   * a touch screen has neither.
+   *
+   * These are native listeners rather than React's onTouchStart on purpose: the browser's own
+   * pinch-zoom has to be cancelled for the gesture to reach us at all, and React registers
+   * touch listeners as passive, so a preventDefault() inside its handler is ignored.
+   */
+  useEffect(() => {
+    const element = svgRef.current
+    if (!element) return
+
+    const middle = (touches: TouchList) => ({
+      clientX: (touches[0].clientX + touches[1].clientX) / 2,
+      clientY: (touches[0].clientY + touches[1].clientY) / 2,
+    })
+    const separation = (touches: TouchList) =>
+      Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
+    const toLocal = (point: { clientX: number; clientY: number }): Vec2 => {
+      const box = element.getBoundingClientRect()
+      return { x: point.clientX - box.left, y: point.clientY - box.top }
+    }
+
+    const begin = (touches: TouchList) => {
+      const { camera: current } = useCadStore.getState()
+      pinch.current = {
+        spread: Math.max(1, separation(touches)),
+        zoom: current.zoom,
+        anchor: screenToWorld(toLocal(middle(touches)), current),
+      }
+    }
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length < 2) return
+      // Without this the browser zooms the whole page rather than the drawing.
+      if (event.cancelable) event.preventDefault()
+      begin(event.touches)
+    }
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (event.touches.length < 2) return
+      if (event.cancelable) event.preventDefault()
+      if (!pinch.current) {
+        begin(event.touches)
+        return
+      }
+      const gesture = pinch.current
+      const zoom = Math.min(
+        ZOOM_MAX,
+        Math.max(ZOOM_MIN, gesture.zoom * (separation(event.touches) / gesture.spread)),
+      )
+      const centre = toLocal(middle(event.touches))
+      // Holding the anchored drawing point under the fingers does both jobs at once: the
+      // drawing scales about the pinch centre and follows it as the centre travels.
+      setCamera({
+        zoom,
+        x: centre.x - gesture.anchor.x * zoom,
+        y: centre.y - gesture.anchor.y * zoom,
+      })
+    }
+
+    const onTouchEnd = (event: TouchEvent) => {
+      if (event.touches.length < 2) pinch.current = null
+    }
+
+    element.addEventListener('touchstart', onTouchStart, { passive: false })
+    element.addEventListener('touchmove', onTouchMove, { passive: false })
+    element.addEventListener('touchend', onTouchEnd)
+    element.addEventListener('touchcancel', onTouchEnd)
+    return () => {
+      element.removeEventListener('touchstart', onTouchStart)
+      element.removeEventListener('touchmove', onTouchMove)
+      element.removeEventListener('touchend', onTouchEnd)
+      element.removeEventListener('touchcancel', onTouchEnd)
+    }
+  }, [setCamera])
 
   const trackCursor = (clientX: number, clientY: number) => {
     const local = localPoint({ clientX, clientY })
@@ -815,7 +918,7 @@ export function CanvasViewport() {
   const handleWheel = (event: WheelEvent<SVGSVGElement>) => {
     const local = localPoint(event)
     const worldBefore = screenToWorld(local, camera)
-    const zoom = Math.min(50, Math.max(0.02, camera.zoom * (event.deltaY > 0 ? 0.9 : 1.1)))
+    const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, camera.zoom * (event.deltaY > 0 ? 0.9 : 1.1)))
     setCamera({ zoom, x: local.x - worldBefore.x * zoom, y: local.y - worldBefore.y * zoom })
   }
 
