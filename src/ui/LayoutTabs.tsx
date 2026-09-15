@@ -10,6 +10,7 @@ export function LayoutTabs() {
   const activeLayoutId = useCadStore((state) => state.activeLayoutId)
   const setActiveLayout = useCadStore((state) => state.setActiveLayout)
   const addLayout = useCadStore((state) => state.addLayout)
+  const addViewport = useCadStore((state) => state.addViewport)
   const deleteLayout = useCadStore((state) => state.deleteLayout)
 
   const remove = (id: string, name: string) => {
@@ -66,6 +67,18 @@ export function LayoutTabs() {
       >
         +
       </button>
+
+      {activeLayoutId && (
+        <button
+          type="button"
+          className="layout-tab-action"
+          onClick={() => addViewport(activeLayoutId)}
+          aria-label="Add a viewport to this sheet"
+          title="Add a viewport to this sheet"
+        >
+          + Viewport
+        </button>
+      )}
     </div>
   )
 }

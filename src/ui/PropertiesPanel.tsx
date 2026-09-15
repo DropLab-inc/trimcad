@@ -1,8 +1,11 @@
 import { DEFAULT_LAYER_COLOR } from '../core/layers'
 import { HATCH_PATTERN_LABELS, HATCH_PATTERNS } from '../core/hatch'
+import { VIEWPORT_SCALES } from '../core/print'
 import { useCadStore } from '../core/store'
 import { dimensionScale } from './renderers'
 import type { DimensionEntity, HatchEntity, HatchPattern } from '../core/types'
+
+const round1 = (value: number) => Math.round(value * 10) / 10
 
 export function PropertiesPanel() {
   const doc = useCadStore((state) => state.doc)
@@ -11,9 +14,102 @@ export function PropertiesPanel() {
   const moveSelectionToLayer = useCadStore((state) => state.moveSelectionToLayer)
   const resizeDimensions = useCadStore((state) => state.resizeDimensions)
   const updateHatches = useCadStore((state) => state.updateHatches)
+  const activeLayoutId = useCadStore((state) => state.activeLayoutId)
+  const activeViewportId = useCadStore((state) => state.activeViewportId)
+  const updateViewport = useCadStore((state) => state.updateViewport)
   const selected = doc.entities.filter((entity) => selectedIds.includes(entity.id))
   const dimensions = selected.filter((entity): entity is DimensionEntity => entity.type === 'dimension')
   const hatches = selected.filter((entity): entity is HatchEntity => entity.type === 'hatch')
+  const layout = activeLayoutId
+    ? doc.layouts.find((candidate) => candidate.id === activeLayoutId) ?? null
+    : null
+  const viewport =
+    layout && activeViewportId
+      ? layout.viewports.find((candidate) => candidate.id === activeViewportId) ?? null
+      : null
+
+  /*
+   * A viewport takes over the panel while one is picked on a sheet: its scale is what decides how
+   * big the drawing reads on the paper, so it is the property that matters most here, and a fitted
+   * viewport can land on a scale the standard list does not carry.
+   */
+  if (layout && viewport) {
+    const scales = VIEWPORT_SCALES.includes(viewport.unitsPerMm)
+      ? VIEWPORT_SCALES
+      : [...VIEWPORT_SCALES, viewport.unitsPerMm].sort((a, b) => a - b)
+    const patch = (next: Parameters<typeof updateViewport>[2]) =>
+      updateViewport(layout.id, viewport.id, next)
+    return (
+      <section className="panel">
+        <h3>Viewport</h3>
+        <p>On {layout.name}</p>
+        <label title="How much of the drawing the viewport shows. 50 draws the model at 1:50.">
+          Scale
+          <select
+            aria-label="Viewport scale"
+            value={String(viewport.unitsPerMm)}
+            onChange={(event) => patch({ unitsPerMm: Number(event.target.value) })}
+          >
+            {scales.map((scale) => (
+              <option key={scale} value={String(scale)}>
+                1:{scale}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label title="A locked viewport holds its scale and its centring against accidental edits.">
+          Locked
+          <input
+            type="checkbox"
+            checked={viewport.locked}
+            onChange={(event) => patch({ locked: event.target.checked })}
+          />
+        </label>
+        <label title="Position of the frame on the paper, in millimetres from the bottom-left corner.">
+          X (mm)
+          <input
+            type="number"
+            step={1}
+            value={round1(viewport.center.x)}
+            onChange={(event) =>
+              patch({ center: { ...viewport.center, x: Number(event.target.value) } })
+            }
+          />
+        </label>
+        <label title="Position of the frame on the paper, in millimetres from the bottom-left corner.">
+          Y (mm)
+          <input
+            type="number"
+            step={1}
+            value={round1(viewport.center.y)}
+            onChange={(event) =>
+              patch({ center: { ...viewport.center, y: Number(event.target.value) } })
+            }
+          />
+        </label>
+        <label title="How much paper the frame covers.">
+          Width (mm)
+          <input
+            type="number"
+            min={5}
+            step={1}
+            value={round1(viewport.widthMm)}
+            onChange={(event) => patch({ widthMm: Math.max(5, Number(event.target.value)) })}
+          />
+        </label>
+        <label title="How much paper the frame covers.">
+          Height (mm)
+          <input
+            type="number"
+            min={5}
+            step={1}
+            value={round1(viewport.heightMm)}
+            onChange={(event) => patch({ heightMm: Math.max(5, Number(event.target.value)) })}
+          />
+        </label>
+      </section>
+    )
+  }
 
   if (selected.length === 0) {
     return (

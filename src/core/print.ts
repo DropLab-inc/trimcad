@@ -79,6 +79,14 @@ const NAMED_SCALES: Record<Exclude<PlotScaleMode, 'fit' | 'custom'>, number> = {
 /** AutoCAD plots a lineweight of "Default" at 0.25 mm. */
 const DEFAULT_LINEWEIGHT_MM = 0.25
 
+/**
+ * The scales a viewport may be set to, as drawing units per millimetre of paper: 50 shows the model
+ * at 1:50. Deliberately restricted to the round numbers a drawing office uses, so a sheet always
+ * reads at a real scale rather than something like 1:37. Both the viewport a new layout is born
+ * with and the dropdown that changes it later come from this one list, so they cannot disagree.
+ */
+export const VIEWPORT_SCALES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000, 2000, 5000]
+
 const hexToRgb = (hex: string): [number, number, number] => {
   const clean = hex.replace('#', '')
   const full = clean.length === 3 ? clean.replace(/./g, (char) => char + char) : clean.padEnd(6, '0')

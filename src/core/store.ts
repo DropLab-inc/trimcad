@@ -97,16 +97,9 @@ import type {
   ToolMode,
   Viewport,
 } from './types'
-import { extentsBounds, pageSizeMm } from './print'
+import { extentsBounds, pageSizeMm, VIEWPORT_SCALES } from './print'
 
 const controller = new DocumentController(makeDefaultDocument())
-
-/**
- * The scales a new viewport is allowed to land on, as drawing units per millimetre of paper:
- * 50 shows the model at 1:50. Restricted to the round numbers a drawing office actually uses so
- * a fitted viewport reads as a real scale rather than something like 1:37.
- */
-const STANDARD_VIEWPORT_SCALES = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
 
 /**
  * A viewport filling the printable area, showing the whole drawing at the smallest standard scale
@@ -132,7 +125,7 @@ const fittedViewport = (
     widthMm,
     heightMm,
     modelCenter: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 },
-    unitsPerMm: STANDARD_VIEWPORT_SCALES.find((scale) => scale >= needed) ?? Math.ceil(needed),
+    unitsPerMm: VIEWPORT_SCALES.find((scale) => scale >= needed) ?? Math.ceil(needed),
     locked: false,
   }
 }

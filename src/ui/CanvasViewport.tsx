@@ -152,6 +152,7 @@ export function CanvasViewport() {
   const activeLayoutId = useCadStore((state) => state.activeLayoutId)
   const activeViewportId = useCadStore((state) => state.activeViewportId)
   const selectViewport = useCadStore((state) => state.selectViewport)
+  const updateViewport = useCadStore((state) => state.updateViewport)
   const setCamera = useCadStore((state) => state.setCamera)
   const applySelection = useCadStore((state) => state.applySelection)
   const selectAll = useCadStore((state) => state.selectAll)
@@ -211,6 +212,8 @@ export function CanvasViewport() {
   const [lastMouse, setLastMouse] = useState<Vec2 | null>(null)
   /** The live two-finger gesture, or null while fewer than two fingers are down. */
   const pinch = useRef<Pinch | null>(null)
+  /** A viewport being dragged around its sheet, and where inside it the grab landed. */
+  const [viewportDrag, setViewportDrag] = useState<{ id: string; grab: Vec2 } | null>(null)
   const [boxStart, setBoxStart] = useState<Vec2 | null>(null)
   const [boxEnd, setBoxEnd] = useState<Vec2 | null>(null)
   /**
@@ -573,9 +576,33 @@ export function CanvasViewport() {
       return
     }
     if (event.button !== 0) return
-    // Paper space is composed, not drawn. A click there picks a viewport (whose frame handles it)
-    // and nothing else — running a draw tool would drop model geometry at paper coordinates.
-    if (activeLayout) return
+    /*
+     * Paper space is composed rather than drawn: a press picks the viewport it lands in and begins
+     * to move it. Running a draw tool here would drop model geometry at paper coordinates, and a
+     * locked viewport refuses to be nudged rather than quietly moving anyway.
+     */
+    if (activeLayout) {
+      const paper = screenToWorld(localPoint(event), camera)
+      const hit = [...activeLayout.viewports]
+        .reverse()
+        .find(
+          (viewport) =>
+            Math.abs(paper.x - viewport.center.x) <= viewport.widthMm / 2 &&
+            Math.abs(paper.y - viewport.center.y) <= viewport.heightMm / 2,
+        )
+      if (!hit) {
+        selectViewport(null)
+        return
+      }
+      selectViewport(hit.id)
+      if (!hit.locked) {
+        setViewportDrag({
+          id: hit.id,
+          grab: { x: paper.x - hit.center.x, y: paper.y - hit.center.y },
+        })
+      }
+      return
+    }
     const local = localPoint(event)
     // A window whose first corner is already down is waiting for its second click, and nothing
     // else may take that click: not a grip, not an object under it. Mouse up closes the window.
@@ -751,6 +778,18 @@ export function CanvasViewport() {
       setTrackingLabel(tracking)
       return
     }
+    if (viewportDrag && activeLayout) {
+      // The grab point stays under the cursor, so the frame moves with the hand rather than jumping
+      // its centre to wherever the press happened to land.
+      const paper = screenToWorld(local, camera)
+      const target = activeLayout.viewports.find((viewport) => viewport.id === viewportDrag.id)
+      if (target) {
+        updateViewport(activeLayout.id, target.id, {
+          center: { x: paper.x - viewportDrag.grab.x, y: paper.y - viewportDrag.grab.y },
+        })
+      }
+      return
+    }
     if (panning && lastMouse) {
       setCamera({ x: camera.x + (clientX - lastMouse.x), y: camera.y + (clientY - lastMouse.y) })
       setLastMouse({ x: clientX, y: clientY })
@@ -811,6 +850,7 @@ export function CanvasViewport() {
   const handleMouseUp = (event: MouseEvent<SVGSVGElement>) => {
     setPanning(false)
     setLastMouse(null)
+    setViewportDrag(null)
 
     if (gripDrag) {
       const travelled = Math.hypot(gripDrag.to.x - gripDrag.grip.point.x, gripDrag.to.y - gripDrag.grip.point.y)
@@ -916,6 +956,7 @@ export function CanvasViewport() {
   const handleMouseLeave = () => {
     setPanning(false)
     setLastMouse(null)
+    setViewportDrag(null)
     setBoxStart(null)
     setBoxEnd(null)
     setBoxLatched(false)
