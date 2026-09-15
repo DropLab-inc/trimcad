@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { matchCommands, type CommandDef } from '../core/commandRegistry'
+import { matchCommands, COMMANDS, type CommandDef } from '../core/commandRegistry'
 import { currentPrompt, useCadStore } from '../core/store'
 import { formatPrompt } from '../core/prompts'
 import { COMMAND_INPUT_ID, focusCommandInput } from './commandFocus'
@@ -8,6 +8,37 @@ import { useFileActions } from './useFileActions'
 
 /** The canvas focuses the input by id so any keystroke can start a command. */
 export { COMMAND_INPUT_ID, focusCommandInput }
+
+/** Whether what was typed already reaches a command, so Enter needs no help interpreting it. */
+const reachesACommand = (typed: string): boolean => {
+  const wanted = typed.toUpperCase()
+  return COMMANDS.some(
+    (command) => command.name === wanted || command.aliases.some((alias) => alias.toUpperCase() === wanted),
+  )
+}
+
+/**
+ * The suggestion Enter should take, or null when the typed text should be sent as written.
+ *
+ * The row that looks highlighted is the first one, so testing for `highlight > 0` — as this did — let
+ * the line show CIRCLE highlighted and still answer "Unknown command CIRC". Anything that already
+ * reaches a command is sent as written, and so is an answer to a prompt that wants text or a number:
+ * a block name that happens to start with a command's letters has to go in untouched.
+ */
+export const completionFor = (
+  typed: string,
+  suggestions: CommandDef[],
+  highlight: number,
+  /** True while a prompt is waiting for text or a number, which is an answer rather than a command. */
+  answering: boolean,
+): CommandDef | null => {
+  const wanted = typed.trim().toUpperCase()
+  if (!wanted || answering || suggestions.length === 0) return null
+  if (reachesACommand(wanted)) return null
+
+  const highlighted = suggestions[highlight] ?? suggestions[0]
+  return highlighted.name.toUpperCase().startsWith(wanted) ? highlighted : null
+}
 
 export function CommandLine() {
   const [highlight, setHighlight] = useState(0)
@@ -46,6 +77,9 @@ export function CommandLine() {
   }
 
   const suggestions = useMemo(() => matchCommands(value).slice(0, 8), [value])
+
+  /** A prompt waiting for text or a number is asking a question, so the line answers it literally. */
+  const answering = prompt?.kind === 'text' || prompt?.kind === 'number'
 
   // Keep the newest scrollback line in view as commands run.
   useEffect(() => {
@@ -139,15 +173,15 @@ export function CommandLine() {
     const spaceSubmits = event.key === ' ' && !navigator.maxTouchPoints
     if (event.key === 'Enter' || spaceSubmits || event.keyCode === 13) {
       event.preventDefault()
-      // Arrowing onto a suggestion runs that command rather than the raw text.
-      const chosen = highlight > 0 ? suggestions[highlight] : null
-      runCommand(chosen ? chosen.name : value)
+      // Enter takes the suggestion on show when what was typed cannot stand on its own.
+      const completion = completionFor(value, suggestions, highlight, answering)
+      runCommand(completion ? completion.name : value)
       setRecallIndex(-1)
       return
     }
     if (event.key === 'Tab' && suggestions.length > 0) {
       event.preventDefault()
-      setValue(suggestions[highlight].name)
+      setValue((suggestions[highlight] ?? suggestions[0]).name)
       return
     }
     if (event.key === 'ArrowDown') {
@@ -243,7 +277,9 @@ export function CommandLine() {
             className="command-entry-form"
             onSubmit={(event) => {
               event.preventDefault()
-              runCommand(highlight > 0 ? suggestions[highlight].name : value)
+              // The soft keyboard's Go key means the same as Enter, completion included.
+              const completion = completionFor(value, suggestions, highlight, answering)
+              runCommand(completion ? completion.name : value)
               setRecallIndex(-1)
             }}
           >

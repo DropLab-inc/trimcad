@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { COMMANDS } from '../core/commandRegistry'
 import { makeDefaultDocument } from '../core/document'
 import { applyDrawTool, useCadStore } from '../core/store'
-import { CommandLine } from './CommandLine'
+import { CommandLine, completionFor } from './CommandLine'
 
 const state = () => useCadStore.getState()
 
@@ -17,6 +18,37 @@ beforeEach(() => {
   store.setCommandInput('')
   // The store is a singleton, so the scrollback would otherwise carry over between tests.
   useCadStore.setState({ history: [] })
+})
+
+const circle = COMMANDS.find((command) => command.name === 'CIRCLE')!
+const line = COMMANDS.find((command) => command.name === 'LINE')!
+
+describe('completing what was typed', () => {
+  it('takes the highlighted suggestion for a partial that reaches nothing on its own', () => {
+    expect(completionFor('CIRC', [circle], 0, false)?.name).toBe('CIRCLE')
+  })
+
+  it('leaves text that already reaches a command exactly as typed', () => {
+    // Nothing to decide: REC reaches RECTANG, and an answer of "L" must stay the answer "L".
+    expect(completionFor('REC', [circle], 0, false)).toBeNull()
+    expect(completionFor('L', [circle], 0, false)).toBeNull()
+  })
+
+  it('refuses to complete an answer to a prompt', () => {
+    expect(completionFor('CIRC', [circle], 0, true)).toBeNull()
+  })
+
+  it('takes the suggestion that is highlighted, not simply the first', () => {
+    expect(completionFor('LI', [circle, line], 1, false)?.name).toBe('LINE')
+    // And with the highlight elsewhere, "LI" is the start of nothing on offer.
+    expect(completionFor('LI', [circle, line], 0, false)).toBeNull()
+  })
+
+  it('never invents a command the text is not the start of', () => {
+    expect(completionFor('ZZZ', [circle], 0, false)).toBeNull()
+    expect(completionFor('', [circle], 0, false)).toBeNull()
+    expect(completionFor('CIRC', [], 0, false)).toBeNull()
+  })
 })
 
 describe('the command line', () => {
@@ -98,6 +130,42 @@ describe('the command line', () => {
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'CIR' } })
 
     expect(screen.getByText('CIRCLE')).toBeInTheDocument()
+  })
+
+  it('completes the highlighted suggestion when Enter is pressed', () => {
+    render(<CommandLine />)
+    const input = screen.getByRole('textbox')
+
+    // "CIRC" reaches no command on its own, but CIRCLE is on show and drawn as highlighted — so Enter
+    // takes it instead of answering "Unknown command CIRC", which is what it used to do.
+    fireEvent.change(input, { target: { value: 'CIRC' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(state().activeTool).toBe('circle')
+  })
+
+  it('sends text that already reaches a command as written', () => {
+    render(<CommandLine />)
+    const input = screen.getByRole('textbox')
+
+    // REC is RECTANG's own alias, so no completion is needed and none should be invented.
+    fireEvent.change(input, { target: { value: 'REC' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(state().activeTool).toBe('rect')
+  })
+
+  it('does not complete while a prompt is waiting for an answer', () => {
+    render(<CommandLine />)
+    const input = screen.getByRole('textbox')
+    // INSERT is asking for a block name, and "CI" happens to start CIRCLE — but a name is what was
+    // typed. Completing it would make any block unreachable by a name that looks like a command.
+    run('INSERT')
+    fireEvent.change(input, { target: { value: 'CI' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(state().activeTool).toBe('insert')
+    expect(state().history.at(-1)!.text).toMatch(/No block named "CI"/)
   })
 
   it('echoes what ran into the history', () => {
