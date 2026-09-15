@@ -1424,7 +1424,7 @@ const clipboardAnchor = (entities: CadEntity[]): Vec2 => {
 type CadStoreState = ReturnType<typeof useCadStore.getState>
 
 const pickEntity = (state: CadStoreState, point: Vec2): CadEntity | undefined =>
-  [...editableEntities(state.doc)]
+  [...editableEntities({ ...state.doc, entities: spaceEntitiesOf(state) })]
     .reverse()
     .find((entity) => isPointNearEntity(point, entity, getPreferences().pickBoxSize / state.camera.zoom, state.doc.blocks))
 
@@ -1435,7 +1435,8 @@ const pickEntity = (state: CadStoreState, point: Vec2): CadEntity | undefined =>
  * edge, which is what `edgeIds === null` means here; picking edges narrows it to that set.
  */
 export const edgesFor = (state: CadStoreState): CadEntity[] => {
-  const editable = editableEntities(state.doc)
+  // The cutting edges are the objects on screen: on a sheet, the sheet's own lines.
+  const editable = editableEntities({ ...state.doc, entities: spaceEntitiesOf(state) })
   if (state.edgeIds === null) return editable
   const chosen = new Set(state.edgeIds)
   return editable.filter((entity) => chosen.has(entity.id))
@@ -1481,10 +1482,9 @@ const runTrimExtend = (state: CadStoreState, point: Vec2, swapped: boolean) => {
       state.setStatusMessage('No boundary found in that direction.')
       return
     }
-    state.updateDocument((doc) => ({
-      ...doc,
-      entities: doc.entities.map((entity) => (entity.id === target.id ? result.entity : entity)),
-    }))
+    state.updateSpaceEntities((entities) =>
+      entities.map((entity) => (entity.id === target.id ? result.entity : entity)),
+    )
     state.setStatusMessage('Extended')
     return
   }
@@ -1494,10 +1494,9 @@ const runTrimExtend = (state: CadStoreState, point: Vec2, swapped: boolean) => {
     state.setStatusMessage('That object does not meet an edge there.')
     return
   }
-  state.updateDocument((doc) => ({
-    ...doc,
-    entities: doc.entities.flatMap((entity) => (entity.id === target.id ? result.remaining : [entity])),
-  }))
+  state.updateSpaceEntities((entities) =>
+    entities.flatMap((entity) => (entity.id === target.id ? result.remaining : [entity])),
+  )
   state.setStatusMessage(result.remaining.length === 0 ? 'Erased' : 'Trimmed')
 }
 
@@ -1662,7 +1661,7 @@ const runCircle = (state: CadStoreState, point: Vec2, layerId: string): boolean 
 /** Builds the Ttr circle once its radius is known. */
 const finishTangentCircle = (state: CadStoreState, radius: number): boolean => {
   const [first, second] = state.tangentPicks
-  const entityFor = (pick: { id: string }) => state.doc.entities.find((entity) => entity.id === pick.id)
+  const entityFor = (pick: { id: string }) => spaceEntitiesOf(state).find((entity) => entity.id === pick.id)
   const a = first && entityFor(first)
   const b = second && entityFor(second)
   if (!a || !b) {
@@ -2116,7 +2115,7 @@ const applyTypedNumber = (state: CadStoreState, value: number): boolean => {
 
 /** The objects the selection points at, in the order the drawing holds them. */
 const selectedEntities = (state: CadStoreState): CadEntity[] =>
-  state.doc.entities.filter((entity) => state.selectedIds.includes(entity.id))
+  spaceEntitiesOf(state).filter((entity) => state.selectedIds.includes(entity.id))
 
 /** How JOIN and OVERKILL should read the drawing, taken from the preferences. */
 const combineOptions = (): CombineOptions => {
@@ -2165,7 +2164,7 @@ const runExplode = (state: CadStoreState) => {
   }
 
   const ids = new Set(state.selectedIds)
-  const result = explodeSelection(state.doc.entities, state.selectedIds, state.doc.blocks)
+  const result = explodeSelection(spaceEntitiesOf(state), state.selectedIds, state.doc.blocks)
   const groups = state.doc.groups.filter((group) => group.entityIds.some((id) => ids.has(id)))
 
   if (result.consumed.length === 0 && groups.length === 0) {
