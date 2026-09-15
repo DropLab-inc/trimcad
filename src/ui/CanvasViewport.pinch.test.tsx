@@ -110,9 +110,11 @@ describe('two-finger pinch', () => {
     fireTouch(svg, 'touchmove', spread(200, 5e6))
     expect(useCadStore.getState().camera.zoom).toBe(ZOOM_MAX)
 
-    // And the same at the other end, where a gesture cannot shrink the view to nothing.
+    // And the same at the other end, where a gesture cannot shrink the view to nothing. Each gesture
+    // is measured from the zoom it started at, so this one has to span far enough to reach the floor
+    // from the ceiling — a million to one either way is a factor of a million million.
     fireTouch(svg, 'touchstart', spread(200, 5e6))
-    fireTouch(svg, 'touchmove', spread(200, 1))
+    fireTouch(svg, 'touchmove', spread(200, 5e-6))
     expect(useCadStore.getState().camera.zoom).toBe(ZOOM_MIN)
   })
 
