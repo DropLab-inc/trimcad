@@ -2,6 +2,10 @@ import type { Vec2 } from './math/vec2'
 
 export type Units = 'mm' | 'in'
 
+/** Paper a layout is issued on. Sizes in millimetres live in `print.ts`. */
+export type PaperSize = 'a4' | 'a3' | 'a2' | 'a1' | 'letter' | 'legal' | 'tabloid'
+export type PaperOrientation = 'landscape' | 'portrait'
+
 export type Linetype = {
   id: string
   name: string
@@ -138,6 +142,39 @@ export type CadEntity =
   | DimensionEntity
   | InsertEntity
 
+/**
+ * A window onto the model placed on a sheet. Its frame is measured in paper millimetres; the
+ * drawing it shows is the model scaled by `unitsPerMm` about `modelCenter`.
+ */
+export type Viewport = {
+  id: string
+  /** Centre of the frame on the sheet, in millimetres from the sheet's top-left corner. */
+  center: Vec2
+  widthMm: number
+  heightMm: number
+  /** The drawing point sitting at the centre of the frame. */
+  modelCenter: Vec2
+  /** Drawing units per millimetre of paper, so 50 shows the model at 1:50. */
+  unitsPerMm: number
+  /** A locked viewport holds its scale and centring; panning or zooming inside it is refused. */
+  locked: boolean
+}
+
+/**
+ * A sheet. Model space holds the drawing at full size; a layout holds the paper it is issued on,
+ * whatever is written on that paper, and the viewports that show the model.
+ */
+export type Layout = {
+  id: string
+  name: string
+  paper: PaperSize
+  orientation: PaperOrientation
+  marginMm: number
+  /** Geometry in paper millimetres — a border, a title block, notes. Reserved for phase 3. */
+  entities: CadEntity[]
+  viewports: Viewport[]
+}
+
 export type Group = {
   id: string
   name: string
@@ -148,6 +185,8 @@ export type BlockDefinition = {
   id: string
   name: string
   entities: CadEntity[]
+  /** Where the block's own origin sits. INSERT places this point. Absent means {0, 0}. */
+  basePoint?: Vec2
 }
 
 export type DrawingDocument = {
@@ -158,6 +197,8 @@ export type DrawingDocument = {
   blocks: BlockDefinition[]
   entities: CadEntity[]
   groups: Group[]
+  /** Sheets issued from this drawing. Empty until the user makes one; model space always exists. */
+  layouts: Layout[]
 }
 
 export type SnapMode =
@@ -214,6 +255,7 @@ export type ToolMode =
   | 'boundary'
   | 'dimension'
   | 'insert'
+  | 'block'
   | 'offset'
   | 'trim'
   | 'extend'

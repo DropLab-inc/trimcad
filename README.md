@@ -535,6 +535,34 @@ theme-specific in the file. Only plain white and plain black flip like this; eve
 colour is drawn exactly as specified. Printing applies the same idea, plotting anything too light
 to show on paper as black.
 
+### The mark
+
+`public/logo.svg` is the mark and the source of truth: a T-square as the tile's negative space — a
+wide head on a short stem, in the proportions of the tool rather than of the letter. A bright tile
+with a dark mark, because the pair that came before it (accent artwork on a dark chip) lost its edges
+on dark chrome, which is exactly where an icon lives: a tab strip and the app's own title bar.
+
+The shape is the result of rendering candidates at 16, 20, 24 and 32px on both dark and light chrome
+and keeping what survived:
+
+- **No detached pieces, no hairlines, no mitres.** A cut-off fragment, a 1px channel, or a 45° detail
+  either disappears or reads as a smudge by 16px; one variant's offcut turned into what looked like a
+  speck of dirt in the corner of the tile.
+- **Nothing thinner than 10 units of the 64-unit box** — the head is 34×10, the stem 11×21.
+- **The tile carries the colour, the mark carries the contrast.** A tileless teal glyph reads on dark
+  chrome and goes weak on light chrome; the bright tile holds on both.
+- **One glyph, not a lockup.** Below about 100px a wordmark is a smear, so the icon is the drawing and
+  the name is set as text wherever there is room for it.
+
+`scripts/render-brand-assets.py` draws the bitmap fallbacks from the same numbers (supersampled 8× so
+the small sizes are clean): `favicon-16/32/48.png`, `favicon.ico` and `apple-touch-icon.png`. The
+home-screen icon is full-bleed and square because iOS applies its own mask, and double-rounded corners
+look like a mistake. `og.png` is the social card, the one place a wordmark helps.
+
+The app uses the SVG everywhere, so the title bar, the Support page and the tab all agree and stay
+sharp on any display. `public/trimcad-logo.png` — the earlier lockup — is kept but no longer referenced
+by anything.
+
 ## Build
 
 ```bash
@@ -579,7 +607,46 @@ ellipse leads with its longer radius. Fingerprinting the in-memory document inst
 match on reload, and the embedded copy would be discarded every time a drawing contained one of
 those.
 
+## Documentation, requests and sponsorship
+
+The **Help** menu in the titlebar opens three pages inside the app. They are reached by hash
+(`#/docs/guide`, `#/requests`, `#/support`) so a link can be sent to anyone, and Escape goes back
+to the drawing with the drawing untouched.
+
+- **Documentation** renders this README, `docs/ARCHITECTURE.md` and `docs/TESTING.md` from the
+  repository's own markdown, bundled at build time. There is one manual, and it is the one in git.
+- **Feature requests** reads the open issues labelled `feature request` from the GitHub API, with
+  search, sorting by most-wanted, newest or most discussed, and a short-lived local cache so a
+  visitor is never rate-limited by their own reloads. The form inside the app collects a title, a
+  category and the point of the request, then opens a prefilled issue on GitHub — nothing is filed
+  until a signed-in person presses *Submit new issue* there, and the app holds no token that could
+  do it for them. Before the first labelled issue exists the page falls back to showing every open
+  issue and says so.
+- **Support TrimCAD** explains what sponsorship pays for and links to GitHub Sponsors. The button
+  appears only when a build supplies a published profile, which `.env` does:
+
+```
+VITE_SPONSOR_URL=https://github.com/sponsors/DropLab-inc
+```
+
+Left unset, that page says sponsorship is not switched on rather than offering a dead link. Point it
+at a different profile and the whole page follows, including `github:` in `.github/FUNDING.yml`, which
+is what gives the repository GitHub's own Sponsor button.
+
 ## Notes
 
 - DXF support is intentionally a subset for lightweight interoperability.
 - Hatch, spline, and some modify operations are pragmatic implementations aimed at speed and usability in v1.
+
+## Analytics
+
+The deployed site can count page views with **Cloudflare Web Analytics**: aggregate numbers, no
+cookies, no fingerprinting, no personal data, and nothing shared with third parties. That is the
+whole extent of it — no account, no profile, no cross-site tracking — which is the only kind of
+measurement that fits a tool that advertises having no login.
+
+It is off unless a beacon token is built in. `src/core/analytics.ts` reads
+`VITE_CLOUDFLARE_BEACON`, which lives in `.env` (it is public — the token ships in the page), and
+a host that looks like development (`localhost`, `127.0.0.1`, `*.local`) never reports even when
+a token is present. An empty token means the beacon is never added to the page.
+

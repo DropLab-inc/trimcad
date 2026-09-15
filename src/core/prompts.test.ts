@@ -37,6 +37,9 @@ const context = (overrides: Partial<PromptContext> = {}): PromptContext => ({
   pickingEdges: false,
   edgeCount: null,
   swapped: false,
+  insertBlockId: null,
+  insertPending: null,
+  blockNamePending: false,
   ...overrides,
 })
 

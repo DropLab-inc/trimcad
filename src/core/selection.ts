@@ -1,7 +1,7 @@
 import { isPointInPolygon, polar } from './geometry'
 import type { Vec2 } from './math/vec2'
 import { entityCircle, entitySegments, segmentCircleIntersections, segmentIntersection } from './snap'
-import type { CadEntity, DrawingDocument } from './types'
+import type { BlockDefinition, CadEntity, DrawingDocument, InsertEntity } from './types'
 
 export type SelectionRect = { min: Vec2; max: Vec2 }
 
@@ -32,7 +32,48 @@ const boundsOfPoints = (points: Vec2[]): Bounds | null => {
   )
 }
 
-export const entityBounds = (entity: CadEntity): Bounds | null => {
+/** How deep an insert's bounds may recurse through nested blocks; a definition cycle cannot loop. */
+const MAX_BOUNDS_NESTING = 8
+
+/**
+ * The bounds of an insert's geometry, computed from its block's members rather than a placeholder.
+ * Returns bounds in the space the insert's position lives in, so a nested insert hands back bounds
+ * its parent can transform straight through.
+ */
+const insertMemberBounds = (insert: InsertEntity, blocks: BlockDefinition[], depth = 0): Bounds | null => {
+  if (depth > MAX_BOUNDS_NESTING) return null
+  const block = blocks.find((candidate) => candidate.id === insert.blockId)
+  if (!block || block.entities.length === 0) return null
+
+  const base = block.basePoint ?? { x: 0, y: 0 }
+  const cos = Math.cos(insert.rotation)
+  const sin = Math.sin(insert.rotation)
+  const toParent = (point: Vec2): Vec2 => {
+    const dx = (point.x - base.x) * insert.scale
+    const dy = (point.y - base.y) * insert.scale
+    return { x: insert.position.x + dx * cos - dy * sin, y: insert.position.y + dx * sin + dy * cos }
+  }
+
+  const corners: Vec2[] = []
+  const push = (bounds: Bounds | null) => {
+    if (!bounds) return
+    corners.push(
+      bounds.min,
+      { x: bounds.min.x, y: bounds.max.y },
+      bounds.max,
+      { x: bounds.max.x, y: bounds.min.y },
+    )
+  }
+
+  for (const member of block.entities) {
+    if (member.type === 'insert') push(insertMemberBounds(member, blocks, depth + 1))
+    else push(entityBounds(member, blocks))
+  }
+  if (corners.length === 0) return null
+  return boundsOfPoints(corners.map(toParent))
+}
+
+export const entityBounds = (entity: CadEntity, blocks?: BlockDefinition[]): Bounds | null => {
   switch (entity.type) {
     case 'line':
       return boundsOfPoints([entity.start, entity.end])
@@ -74,6 +115,8 @@ export const entityBounds = (entity: CadEntity): Bounds | null => {
         [entity.p1, entity.p2, entity.p3, entity.placement].filter((point): point is Vec2 => Boolean(point)),
       )
     case 'insert': {
+      const memberBounds = blocks ? insertMemberBounds(entity, blocks) : null
+      if (memberBounds) return memberBounds
       const extent = 6 * entity.scale
       return {
         min: { x: entity.position.x - extent, y: entity.position.y - extent },
@@ -98,16 +141,16 @@ const rectEdges = (rect: SelectionRect): Array<{ a: Vec2; b: Vec2 }> => {
   return corners.map((corner, index) => ({ a: corner, b: corners[(index + 1) % corners.length] }))
 }
 
-export const entityFullyInside = (entity: CadEntity, rect: SelectionRect): boolean => {
-  const bounds = entityBounds(entity)
+export const entityFullyInside = (entity: CadEntity, rect: SelectionRect, blocks?: BlockDefinition[]): boolean => {
+  const bounds = entityBounds(entity, blocks)
   if (!bounds) return false
   return (
     bounds.min.x >= rect.min.x && bounds.max.x <= rect.max.x && bounds.min.y >= rect.min.y && bounds.max.y <= rect.max.y
   )
 }
 
-export const entityTouchesRect = (entity: CadEntity, rect: SelectionRect): boolean => {
-  if (entityFullyInside(entity, rect)) return true
+export const entityTouchesRect = (entity: CadEntity, rect: SelectionRect, blocks?: BlockDefinition[]): boolean => {
+  if (entityFullyInside(entity, rect, blocks)) return true
 
   const edges = rectEdges(rect)
   const segments = entitySegments(entity)
@@ -127,7 +170,7 @@ export const entityTouchesRect = (entity: CadEntity, rect: SelectionRect): boole
   }
 
   if (entity.type === 'ellipse' || entity.type === 'text' || entity.type === 'insert' || entity.type === 'dimension') {
-    const bounds = entityBounds(entity)
+    const bounds = entityBounds(entity, blocks)
     if (!bounds) return false
     return (
       bounds.min.x <= rect.max.x && bounds.max.x >= rect.min.x && bounds.min.y <= rect.max.y && bounds.max.y >= rect.min.y
@@ -155,9 +198,12 @@ export const selectEntitiesInRect = (
   entities: CadEntity[],
   rect: SelectionRect,
   mode: SelectionMode,
+  blocks?: BlockDefinition[],
 ): string[] =>
   entities
-    .filter((entity) => (mode === 'window' ? entityFullyInside(entity, rect) : entityTouchesRect(entity, rect)))
+    .filter((entity) =>
+      mode === 'window' ? entityFullyInside(entity, rect, blocks) : entityTouchesRect(entity, rect, blocks),
+    )
     .map((entity) => entity.id)
 
 /** Picking any member of a group selects the whole group, as AutoCAD does. */

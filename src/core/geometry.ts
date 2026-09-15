@@ -12,6 +12,7 @@ import {
 } from './math/vec2'
 import type {
   ArcEntity,
+  BlockDefinition,
   CadEntity,
   CircleEntity,
   DimensionEntity,
@@ -45,7 +46,7 @@ export const pointSegmentDistance = (p: Vec2, a: Vec2, b: Vec2): number => {
   return distance(p, closest)
 }
 
-export const isPointNearEntity = (point: Vec2, entity: CadEntity, tol: number): boolean => {
+export const isPointNearEntity = (point: Vec2, entity: CadEntity, tol: number, blocks?: BlockDefinition[]): boolean => {
   switch (entity.type) {
     case 'line':
       return pointSegmentDistance(point, entity.start, entity.end) <= tol
@@ -72,8 +73,15 @@ export const isPointNearEntity = (point: Vec2, entity: CadEntity, tol: number): 
       return distance(point, entity.position) <= tol * 2
     case 'dimension':
       return pointSegmentDistance(point, entity.p1, entity.p2) <= tol
-    case 'insert':
-      return distance(point, entity.position) <= tol * 2
+    case 'insert': {
+      const block = blocks?.find((candidate) => candidate.id === entity.blockId)
+      if (!block || block.entities.length === 0) return distance(point, entity.position) <= tol * 2
+      // World point back into the block's own space, undoing translate/rotate/scale about the base.
+      const base = block.basePoint ?? { x: 0, y: 0 }
+      const scale = entity.scale || 1
+      const local = add(mul(rotateAround(sub(point, entity.position), { x: 0, y: 0 }, -entity.rotation), 1 / scale), base)
+      return block.entities.some((member) => isPointNearEntity(local, member, tol / scale, blocks))
+    }
     default:
       return false
   }

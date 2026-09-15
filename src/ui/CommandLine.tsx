@@ -1,11 +1,44 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { matchCommands, type CommandDef } from '../core/commandRegistry'
+import { matchCommands, COMMANDS, type CommandDef } from '../core/commandRegistry'
 import { currentPrompt, useCadStore } from '../core/store'
 import { formatPrompt } from '../core/prompts'
+import { COMMAND_INPUT_ID, focusCommandInput } from './commandFocus'
+import { Icon } from './Icon'
 import { useFileActions } from './useFileActions'
 
 /** The canvas focuses the input by id so any keystroke can start a command. */
-export const COMMAND_INPUT_ID = 'cad-command-input'
+export { COMMAND_INPUT_ID, focusCommandInput }
+
+/** Whether what was typed already reaches a command, so Enter needs no help interpreting it. */
+const reachesACommand = (typed: string): boolean => {
+  const wanted = typed.toUpperCase()
+  return COMMANDS.some(
+    (command) => command.name === wanted || command.aliases.some((alias) => alias.toUpperCase() === wanted),
+  )
+}
+
+/**
+ * The suggestion Enter should take, or null when the typed text should be sent as written.
+ *
+ * The row that looks highlighted is the first one, so testing for `highlight > 0` — as this did — let
+ * the line show CIRCLE highlighted and still answer "Unknown command CIRC". Anything that already
+ * reaches a command is sent as written, and so is an answer to a prompt that wants text or a number:
+ * a block name that happens to start with a command's letters has to go in untouched.
+ */
+export const completionFor = (
+  typed: string,
+  suggestions: CommandDef[],
+  highlight: number,
+  /** True while a prompt is waiting for text or a number, which is an answer rather than a command. */
+  answering: boolean,
+): CommandDef | null => {
+  const wanted = typed.trim().toUpperCase()
+  if (!wanted || answering || suggestions.length === 0) return null
+  if (reachesACommand(wanted)) return null
+
+  const highlighted = suggestions[highlight] ?? suggestions[0]
+  return highlighted.name.toUpperCase().startsWith(wanted) ? highlighted : null
+}
 
 export function CommandLine() {
   const [highlight, setHighlight] = useState(0)
@@ -45,6 +78,9 @@ export function CommandLine() {
 
   const suggestions = useMemo(() => matchCommands(value).slice(0, 8), [value])
 
+  /** A prompt waiting for text or a number is asking a question, so the line answers it literally. */
+  const answering = prompt?.kind === 'text' || prompt?.kind === 'number'
+
   // Keep the newest scrollback line in view as commands run.
   useEffect(() => {
     const node = scrollRef.current
@@ -65,6 +101,9 @@ export function CommandLine() {
   const runCommand = (line: string) => {
     const command = line.trim().toUpperCase()
     setValue('')
+    // The mirrored value in the on-canvas box belongs to the text that is being submitted, so it
+    // goes with it rather than lingering in the box.
+    mirrorTypedValue('')
     setHighlight(0)
 
     const fileCommand = fileCommands[command]
@@ -76,6 +115,27 @@ export function CommandLine() {
     executeCommand(line)
   }
 
+  /**
+   * Shows what is being typed in the box it is going to fill.
+   *
+   * The keyboard on a phone is attached to this input, not to the drawing, so without this the
+   * digits appear only in the bar at the bottom while the box the user tapped still reads its
+   * tracked value — which looks exactly like the app ignoring the input.
+   */
+  const mirrorTypedValue = (text: string) => {
+    // Anything a number pad can put on the way to a number is allowed through, so the box keeps
+    // showing what is being typed instead of blanking: a comma on a keyboard in a comma-decimal
+    // locale, a trailing separator, a lone minus sign. A predictive keyboard's trailing space is
+    // trimmed off rather than treated as the end of the number. Text with no numeric character at
+    // all — a command, a coordinate pair — is not a field value and clears the mirror instead.
+    const value = text.trim()
+    if (value !== '' && !/^-?[\d.,]*$/.test(value)) {
+      useCadStore.getState().mirrorTypedValue('')
+      return
+    }
+    useCadStore.getState().mirrorTypedValue(value)
+  }
+
   /** Earlier inputs, newest first, for arrow-key recall. */
   const recallable = useMemo(
     () => history.filter((line) => line.kind === 'input').map((line) => line.text).reverse(),
@@ -83,19 +143,45 @@ export function CommandLine() {
   )
   const [recallIndex, setRecallIndex] = useState(-1)
 
+  /**
+   * The value the field shows.
+   *
+   * While an on-screen keyboard is composing — and Android composes for plain digits too — the
+   * browser owns the text and the composing characters are not in the store yet. Re-rendering the
+   * input from the store mid-composition is what makes syllables vanish, double, or land out of
+   * order, so the composing text is held here and only written through when the composition ends.
+   */
+  const [composing, setComposing] = useState<string | null>(null)
+  const composingRef = useRef(false)
+  const displayValue = composing ?? value
+
+  const acceptText = (text: string) => {
+    setValue(text)
+    mirrorTypedValue(text)
+    setHighlight(0)
+    setRecallIndex(-1)
+  }
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    // Space submits just like Enter, which is how AutoCAD accepts a command.
-    if (event.key === 'Enter' || event.key === ' ') {
+    // A key event that belongs to a composition is the keyboard's, not the command line's.
+    if (composingRef.current || event.nativeEvent.isComposing) return
+    /*
+     * Enter submits. Space does too, which is how AutoCAD accepts a command — but only on a
+     * keyboard that cannot insert one by itself: predictive keyboards add a trailing space as the
+     * user types, and treating that as Enter runs a command before the word is finished.
+     */
+    const spaceSubmits = event.key === ' ' && !navigator.maxTouchPoints
+    if (event.key === 'Enter' || spaceSubmits || event.keyCode === 13) {
       event.preventDefault()
-      // Arrowing onto a suggestion runs that command rather than the raw text.
-      const chosen = highlight > 0 ? suggestions[highlight] : null
-      runCommand(chosen ? chosen.name : value)
+      // Enter takes the suggestion on show when what was typed cannot stand on its own.
+      const completion = completionFor(value, suggestions, highlight, answering)
+      runCommand(completion ? completion.name : value)
       setRecallIndex(-1)
       return
     }
     if (event.key === 'Tab' && suggestions.length > 0) {
       event.preventDefault()
-      setValue(suggestions[highlight].name)
+      setValue((suggestions[highlight] ?? suggestions[0]).name)
       return
     }
     if (event.key === 'ArrowDown') {
@@ -134,8 +220,27 @@ export function CommandLine() {
         ))}
       </div>
 
+      {/*
+        * On a desktop you type wherever the crosshair is and the value boxes on
+        * the canvas do the teaching. A phone has neither a cursor nor a keyboard
+        * until asked, so the three forms worth knowing are written down here.
+        */}
+      <p className="command-hint">
+        Type <b>10,20</b> for a point, <b>@50,0</b> to step from the last one, or <b>120&lt;45</b> for a
+        length and angle.
+      </p>
+
       <div className="command-entry">
-        <span className="command-prompt">
+        <span
+          className="command-prompt"
+          onPointerDown={(event) => {
+            // Tapping the prompt is the same as tapping the field: the phone has
+            // no keyboard to start typing into. Tapping an option still means the
+            // option, so those stop this themselves.
+            event.preventDefault()
+            focusCommandInput()
+          }}
+        >
           {prompt.text}
           {prompt.keywords.length > 0 && (
             <>
@@ -147,6 +252,7 @@ export function CommandLine() {
                     type="button"
                     className="prompt-option"
                     title={`Type ${keyword.key} or click`}
+                    onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => {
                       log('input', keyword.label)
                       applyKeyword(keyword)
@@ -162,19 +268,51 @@ export function CommandLine() {
           {prompt.defaultValue ? ` <${prompt.defaultValue}>` : ''}:
         </span>
         <div className="command-input-wrap">
-          <input
-            id={COMMAND_INPUT_ID}
-            value={value}
-            onChange={(event) => {
-              setValue(event.target.value)
-              setHighlight(0)
+          {/*
+            * A form so the soft keyboard's action key has something to submit. Android and iOS
+            * both submit a form from the Go/Done key even when the key event itself arrives as
+            * "Unidentified", which is the shape the key handler cannot catch on its own.
+            */}
+          <form
+            className="command-entry-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              // The soft keyboard's Go key means the same as Enter, completion included.
+              const completion = completionFor(value, suggestions, highlight, answering)
+              runCommand(completion ? completion.name : value)
               setRecallIndex(-1)
             }}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a command, or press Enter to repeat the last one"
-            autoComplete="off"
-            spellCheck={false}
-          />
+          >
+            <input
+              id={COMMAND_INPUT_ID}
+              value={displayValue}
+              onChange={(event) => {
+                // Mid-composition the browser's text is ahead of the store; hold it locally.
+                if (composingRef.current) {
+                  setComposing(event.target.value)
+                  return
+                }
+                setComposing(null)
+                acceptText(event.target.value)
+              }}
+              onCompositionStart={() => {
+                composingRef.current = true
+                setComposing(value)
+              }}
+              onCompositionEnd={(event) => {
+                composingRef.current = false
+                setComposing(null)
+                acceptText((event.target as HTMLInputElement).value)
+              }}
+              onKeyDown={handleKeyDown}
+              placeholder="Type a command, or press Enter to repeat the last one"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              enterKeyHint="enter"
+              spellCheck={false}
+            />
+          </form>
           {suggestions.length > 0 && (
             <ul className="command-suggestions">
               {suggestions.map((command, index) => (
@@ -197,6 +335,22 @@ export function CommandLine() {
             </ul>
           )}
         </div>
+        {/*
+          * The phone's keyboard only exists once something has focus. This raises
+          * it, on its own, without the user having to find the input.
+          */}
+        <button
+          type="button"
+          className="command-type"
+          aria-label="Type a value or a command"
+          title="Type a value or a command"
+          onPointerDown={(event) => {
+            event.preventDefault()
+            focusCommandInput()
+          }}
+        >
+          <Icon name="keyboard" />
+        </button>
       </div>
 
     </section>

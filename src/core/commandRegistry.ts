@@ -31,6 +31,9 @@ export const COMMANDS: CommandDef[] = [
   { name: 'POLYGON', aliases: ['POL'], category: 'Draw', summary: 'Regular polygon', tool: 'polygon' },
   { name: 'SPLINE', aliases: ['SPL'], category: 'Draw', summary: 'Smooth curve through points', tool: 'spline' },
   { name: 'HATCH', aliases: ['H'], category: 'Draw', summary: 'Fill an enclosed area', tool: 'hatch' },
+  { name: 'INSERT', aliases: ['I'], category: 'Draw', summary: 'Insert a block', tool: 'insert' },
+  { name: 'BLOCKPALETTE', aliases: [], category: 'Draw', summary: 'List the blocks in the drawing, and insert one' },
+  { name: 'BCOUNT', aliases: [], category: 'Draw', summary: 'How many times each block is placed' },
 
   // Annotate
   { name: 'TEXT', aliases: ['DT'], category: 'Annotate', summary: 'Single line of text', tool: 'text' },
@@ -59,6 +62,7 @@ export const COMMANDS: CommandDef[] = [
   { name: 'ERASE', aliases: ['E'], category: 'Modify', summary: 'Delete the selection' },
   { name: 'JOIN', aliases: ['J'], category: 'Modify', summary: 'Make one object out of several that meet' },
   { name: 'EXPLODE', aliases: ['X'], category: 'Modify', summary: 'Break objects into their pieces' },
+  { name: 'BLOCK', aliases: ['B'], category: 'Modify', summary: 'Define a block from the selection', tool: 'block' },
   { name: 'OVERKILL', aliases: ['OV'], category: 'Modify', summary: 'Delete duplicate and overlapping geometry' },
   { name: 'BOUNDARY', aliases: ['BO'], category: 'Modify', summary: 'Trace a closed area as a polyline', tool: 'boundary' },
   { name: 'GROUP', aliases: ['G'], category: 'Modify', summary: 'Group the selection' },
@@ -125,6 +129,75 @@ export const matchCommands = (prefix: string): CommandDef[] => {
   byName.sort((a, b) => a.name.localeCompare(b.name))
   byAlias.sort((a, b) => a.name.localeCompare(b.name))
   return [...(exact ? [exact] : []), ...byName, ...byAlias]
+}
+
+/**
+ * How many single-character edits apart two words are. Only ever called for words of similar length,
+ * so the quadratic cost is bounded by the command names it is compared against.
+ */
+const editsApart = (a: string, b: string): number => {
+  const cols = b.length + 1
+  let previous = Array.from({ length: cols }, (_, index) => index)
+
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i]
+    for (let j = 1; j < cols; j += 1) {
+      current[j] = Math.min(
+        (previous[j] ?? 0) + 1,
+        (current[j - 1] ?? 0) + 1,
+        (previous[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      )
+    }
+    previous = current
+  }
+  return previous[cols - 1] ?? 0
+}
+
+/**
+ * The command a mistyped one was probably meant, the way AutoCAD offers a correction rather than only
+ * reporting a dead end.
+ *
+ * A shared word is enough to guess, which is the case that matters here: AutoCAD has no LIST BLOCKS
+ * either, and someone typing it should be led to the palette that actually lists them. Where two
+ * commands match equally, the longer and more specific name wins — BLOCKPALETTE over BLOCK — and a
+ * one- or two-character slip is still recognised, since that is the commonest mistake of all.
+ */
+export const suggestCommand = (typed: string): string | null => {
+  const wanted = typed.trim().toUpperCase()
+  if (!wanted) return null
+  const words = wanted.split(/[\s_-]+/).filter((word) => word.length >= 3)
+
+  let bestName: string | null = null
+  let bestScore = 0
+
+  for (const command of COMMANDS) {
+    const name = command.name
+    if (name === wanted) return name
+
+    let score = 0
+    if (name.startsWith(wanted)) score = 100
+    else if (name.includes(wanted)) score = 80
+    else {
+      for (const word of words) {
+        // The plural is tried as its singular too, so "blocks" reaches BLOCKPALETTE.
+        if (name.includes(word) || name.includes(word.replace(/S$/, ''))) {
+          score = 60
+          break
+        }
+      }
+      // A misspelling scores below a shared word, so a real word match is never beaten by a typo.
+      if (score === 0 && wanted.length >= 3 && Math.abs(name.length - wanted.length) <= 2) {
+        if (editsApart(name, wanted) <= 2) score = 40
+      }
+    }
+
+    const longer = score === bestScore && bestName !== null && name.length > bestName.length
+    if (score > 0 && (score > bestScore || longer)) {
+      bestName = name
+      bestScore = score
+    }
+  }
+  return bestName
 }
 
 /** The shortest token that reaches a command, used for the hints shown on ribbon buttons. */

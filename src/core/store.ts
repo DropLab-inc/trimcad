@@ -51,7 +51,7 @@ import { explodeSelection } from './explode'
 import { getPreferences } from './preferences'
 import { distanceToEntity } from './flatten'
 import { dragGrip, type Grip } from './grips'
-import { parseCoordinate } from './dynamicInput'
+import { fieldsForTool, parseCoordinate, resolveDynamicPoint } from './dynamicInput'
 import {
   canFillet,
   chamferCorner,
@@ -62,7 +62,7 @@ import {
   offsetEntity,
   trimResult,
 } from './modify'
-import { COMMANDS, resolveCommand, type CommandDef } from './commandRegistry'
+import { COMMANDS, resolveCommand, suggestCommand, type CommandDef } from './commandRegistry'
 import {
   formatPrompt,
   matchKeyword,
@@ -79,6 +79,7 @@ import { distance as distanceBetween, sub, type Vec2 } from './math/vec2'
 import type {
   ArcMode,
   ArrayType,
+  BlockDefinition,
   CadEntity,
   CircleMode,
   PolygonFit,
@@ -86,19 +87,84 @@ import type {
   DrawingDocument,
   HatchEntity,
   HatchPattern,
+  InsertEntity,
   Layer,
+  Layout,
+  PaperOrientation,
+  PaperSize,
   RectMode,
   SnapMode,
   ToolMode,
+  Viewport,
 } from './types'
+import { extentsBounds, pageSizeMm, VIEWPORT_SCALES } from './print'
+
+/**
+ * How far a viewport's view may be magnified or shrunk, in drawing units per millimetre of paper.
+ * A viewport is zoomed by pointing at it rather than by choosing a number, so the ends of the range
+ * have to be somewhere; these are wide enough for any sheet a drawing office would issue and tight
+ * enough that the view cannot be lost down to nothing or blown out to where nothing is left.
+ */
+export const VIEWPORT_ZOOM_MIN = 0.002
+export const VIEWPORT_ZOOM_MAX = 100000
+
+/** The viewport a store action names, or undefined when that sheet or viewport is gone. */
+const findViewport = (
+  doc: DrawingDocument,
+  layoutId: string,
+  viewportId: string,
+): Viewport | undefined =>
+  doc.layouts.find((layout) => layout.id === layoutId)?.viewports.find((v) => v.id === viewportId)
 
 const controller = new DocumentController(makeDefaultDocument())
+
+/**
+ * A viewport filling the printable area, showing the whole drawing at the smallest standard scale
+ * that fits it — what AutoCAD hands you when a layout is first made, rather than a blank sheet
+ * with nothing to look at.
+ */
+const fittedViewport = (
+  doc: DrawingDocument,
+  page: { width: number; height: number },
+  marginMm: number,
+  id: string,
+): Viewport => {
+  const inset = 8
+  const widthMm = Math.max(20, page.width - (marginMm + inset) * 2)
+  const heightMm = Math.max(20, page.height - (marginMm + inset) * 2)
+  const bounds = extentsBounds(doc)
+  const drawingW = Math.max(1e-6, bounds.maxX - bounds.minX)
+  const drawingH = Math.max(1e-6, bounds.maxY - bounds.minY)
+  const needed = Math.max(drawingW / widthMm, drawingH / heightMm)
+  return {
+    id,
+    center: { x: page.width / 2, y: page.height / 2 },
+    widthMm,
+    heightMm,
+    modelCenter: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 },
+    unitsPerMm: VIEWPORT_SCALES.find((scale) => scale >= needed) ?? Math.ceil(needed),
+    locked: false,
+  }
+}
 
 type CameraState = {
   x: number
   y: number
   zoom: number
 }
+
+/**
+ * The dynamic input's state: the command step the typed values belong to, the values keyed by
+ * field, and which field is active. Keyed by step so a value typed for one prompt cannot leak
+ * into the next, and it is a fresh object each time so nothing mutates in place.
+ */
+export type TypedState = {
+  step: string
+  values: Record<string, string>
+  field: number
+}
+
+export const EMPTY_TYPED: TypedState = { step: '', values: {}, field: 0 }
 
 const defaultSnapModes: SnapMode[] = [
   'endpoint',
@@ -143,7 +209,23 @@ type CadState = {
   /** Objects held by COPYCLIP or CUTCLIP, kept out of the document until pasted. */
   clipboard: CadEntity[]
   camera: CameraState
+  /**
+   * Which sheet is being worked on. `null` is model space — where the drawing is made, and where
+   * the app starts. Any other value is a layout's id: a sheet that shows the model on paper.
+   */
+  activeLayoutId: string | null
+  /** The viewport picked on the current sheet, so the properties panel can edit its scale. */
+  activeViewportId: string | null
+  /** The viewport being worked in, if any. Its frame stays put while the drawing inside it moves. */
+  enteredViewportId: string | null
   draftPoints: Vec2[]
+  /**
+   * What the dynamic input is holding: which step of which command the typed values belong
+   * to, the values themselves, and which field is active. It lives here rather than in the
+   * canvas because the command line writes to it too — on a phone the keyboard is attached
+   * to that input, so the canvas never sees the keystrokes.
+   */
+  typed: TypedState
   snapModes: SnapMode[]
   osnapEnabled: boolean
   polarEnabled: boolean
@@ -208,6 +290,20 @@ type CadState = {
   edgeIds: string[] | null
   /** True while TRIM or EXTEND is collecting its edges instead of editing objects. */
   pickingEdges: boolean
+  /** True while BLOCK is waiting for its name. */
+  blockNamePending: boolean
+  /** The name BLOCK will define or redefine, held between the name step and the base point. */
+  blockName: string
+  /** The objects BLOCK captured when it started, so the base-point pick cannot lose them. */
+  blockEntityIds: string[]
+  /** The block INSERT will place; null while INSERT is waiting for a name. */
+  insertBlockId: string | null
+  /** INSERT's scale factor, accepted at its scale prompt. */
+  insertScale: number
+  /** INSERT's rotation in radians, accepted at its rotation prompt. */
+  insertRotation: number
+  /** Which of INSERT's typed values is waiting: scale or rotation. */
+  insertPending: 'scale' | 'rotation' | null
   /** Scrollback shown above the command input. */
   history: HistoryLine[]
   /** The last command that ran, which Enter or Space at an empty prompt repeats. */
@@ -265,6 +361,42 @@ type CadState = {
   setTool: (tool: ToolMode) => void
   setActiveLayerId: (layerId: string) => void
   setCamera: (camera: Partial<CameraState>) => void
+  /** Switches to a layout, or back to model space with `null`. */
+  setActiveLayout: (layoutId: string | null) => void
+  /** Adds a sheet with one viewport already scaled to fit the drawing, as AutoCAD opens a layout. */
+  addLayout: () => void
+  updateLayout: (
+    layoutId: string,
+    patch: Partial<Pick<Layout, 'name' | 'paper' | 'orientation' | 'marginMm'>>,
+  ) => void
+  deleteLayout: (layoutId: string) => void
+  addViewport: (layoutId: string) => void
+  updateViewport: (layoutId: string, viewportId: string, patch: Partial<Viewport>) => void
+  deleteViewport: (layoutId: string, viewportId: string) => void
+  selectViewport: (viewportId: string | null) => void
+  enterViewport: (viewportId: string | null) => void
+  /** Grows or shrinks the drawing inside a viewport, holding the model point under `anchorPaper`. */
+  zoomViewport: (layoutId: string, viewportId: string, anchorPaper: Vec2, factor: number) => void
+  /** Slides the drawing inside a viewport by a distance measured on the sheet. */
+  panViewport: (layoutId: string, viewportId: string, deltaPaper: Vec2) => void
+
+  /**
+   * The colour new objects take, or null for ByLayer — the default, and the reason a drawing can be
+   * made in colours without inventing a layer for each one.
+   */
+  currentColor: string | null
+  setCurrentColor: (color: string | null) => void
+  /** Recolours the selection, or hands it back to its layer's colour when given null. */
+  setSelectionColor: (color: string | null) => void
+  /** Applies a change to the objects of whichever space is open — the model, or the sheet. */
+  updateSpaceEntities: (updater: (entities: CadEntity[]) => CadEntity[]) => void
+
+  /**
+   * Arms INSERT with a block already chosen, which is what clicking one in the Blocks panel does.
+   * It skips the name prompt entirely, so a block can be placed without remembering what it is
+   * called — the thing the command line alone cannot offer.
+   */
+  insertBlockFromPalette: (blockId: string) => void
   setCommandInput: (input: string) => void
   setStatusMessage: (message: string) => void
   toggleOsnap: () => void
@@ -275,6 +407,9 @@ type CadState = {
   selectAll: () => void
   clearDraft: () => void
   addDraftPoint: (point: Vec2) => void
+  setTypedState: (typed: TypedState) => void
+  /** Mirrors the command line's text into the active dimension field, for the box to show. */
+  mirrorTypedValue: (text: string) => void
   executeCommand: (line: string) => void
   addEntity: (entity: CadEntity) => void
   updateDocument: (updater: (doc: DrawingDocument) => DrawingDocument) => void
@@ -330,6 +465,13 @@ const perCommandOptions = {
   rectRotation: 0,
   hatchPending: null as 'scale' | 'angle' | null,
   arrayPending: null as ArrayOption | null,
+  blockNamePending: false,
+  blockName: '',
+  blockEntityIds: [] as string[],
+  insertBlockId: null as string | null,
+  insertScale: 1,
+  insertRotation: 0,
+  insertPending: null as 'scale' | 'rotation' | null,
 }
 
 const autosaveDoc = (doc: DrawingDocument) => {
@@ -355,7 +497,12 @@ export const useCadStore = create<CadState>((set, get) => ({
   fileName: `Drawing1${DRAWING_EXTENSION}`,
   clipboard: [],
   camera: { x: 400, y: 300, zoom: 1 },
+  activeLayoutId: null,
+  activeViewportId: null,
+  enteredViewportId: null,
+  currentColor: null,
   draftPoints: [],
+  typed: EMPTY_TYPED,
   snapModes: defaultSnapModes,
   osnapEnabled: true,
   polarEnabled: true,
@@ -387,6 +534,13 @@ export const useCadStore = create<CadState>((set, get) => ({
   hatchAngle: 0,
   hatchPending: null,
   offsetDistance: 10,
+  blockNamePending: false,
+  blockName: '',
+  blockEntityIds: [],
+  insertBlockId: null,
+  insertScale: 1,
+  insertRotation: 0,
+  insertPending: null,
   filletRadius: 10,
   chamferDistance: 10,
   cornerPending: false,
@@ -586,6 +740,155 @@ export const useCadStore = create<CadState>((set, get) => ({
     }),
   setActiveLayerId: (activeLayerId) => set({ activeLayerId }),
   setCamera: (camera) => set((state) => ({ camera: { ...state.camera, ...camera } })),
+  setActiveLayout: (layoutId) => {
+    const layout = layoutId ? get().doc.layouts.find((candidate) => candidate.id === layoutId) : null
+    set({
+      activeLayoutId: layout ? layout.id : null,
+      activeViewportId: null,
+      // Leaving a sheet also leaves whatever viewport was being worked in.
+      enteredViewportId: null,
+      // A sheet and the model do not share a selection: what is picked in one means nothing in the other.
+      selectedIds: [],
+      draftPoints: [],
+      activeTool: 'select',
+      statusMessage: layout ? `Layout: ${layout.name}` : 'Model',
+    })
+  },
+  addLayout: () => {
+    const state = get()
+    const name = `Layout ${state.doc.layouts.length + 1}`
+    const paper: PaperSize = 'a4'
+    const orientation: PaperOrientation = 'landscape'
+    const marginMm = 12
+    const layoutId = uid()
+    const viewport = fittedViewport(state.doc, pageSizeMm(paper, orientation), marginMm, uid())
+    state.updateDocument((doc) => ({
+      ...doc,
+      layouts: [
+        ...doc.layouts,
+        { id: layoutId, name, paper, orientation, marginMm, entities: [], viewports: [viewport] },
+      ],
+    }))
+    set({
+      activeLayoutId: layoutId,
+      activeViewportId: viewport.id,
+      selectedIds: [],
+      activeTool: 'select',
+      statusMessage: `Layout: ${name}`,
+    })
+  },
+  updateLayout: (layoutId, patch) =>
+    get().updateDocument((doc) => ({
+      ...doc,
+      layouts: doc.layouts.map((layout) => (layout.id === layoutId ? { ...layout, ...patch } : layout)),
+    })),
+  deleteLayout: (layoutId) => {
+    get().updateDocument((doc) => ({
+      ...doc,
+      layouts: doc.layouts.filter((layout) => layout.id !== layoutId),
+    }))
+    if (get().activeLayoutId === layoutId) {
+      set({ activeLayoutId: null, activeViewportId: null, statusMessage: 'Model' })
+    }
+  },
+  addViewport: (layoutId) => {
+    const state = get()
+    const layout = state.doc.layouts.find((candidate) => candidate.id === layoutId)
+    if (!layout) return
+    const page = pageSizeMm(layout.paper, layout.orientation)
+    const viewport = fittedViewport(state.doc, page, layout.marginMm, uid())
+    // Offset a later viewport so it does not land exactly on top of the one already there.
+    if (layout.viewports.length > 0) {
+      viewport.center = { x: viewport.center.x + 16, y: viewport.center.y - 16 }
+    }
+    state.updateDocument((doc) => ({
+      ...doc,
+      layouts: doc.layouts.map((candidate) =>
+        candidate.id === layoutId ? { ...candidate, viewports: [...candidate.viewports, viewport] } : candidate,
+      ),
+    }))
+    set({ activeViewportId: viewport.id, statusMessage: 'Viewport added' })
+  },
+  updateViewport: (layoutId, viewportId, patch) =>
+    get().updateDocument((doc) => ({
+      ...doc,
+      layouts: doc.layouts.map((layout) =>
+        layout.id === layoutId
+          ? {
+              ...layout,
+              viewports: layout.viewports.map((viewport) =>
+                viewport.id === viewportId ? { ...viewport, ...patch } : viewport,
+              ),
+            }
+          : layout,
+      ),
+    })),
+  deleteViewport: (layoutId, viewportId) => {
+    get().updateDocument((doc) => ({
+      ...doc,
+      layouts: doc.layouts.map((layout) =>
+        layout.id === layoutId
+          ? { ...layout, viewports: layout.viewports.filter((viewport) => viewport.id !== viewportId) }
+          : layout,
+      ),
+    }))
+    if (get().activeViewportId === viewportId) set({ activeViewportId: null })
+    if (get().enteredViewportId === viewportId) set({ enteredViewportId: null })
+  },
+  selectViewport: (viewportId) => set({ activeViewportId: viewportId }),
+
+  /*
+   * Working *inside* a viewport, the way a drawing office does: the view moves, the frame stays.
+   * A viewport that is only selected can be repositioned; one that is entered can also be told what
+   * part of the drawing to show, which is the difference between one sheet per drawing and a sheet
+   * carrying a plan and a detail of it.
+   */
+  enterViewport: (viewportId) =>
+    set({
+      enteredViewportId: viewportId,
+      statusMessage: viewportId
+        ? 'Viewport active — wheel to zoom, drag to pan, double-click the desk to leave'
+        : 'Paper space',
+    }),
+
+  /*
+   * Zooming holds the drawing still under the pointer: the model point under the cursor before the
+   * zoom is the model point under it afterwards, so the view grows around whatever was pointed at
+   * instead of sliding away from it. The scale a viewport lands on after a zoom is whatever the
+   * fingers asked for, so the panel offers it as well as the round numbers.
+   */
+  zoomViewport: (layoutId, viewportId, anchorPaper, factor) => {
+    const viewport = findViewport(get().doc, layoutId, viewportId)
+    // A locked viewport holds its view against the pointer: both what it shows and how far it is
+    // zoomed. Editing it deliberately, from the panel, is still allowed.
+    if (!viewport || viewport.locked) return
+    const unitsPerMm = Math.min(
+      VIEWPORT_ZOOM_MAX,
+      Math.max(VIEWPORT_ZOOM_MIN, viewport.unitsPerMm / factor),
+    )
+    if (unitsPerMm === viewport.unitsPerMm) return
+
+    const offset = { x: anchorPaper.x - viewport.center.x, y: anchorPaper.y - viewport.center.y }
+    const held = {
+      x: viewport.modelCenter.x + offset.x * viewport.unitsPerMm,
+      y: viewport.modelCenter.y + offset.y * viewport.unitsPerMm,
+    }
+    get().updateViewport(layoutId, viewportId, {
+      unitsPerMm,
+      modelCenter: { x: held.x - offset.x * unitsPerMm, y: held.y - offset.y * unitsPerMm },
+    })
+  },
+
+  panViewport: (layoutId, viewportId, deltaPaper) => {
+    const viewport = findViewport(get().doc, layoutId, viewportId)
+    if (!viewport || viewport.locked) return
+    get().updateViewport(layoutId, viewportId, {
+      modelCenter: {
+        x: viewport.modelCenter.x - deltaPaper.x * viewport.unitsPerMm,
+        y: viewport.modelCenter.y - deltaPaper.y * viewport.unitsPerMm,
+      },
+    })
+  },
   setCommandInput: (commandInput) => set({ commandInput }),
   setStatusMessage: (statusMessage) => set({ statusMessage }),
   toggleOsnap: () => set((state) => ({ osnapEnabled: !state.osnapEnabled })),
@@ -609,12 +912,39 @@ export const useCadStore = create<CadState>((set, get) => ({
   },
   clearDraft: () => set({ draftPoints: [] }),
   addDraftPoint: (point) => set((state) => ({ draftPoints: [...state.draftPoints, point] })),
+  setTypedState: (typed) => set({ typed }),
+  /*
+   * The command line shows what is being typed in the box it will fill. Text that is not a number
+   * is not a field value — it is a command or a coordinate — so it clears the mirrored value
+   * rather than being written into the field, where it would resolve to nonsense in the preview.
+   */
+  mirrorTypedValue: (text) => {
+    const state = get()
+    const cursor = state.cursorWorld
+    if (!cursor) return
+    const fields = fieldsForTool(state.activeTool, state.draftPoints, cursor)
+    if (!fields || fields.length === 0) return
+
+    const step = typedStepKey(state)
+    const carried = state.typed.step === step ? state.typed : EMPTY_TYPED
+    const index = Math.min(carried.field, fields.length - 1)
+    const key = fields[index].key
+    const values = { ...carried.values }
+    if (text === '') delete values[key]
+    else values[key] = text
+    set({ typed: { step, values, field: index } })
+  },
   executeCommand: (line) => {
     const raw = line.trim()
     const state = get()
 
     // Enter on its own finishes the running command, or repeats the last one at an idle prompt.
     if (!raw) {
+      // INSERT's scale and rotation take Enter for their default, like a transform's angle.
+      if (state.activeTool === 'insert' && state.insertPending) {
+        acceptInsertDefault(state)
+        return
+      }
       if (state.draftPoints.length > 0 || state.pickingEdges) {
         if (state.pickingEdges) state.finishEdgeSelection()
         else state.finishDraft()
@@ -651,6 +981,13 @@ export const useCadStore = create<CadState>((set, get) => ({
       return
     }
 
+    // A `text` prompt takes the whole line: BLOCK and INSERT read their name this way, so a
+    // phone's keyboard can type it without a modal dialog.
+    if (currentPrompt(state).kind === 'text') {
+      applyTypedText(state, raw)
+      return
+    }
+
     // Typed coordinates feed the running command: `50,30`, `@50,30`, `@250<30`.
     const typedPoint = parseCoordinate(raw, state.draftPoints.at(-1))
     if (typedPoint) {
@@ -660,8 +997,13 @@ export const useCadStore = create<CadState>((set, get) => ({
     }
 
     // A bare number is a distance along the direction the crosshair is pointing, or the angle or
-    // factor a transform is waiting for.
+    // factor a transform is waiting for. Before that, it belongs to whichever dimension field the
+    // drawing has active: that is what the dynamic input means, and it is the phone's only route
+    // to a typed value, because tapping a box puts the keyboard on the command line and the canvas
+    // never sees the keystrokes. Prompts that take a number of their own are left to the fallback.
     const value = Number(raw)
+    if (Number.isFinite(value) && !promptTakesItsOwnNumber(state) && applyTypedFieldValue(state, value))
+      return
     if (Number.isFinite(value) && applyTypedNumber(state, value)) return
 
     // Settings commands take their value on the same line, as `DIMSCALE 2`.
@@ -672,11 +1014,47 @@ export const useCadStore = create<CadState>((set, get) => ({
       return
     }
 
-    state.log('error', `Unknown command "${cmd}".`)
-    set({ statusMessage: `Unknown command: ${cmd}` })
+    /*
+     * AutoCAD offers a correction rather than only reporting a dead end. Worth having here because
+     * "list blocks" is not a command there either — the nearest real one is the palette that lists
+     * them, and being told so beats being left at a dead end twice.
+     */
+    const suggestion = suggestCommand(cmd)
+    state.log('error', `Unknown command "${cmd}".${suggestion ? ` Did you mean ${suggestion}?` : ''}`)
+    set({
+      statusMessage: suggestion
+        ? `Unknown command: ${cmd} — did you mean ${suggestion}?`
+        : `Unknown command: ${cmd}`,
+    })
   },
   addEntity: (entity) => {
-    controller.addEntity(entity)
+    /*
+     * A new object takes the colour being drawn in, unless it already carries one of its own. ByLayer
+     * stays the default, so this only bites when a colour has deliberately been chosen — which is
+     * what keeps a drawing from being organised one layer per colour.
+     */
+    const colour = entity.color ?? get().currentColor
+    const drawn = colour ? { ...entity, color: colour } : entity
+
+    /*
+     * A sheet carries its own geometry — a border, a title block, notes — measured in paper
+     * millimetres. What is drawn while a sheet is open therefore lands on the sheet and not in the
+     * model: the two spaces are separate, and a border drawn at 1:1 on the paper must not turn up
+     * in the drawing at 1:1 of the drawing's own units.
+     */
+    const layoutId = get().activeLayoutId
+    if (layoutId) {
+      get().updateDocument((doc) => ({
+        ...doc,
+        layouts: doc.layouts.map((layout) =>
+          layout.id === layoutId ? { ...layout, entities: [...layout.entities, drawn] } : layout,
+        ),
+      }))
+      autosaveDoc(get().doc)
+      return
+    }
+
+    controller.addEntity(drawn)
     const doc = controller.getDocument()
     autosaveDoc(doc)
     set({ doc, selectedIds: controller.getSelection() })
@@ -703,6 +1081,32 @@ export const useCadStore = create<CadState>((set, get) => ({
     set({ doc, selectedIds: controller.getSelection() })
   },
   deleteSelection: () => {
+    const state = get()
+    /*
+     * Erasing works in whichever space is open. A sheet's objects are its own — nothing drawn on the
+     * paper is in the model — so a delete there can only ever remove paper-space objects.
+     */
+    const layoutId = state.activeLayoutId
+    if (layoutId) {
+      const ids = new Set(state.selectedIds)
+      const sheet = state.doc.layouts.find((layout) => layout.id === layoutId)
+      const removed = (sheet?.entities ?? []).filter((entity) => ids.has(entity.id)).length
+      if (removed === 0) return
+      state.updateDocument((doc) => ({
+        ...doc,
+        layouts: doc.layouts.map((layout) =>
+          layout.id === layoutId
+            ? { ...layout, entities: layout.entities.filter((entity) => !ids.has(entity.id)) }
+            : layout,
+        ),
+      }))
+      set({
+        selectedIds: [],
+        statusMessage: `Deleted ${describeCount(removed)} from the sheet`,
+      })
+      return
+    }
+
     const ids = controller.getSelection()
     controller.deleteEntities(ids)
     const doc = controller.getDocument()
@@ -805,6 +1209,67 @@ export const useCadStore = create<CadState>((set, get) => ({
     }))
     state.setStatusMessage(`Deleted layer ${layer?.name}`)
   },
+  setCurrentColor: (color) =>
+    set({ currentColor: color, statusMessage: color ? `New objects: ${color}` : 'New objects: ByLayer' }),
+
+  /*
+   * Colour belongs to an object as much as to its layer: an object set to ByLayer wears whatever its
+   * layer wears, while an object given a colour keeps it wherever it is moved. Handing one back to
+   * its layer is a real choice, not an absence — without it a recoloured object could never return,
+   * which is what happens when the only control is a colour well that always shows a colour.
+   */
+  setSelectionColor: (color) => {
+    const state = get()
+    const wanted = new Set(state.selectedIds)
+    if (wanted.size === 0) return
+
+    state.updateSpaceEntities((entities) =>
+      entities.map((entity) => {
+        if (!wanted.has(entity.id)) return entity
+        if (color) return { ...entity, color }
+        // Setting it back to ByLayer means dropping the override, not painting the layer's colour on.
+        const { color: _dropped, ...rest } = entity
+        return rest as CadEntity
+      }),
+    )
+    state.setStatusMessage(
+      color
+        ? `Colour set on ${describeCount(wanted.size)}`
+        : `${describeCount(wanted.size)} back to their layer's colour`,
+    )
+  },
+
+  updateSpaceEntities: (updater) => {
+    const layoutId = get().activeLayoutId
+    if (layoutId) {
+      get().updateDocument((doc) => ({
+        ...doc,
+        layouts: doc.layouts.map((layout) =>
+          layout.id === layoutId ? { ...layout, entities: updater(layout.entities) } : layout,
+        ),
+      }))
+      return
+    }
+    get().updateDocument((doc) => ({ ...doc, entities: updater(doc.entities) }))
+  },
+
+  insertBlockFromPalette: (blockId) => {
+    const state = get()
+    const block = state.doc.blocks.find((candidate) => candidate.id === blockId)
+    if (!block) return
+    // The name step is already answered, so INSERT goes straight to asking where it goes.
+    useCadStore.setState({
+      activeTool: 'insert',
+      insertBlockId: block.id,
+      insertPending: null,
+      blockNamePending: false,
+      draftPoints: [],
+    })
+    const next = formatPrompt(currentPrompt(useCadStore.getState()))
+    state.log('prompt', `Inserting "${block.name}". ${next}`)
+    state.setStatusMessage(`Inserting ${block.name}`)
+  },
+
   moveSelectionToLayer: (layerId) => {
     const state = get()
     const layer = state.doc.layers.find((candidate) => candidate.id === layerId)
@@ -817,14 +1282,21 @@ export const useCadStore = create<CadState>((set, get) => ({
       return false
     }
     const wanted = new Set(state.selectedIds)
-    const already = state.doc.entities.filter((entity) => wanted.has(entity.id) && entity.layerId === layerId).length
+    // Objects live in whichever space is open, so a layer change has to happen in that space too.
+    const sheet = state.activeLayoutId
+      ? state.doc.layouts.find((layout) => layout.id === state.activeLayoutId)
+      : undefined
+    const space = sheet ? sheet.entities : state.doc.entities
+    const already = space.filter((entity) => wanted.has(entity.id) && entity.layerId === layerId).length
     const moving = state.selectedIds.length - already
-    state.updateDocument((doc) => ({
-      ...doc,
-      entities: doc.entities.map((entity) => (wanted.has(entity.id) ? { ...entity, layerId } : entity)),
-    }))
+    state.updateSpaceEntities((entities) =>
+      entities.map((entity) => (wanted.has(entity.id) ? { ...entity, layerId } : entity)),
+    )
     // Objects that landed on a locked or off layer can no longer stay selected.
-    const stillEditable = editableEntities(get().doc).map((entity) => entity.id)
+    const after = get().activeLayoutId
+      ? get().doc.layouts.find((layout) => layout.id === get().activeLayoutId)?.entities ?? []
+      : get().doc.entities
+    const stillEditable = editableEntities({ ...get().doc, entities: after }).map((entity) => entity.id)
     const kept = get().selectedIds.filter((selectedId) => stillEditable.includes(selectedId))
     controller.select(kept)
     set({
@@ -868,10 +1340,30 @@ export const useCadStore = create<CadState>((set, get) => ({
   },
   moveSelectionBy: (delta) => {
     const state = get()
-    const editable = new Set(editableEntities(state.doc).map((entity) => entity.id))
+    /*
+     * A drag distance on a sheet is paper millimetres, which is the space its objects are measured
+     * in, so the same drag moves a border the distance it was dragged rather than the far larger
+     * distance the same drag would mean in drawing units.
+     */
+    const layoutId = state.activeLayoutId
+    const sheet = layoutId ? state.doc.layouts.find((layout) => layout.id === layoutId) : undefined
+    const space = sheet ? sheet.entities : state.doc.entities
+    const editable = new Set(editableEntities({ ...state.doc, entities: space }).map((entity) => entity.id))
     const ids = state.selectedIds.filter((id) => editable.has(id))
     if (ids.length === 0) return
-    state.updateDocument((doc) => ({ ...doc, entities: moveEntities(doc.entities, ids, delta) }))
+
+    if (sheet) {
+      state.updateDocument((doc) => ({
+        ...doc,
+        layouts: doc.layouts.map((layout) =>
+          layout.id === sheet.id
+            ? { ...layout, entities: moveEntities(layout.entities, ids, delta) }
+            : layout,
+        ),
+      }))
+    } else {
+      state.updateDocument((doc) => ({ ...doc, entities: moveEntities(doc.entities, ids, delta) }))
+    }
     state.setStatusMessage(`Moved ${describeCount(ids.length)}`)
   },
   copySelection: () => {
@@ -935,7 +1427,7 @@ type CadStoreState = ReturnType<typeof useCadStore.getState>
 const pickEntity = (state: CadStoreState, point: Vec2): CadEntity | undefined =>
   [...editableEntities(state.doc)]
     .reverse()
-    .find((entity) => isPointNearEntity(point, entity, getPreferences().pickBoxSize / state.camera.zoom))
+    .find((entity) => isPointNearEntity(point, entity, getPreferences().pickBoxSize / state.camera.zoom, state.doc.blocks))
 
 /* ------------------------------------------------------- trim and extend */
 
@@ -1389,6 +1881,71 @@ const applyTransformValue = (state: CadStoreState, value: number): boolean => {
 }
 
 /**
+ * Prompts whose bare number answers the prompt itself rather than a dimension field: OFFSET's
+ * distance, ARRAY's counts, RECTANG's length and width, HATCH's scale, and the pending steps of
+ * ARC and a Ttr CIRCLE. Those keep precedence; everything else waiting for a point takes the
+ * number into whichever dynamic field is active.
+ */
+const promptTakesItsOwnNumber = (state: CadStoreState): boolean =>
+  Boolean(
+    state.offsetPending ||
+      state.arrayPending ||
+      state.circlePending ||
+      state.arcPending ||
+      state.rectPending ||
+      state.hatchPending ||
+      state.insertPending,
+  )
+
+/** The command step the current draft is on: typed values belong to one step and no other. */
+const typedStepKey = (state: CadStoreState) => `${state.activeTool}:${state.draftPoints.length}`
+
+/**
+ * Writes a number into the active dimension field and places the point the command was waiting
+ * for — the same result as typing it over the drawing, which is what a phone user is doing when
+ * they tap a box and type. Returns false when no field is waiting, so the caller can fall back to
+ * reading the number as a command or a prompt answer.
+ */
+const applyTypedFieldValue = (state: CadStoreState, value: number): boolean => {
+  // Without a cursor there is nothing to measure a field against, which is also what the canvas
+  // requires before it draws the boxes at all.
+  const cursor = state.cursorWorld
+  if (!cursor) return false
+
+  const fields = fieldsForTool(state.activeTool, state.draftPoints, cursor)
+  if (!fields || fields.length === 0) return false
+
+  const step = typedStepKey(state)
+  const carried = state.typed.step === step ? state.typed : EMPTY_TYPED
+  const index = Math.min(carried.field, fields.length - 1)
+  const values = { ...carried.values, [fields[index].key]: String(value) }
+  const withValues = fields.map((field) => ({ ...field, typed: values[field.key] }))
+  const point = resolveDynamicPoint(state.activeTool, withValues, state.draftPoints, cursor)
+  if (!point) return false
+
+  // An angle on its own has no distance to travel: on a phone the finger is sitting on the last
+  // point, so the tracked length is zero and the segment would be a speck. Record the value and
+  // ask for the rest instead — the value stays in the box, and the next number submitted joins it,
+  // so "set the angle, then the length" works in two steps.
+  const anchor = state.draftPoints.at(-1)
+  if (anchor && Math.abs(point.x - anchor.x) < 1e-9 && Math.abs(point.y - anchor.y) < 1e-9) {
+    // The field advances so the next number submitted lands on the other one, as Tab does while
+    // typing over the drawing. Together the two numbers describe a segment.
+    state.setTypedState({ step, values, field: (index + 1) % fields.length })
+    state.log('result', `${fields[index].label} ${value}${fields[index].suffix ?? ''}`)
+    state.log('prompt', formatPrompt(currentPrompt(state)))
+    return true
+  }
+
+  state.setTypedState(EMPTY_TYPED)
+  applyDrawTool(point)
+  const now = useCadStore.getState()
+  now.log('result', `${fields[index].label} ${value}${fields[index].suffix ?? ''}`)
+  now.log('prompt', formatPrompt(currentPrompt(now)))
+  return true
+}
+
+/**
  * Interprets a bare number typed at the command line. During a transform it is the angle or
  * factor; while points are being collected it is AutoCAD's direct distance entry, meaning "this
  * far in the direction the crosshair is pointing".
@@ -1492,6 +2049,24 @@ const applyTypedNumber = (state: CadStoreState, value: number): boolean => {
       state.endCommand()
       return true
     }
+  }
+
+  // INSERT's scale and rotation are typed numbers, like a transform's factor and angle.
+  if (state.insertPending && state.activeTool === 'insert') {
+    if (state.insertPending === 'scale') {
+      if (value <= 0) {
+        state.log('error', 'The scale factor must be greater than zero.')
+        return true
+      }
+      useCadStore.setState({ insertScale: value, insertPending: 'rotation' })
+      state.log('result', `Scale factor ${value}`)
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return true
+    }
+    useCadStore.setState({ insertRotation: (value * Math.PI) / 180, insertPending: null })
+    state.log('result', `Rotation ${value}°`)
+    finishInsert(useCadStore.getState())
+    return true
   }
 
   if (state.hatchPending && state.activeTool === 'hatch') {
@@ -1662,9 +2237,160 @@ const runOverkill = (state: CadStoreState) => {
   state.setStatusMessage(message)
 }
 
-/** Runs a command from the registry, echoing what it is waiting for next. */
+/**
+ * Every block in the drawing, and how many times it is placed.
+ *
+ * This is what "list blocks" means, and it had no answer: the only route to a block's name was a `?`
+ * keyword hidden inside INSERT's name prompt, so a block was invisible unless you already remembered
+ * what it was called. The command line, the palette and the `?` keyword all read from here, so they
+ * cannot disagree about what exists.
+ */
+const listBlocks = (state: CadStoreState, style: 'names' | 'placements'): string => {
+  const { blocks } = state.doc
+  if (blocks.length === 0) {
+    return 'No blocks defined yet. Select objects and use BLOCK to make one.'
+  }
+
+  const placements = (blockId: string) =>
+    [...state.doc.entities, ...state.doc.layouts.flatMap((layout) => layout.entities)].filter(
+      (entity) => entity.type === 'insert' && entity.blockId === blockId,
+    ).length
+
+  if (style === 'names') return `Blocks: ${blocks.map((block) => block.name).join(', ')}`
+  return blocks
+    .map((block) => `${block.name} — placed ${placements(block.id)} time${placements(block.id) === 1 ? '' : 's'}`)
+    .join(', ')
+}
+
+/* ---------------------------------------------------- blocks & inserts */
+
+/** Resolves a free-text answer at a `text` prompt: BLOCK and INSERT's name step. */
+const applyTypedText = (state: CadStoreState, text: string): void => {
+  const name = text.trim()
+  if (!name) {
+    state.log('error', 'The block name cannot be empty.')
+    return
+  }
+  if (state.activeTool === 'insert') {
+    const block = state.doc.blocks.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase())
+    if (!block) {
+      state.log('error', `No block named "${name}".`)
+      return
+    }
+    useCadStore.setState({ insertBlockId: block.id })
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return
+  }
+  if (state.activeTool === 'block') {
+    useCadStore.setState({ blockName: name, blockNamePending: false })
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return
+  }
+}
+
+/** INSERT's base point; after it the command asks for scale then rotation. */
+const placeInsertBase = (state: CadStoreState, point: Vec2): void => {
+  state.addDraftPoint(point)
+  useCadStore.setState({ insertPending: 'scale' })
+  state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+}
+
+/** Accepts Enter at INSERT's scale or rotation prompt, taking the default. */
+const acceptInsertDefault = (state: CadStoreState): void => {
+  if (state.insertPending === 'scale') {
+    useCadStore.setState({ insertScale: 1, insertPending: 'rotation' })
+    state.log('result', 'Scale factor 1')
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return
+  }
+  useCadStore.setState({ insertRotation: 0, insertPending: null })
+  state.log('result', 'Rotation 0°')
+  finishInsert(useCadStore.getState())
+}
+
+/** Places the insert, then returns to the idle prompt. */
+const finishInsert = (state: CadStoreState): void => {
+  const block = state.doc.blocks.find((candidate) => candidate.id === state.insertBlockId)
+  const base = state.draftPoints[0]
+  if (!block || !base) {
+    state.log('error', 'The block went missing; cancel the command and try again.')
+    state.cancelCommand()
+    return
+  }
+  state.addEntity({
+    id: uid(),
+    type: 'insert',
+    layerId: state.activeLayerId || state.doc.layers[0].id,
+    blockId: block.id,
+    position: base,
+    rotation: state.insertRotation,
+    scale: state.insertScale,
+  })
+  state.endCommand()
+}
+
+/** Defines (or redefines) a block and replaces the source objects with one insert in place. */
+const defineBlock = (state: CadStoreState, basePoint: Vec2): void => {
+  const name = state.blockName.trim()
+  if (!name) {
+    state.log('error', 'The block name cannot be empty.')
+    state.cancelCommand()
+    return
+  }
+  const doc = state.doc
+  const ids = new Set(state.blockEntityIds.length > 0 ? state.blockEntityIds : state.selectedIds)
+  const members = doc.entities.filter((entity) => ids.has(entity.id))
+  if (members.length === 0) {
+    state.log('error', 'Nothing selected to define the block.')
+    state.cancelCommand()
+    return
+  }
+  const existing = doc.blocks.find((block) => block.name.toLowerCase() === name.toLowerCase())
+  const blockId = existing?.id ?? uid()
+  const insertId = uid()
+  const definition: BlockDefinition = { id: blockId, name, basePoint, entities: members }
+  const blocks = existing
+    ? doc.blocks.map((block) => (block.id === blockId ? definition : block))
+    : [...doc.blocks, definition]
+  const remaining = doc.entities.filter((entity) => !ids.has(entity.id))
+  const insert: InsertEntity = {
+    id: insertId,
+    type: 'insert',
+    layerId: state.activeLayerId || doc.layers[0].id,
+    blockId,
+    position: basePoint,
+    rotation: 0,
+    scale: 1,
+  }
+  state.updateDocument(() => ({ ...doc, blocks, entities: [...remaining, insert] }))
+  state.setSelection([insertId])
+  const now = useCadStore.getState()
+  now.log('result', existing ? `Block "${name}" redefined` : `Block "${name}" defined`)
+  now.endCommand()
+}
+
 const runCommandDef = (state: CadStoreState, command: CommandDef, argument = '') => {
   useCadStore.setState({ lastCommand: command.name })
+
+  // BLOCK needs a selection up front, then a name, then a base point. The name step is a `text`
+  // prompt handled by applyTypedText; the base point comes through the 'block' tool.
+  if (command.name === 'BLOCK') {
+    if (state.selectedIds.length === 0) {
+      state.log('error', 'Select objects before defining a block.')
+      return
+    }
+    state.setTool('block')
+    useCadStore.setState({ blockNamePending: true, blockEntityIds: [...state.selectedIds] })
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return
+  }
+
+  // INSERT asks for the block name before it enters the point-driven tool.
+  if (command.name === 'INSERT') {
+    state.setTool('insert')
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return
+  }
 
   if (command.tool) {
     state.setTool(command.tool)
@@ -1792,6 +2518,22 @@ const runCommandDef = (state: CadStoreState, command: CommandDef, argument = '')
     case 'EXPLODE':
       runExplode(state)
       return
+    case 'BLOCKPALETTE':
+      /*
+       * AutoCAD's Blocks palette: what exists, and a way to place one without knowing its name. The
+       * panel is always on screen, so this command answers the question and says where to look.
+       */
+      state.log('result', listBlocks(state, 'placements'))
+      state.setStatusMessage(
+        state.doc.blocks.length > 0
+          ? `${state.doc.blocks.length} block(s) — the Blocks panel inserts them`
+          : 'No blocks defined yet',
+      )
+      return
+    case 'BCOUNT':
+      state.log('result', listBlocks(state, 'placements'))
+      state.setStatusMessage('Block counts')
+      return
     case 'OVERKILL':
       runOverkill(state)
       return
@@ -1877,6 +2619,9 @@ export const promptContextFor = (state: CadStoreState, swapped = false): PromptC
   pickingEdges: state.pickingEdges,
   edgeCount: state.edgeIds === null ? null : state.edgeIds.length,
   swapped,
+  insertBlockId: state.insertBlockId,
+  insertPending: state.insertPending,
+  blockNamePending: state.blockNamePending,
 })
 
 /**
@@ -1994,6 +2739,12 @@ const runKeyword = (state: CadStoreState, keyword: Keyword) => {
           : 'Copies will keep the heading the original has.',
       )
       return
+    case 'List blocks': {
+      // Names only, as AutoCAD's -INSERT ? answers, so the command line stays a command line.
+      state.log('result', listBlocks(state, 'names'))
+      state.log('prompt', formatPrompt(currentPrompt(state)))
+      return
+    }
     case 'Inscribed in circle':
     case 'Circumscribed about circle':
       state.setPolygonFit(keyword.key === 'I' ? 'inscribed' : 'circumscribed')
@@ -2352,6 +3103,16 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
 
   if (activeTool === 'spline') {
     addDraftPoint(point)
+    return
+  }
+
+  if (activeTool === 'block') {
+    defineBlock(state, point)
+    return
+  }
+
+  if (activeTool === 'insert') {
+    placeInsertBase(state, point)
     return
   }
 

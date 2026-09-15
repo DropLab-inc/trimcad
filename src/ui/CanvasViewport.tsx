@@ -5,11 +5,13 @@ import {
   useState,
   type MouseEvent,
   type ReactElement,
+  type SyntheticEvent,
+  type TouchEvent as ReactTouchEvent,
   type WheelEvent,
 } from 'react'
 import { applyDrawTool, currentPrompt, previewTrimExtend, useCadStore } from '../core/store'
 import { usePreferences } from '../core/preferences'
-import { normalizeBounds } from '../core/print'
+import { normalizeBounds, pageSizeMm } from '../core/print'
 import {
   cancelPlotWindow,
   finishPlotWindow,
@@ -32,18 +34,40 @@ import { canFillet, chamferCorner, filletCorner, hasStraightSegments, offsetEnti
 import { canBeTangent, circleOnDiameter, circleThroughPoints, cornerRadius, polygonOnEdge, rectFromCenter, rectFromCorners, arcFromCenterStartEnd, arcFromStartCenterEnd, arcThroughPoints } from '../core/construct'
 import { polarArrayCopies, rectangularArrayCopies } from '../core/array'
 import { dragGrip, entityGrips, findGripAt, type Grip } from '../core/grips'
-import type { CadEntity, DimensionEntity, PolylineEntity, SnapMode } from '../core/types'
+import type { CadEntity, DimensionEntity, Layout, PolylineEntity, SnapMode, Viewport } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
-import { COMMAND_INPUT_ID } from './CommandLine'
+import { COMMAND_INPUT_ID, focusCommandInput } from './commandFocus'
+import { NARROW_QUERY, useMediaQuery } from './useMediaQuery'
 import { renderDimension, renderEntity, splinePath } from './renderers'
 import { readableOnCanvas, useCanvasPalette } from './theme'
 
 type Camera = { x: number; y: number; zoom: number }
 
-type TypedState = { step: string; values: Record<string, string>; field: number }
+/**
+ * The wheel's zoom limits, shared with the two-finger pinch so a gesture cannot travel further
+ * than a mouse can. Below the floor the grid and the snap aperture are finer than a pixel;
+ * above the ceiling the coordinates the command line prints lose their precision.
+ */
+const ZOOM_MIN = 0.02
+const ZOOM_MAX = 50
+
+/** Where a two-finger gesture stood when it began, so each move is measured from its start. */
+type Pinch = {
+  /** Finger separation in screen pixels. Held above zero so the ratio is always finite. */
+  spread: number
+  /** The zoom the gesture began at; the change in separation scales this. */
+  zoom: number
+  /** The drawing point under the fingers when the gesture began. */
+  anchor: Vec2
+}
 
 /** Stable empty object so memo dependencies do not change on every render. */
 const NO_VALUES: Record<string, string> = {}
+
+/** Whether a point on the sheet falls inside a viewport's frame — the frame a press lands in. */
+const inViewportFrame = (viewport: Viewport, paper: Vec2): boolean =>
+  Math.abs(paper.x - viewport.center.x) <= viewport.widthMm / 2 &&
+  Math.abs(paper.y - viewport.center.y) <= viewport.heightMm / 2
 
 const screenToWorld = (point: Vec2, camera: Camera): Vec2 => ({
   x: (point.x - camera.x) / camera.zoom,
@@ -130,6 +154,14 @@ export function CanvasViewport() {
   const selectedIds = useCadStore((state) => state.selectedIds)
   const activeTool = useCadStore((state) => state.activeTool)
   const camera = useCadStore((state) => state.camera)
+  const activeLayoutId = useCadStore((state) => state.activeLayoutId)
+  const activeViewportId = useCadStore((state) => state.activeViewportId)
+  const selectViewport = useCadStore((state) => state.selectViewport)
+  const updateViewport = useCadStore((state) => state.updateViewport)
+  const enteredViewportId = useCadStore((state) => state.enteredViewportId)
+  const enterViewport = useCadStore((state) => state.enterViewport)
+  const zoomViewport = useCadStore((state) => state.zoomViewport)
+  const panViewport = useCadStore((state) => state.panViewport)
   const setCamera = useCadStore((state) => state.setCamera)
   const applySelection = useCadStore((state) => state.applySelection)
   const selectAll = useCadStore((state) => state.selectAll)
@@ -187,6 +219,12 @@ export function CanvasViewport() {
   const [orthoHeld, setOrthoHeld] = useState(false)
   const [panning, setPanning] = useState(false)
   const [lastMouse, setLastMouse] = useState<Vec2 | null>(null)
+  /** The live two-finger gesture, or null while fewer than two fingers are down. */
+  const pinch = useRef<Pinch | null>(null)
+  /** A viewport being dragged around its sheet, and where inside it the grab landed. */
+  const [viewportDrag, setViewportDrag] = useState<{ id: string; grab: Vec2 } | null>(null)
+  /** A drawing being slid inside an entered viewport, and where the pointer last was on the sheet. */
+  const [viewportPan, setViewportPan] = useState<{ id: string; last: Vec2 } | null>(null)
   const [boxStart, setBoxStart] = useState<Vec2 | null>(null)
   const [boxEnd, setBoxEnd] = useState<Vec2 | null>(null)
   /**
@@ -203,7 +241,13 @@ export function CanvasViewport() {
   /** A press on an already-selected object, which becomes a move once the cursor travels. */
   const [objectDrag, setObjectDrag] = useState<{ from: Vec2; to: Vec2 } | null>(null)
   const [hoverGrip, setHoverGrip] = useState<{ entityId: string; grip: Grip } | null>(null)
-  const [typedState, setTypedState] = useState<TypedState>({ step: '', values: NO_VALUES, field: 0 })
+  /*
+   * The dynamic input's field state lives in the store rather than here, because the command
+   * line writes to it as well: on a phone the keyboard belongs to that input, so the canvas
+   * never sees the keystrokes that fill a box.
+   */
+  const typedState = useCadStore((state) => state.typed)
+  const setTypedState = useCadStore((state) => state.setTypedState)
   const [size, setSize] = useState({ width: 1000, height: 700 })
   const preferences = usePreferences()
   const printSession = usePrintSession()
@@ -229,10 +273,32 @@ export function CanvasViewport() {
   const swapped = editingEdges && orthoHeld
   const promptText = useCadStore((state) => formatPrompt(currentPrompt(state, swapped)))
 
-  const visibleEntities = useMemo(() => visibleOnLayers(doc), [doc])
+  /** The sheet being worked on, or null while model space is showing. */
+  const activeLayout = activeLayoutId
+    ? doc.layouts.find((layout) => layout.id === activeLayoutId) ?? null
+    : null
+
+  /** The model's own visible objects, which is exactly what a viewport puts onto a sheet. */
+  const modelVisible = useMemo(() => visibleOnLayers(doc), [doc])
+
+  /*
+   * While a sheet is open the canvas works on the sheet: its own geometry is what is drawn on the
+   * paper, what a click may pick and what a snap may catch. Snapping to the model from paper space
+   * would drop points in the wrong space altogether — paper millimetres against drawing units — and
+   * the border of a title block has nothing to snap to in a drawing.
+   */
+  const spaceDoc = useMemo(
+    () => (activeLayout ? { ...doc, entities: activeLayout.entities } : doc),
+    [doc, activeLayout],
+  )
+
+  const visibleEntities = useMemo(
+    () => (activeLayout ? visibleOnLayers(spaceDoc) : modelVisible),
+    [activeLayout, spaceDoc, modelVisible],
+  )
 
   /** What a click may actually pick: locked layers stay on screen but refuse selection. */
-  const pickableEntities = useMemo(() => editableEntities(doc), [doc])
+  const pickableEntities = useMemo(() => editableEntities(spaceDoc), [spaceDoc])
 
   /** The objects showing grips, and so the only ones that can be reshaped by hand. */
   const selectedEntities = useMemo(
@@ -282,11 +348,67 @@ export function CanvasViewport() {
 
   const fieldIndex = Math.min(activeFieldIndex, Math.max(0, dynamicFields.length - 1))
 
+  /*
+   * A phone has no cursor to hover with, so the dimension boxes are the only thing
+   * that says what a command is waiting for, and they are the only way to type a
+   * value. That makes them a control rather than a readout: sized for a finger, kept
+   * inside the viewport, and tappable anywhere on the row — label and number included,
+   * because that is what "tapping the box" actually means.
+   */
+  const narrow = useMediaQuery(NARROW_QUERY)
+  const boxHeight = narrow ? 36 : 19
+  const boxWidth = narrow ? 176 : 140
+  const boxGap = narrow ? 8 : 2
+  const boxFont = narrow ? 13 : 11
+  const boxPad = narrow ? 11 : 7
+  const boxOffset = narrow ? 18 : 14
+
+  /** Screen-space top-left for the Nth box, flipped rather than run off the edge. */
+  const boxAt = (anchor: Vec2, index: number, total: number) => {
+    const stack = total * boxHeight + (total - 1) * boxGap
+    const below = anchor.y + boxOffset
+    const top = below + stack <= height - 4 ? below : Math.max(4, anchor.y - boxOffset - stack)
+    const left =
+      anchor.x + boxOffset + boxWidth <= width - 4
+        ? anchor.x + boxOffset
+        : Math.max(4, anchor.x - boxOffset - boxWidth)
+    return { x: left, y: top + index * (boxHeight + boxGap) }
+  }
+
+  /**
+   * Tapping a box makes that field the active one and raises the command input, where
+   * the value is typed. Without this the tap reached the canvas.
+   */
+  const tapField = (index: number) => (event: SyntheticEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setTypedState({ step: stepKey, values: typedValues, field: index })
+    focusCommandInput()
+  }
+
+  /**
+   * A tap on a phone also synthesises a mousedown, and the canvas places a point on
+   * mousedown. The pointer event is cancelled above; this is the belt to that braces,
+   * for the browsers that send the compatibility events anyway.
+   */
+  const blockTap = (event: SyntheticEvent) => event.stopPropagation()
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Shift') setOrthoHeld(true)
       const target = event.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+      const typing =
+        document.activeElement?.id === COMMAND_INPUT_ID ||
+        (target !== null && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA'))
+      /*
+       * The element that has focus matters more than the event's own target. Some phone keyboards
+       * dispatch key events to the document rather than to the field that is focused, and when that
+       * happens this handler and the browser both write the same character: the value comes out
+       * doubled or, because this handler focuses the input halfway through, out of order — "20"
+       * arriving as "02". While the command input has the caret, its text is the input's business.
+       */
+      if (typing) return
+      // Ortho belongs to the drawing, so Shift only arms it when the keyboard is not on a field.
+      if (event.key === 'Shift') setOrthoHeld(true)
 
       // Ctrl and Cmd chords are application-wide accelerators, handled by useGlobalShortcuts.
       if (event.ctrlKey || event.metaKey) return
@@ -344,7 +466,13 @@ export function CanvasViewport() {
         else applySelection([], 'replace')
         return
       }
-      if (event.key === 'Enter' || event.key === ' ') {
+      /*
+       * Enter accepts the point, as it does in AutoCAD. Space does the same, but only from a
+       * keyboard that cannot insert a space by itself: predictive keyboards add one as the user
+       * types, and treating that as Enter commits a half-typed value.
+       */
+      const spaceAccepts = event.key === ' ' && !navigator.maxTouchPoints
+      if (event.key === 'Enter' || spaceAccepts) {
         event.preventDefault()
         if (pickingEdges) {
           finishEdgeSelection()
@@ -468,7 +596,7 @@ export function CanvasViewport() {
     return { point: raw, snap: null, tracking: null }
   }
 
-  const localPoint = (event: MouseEvent): Vec2 => {
+  const localPoint = (event: { clientX: number; clientY: number }): Vec2 => {
     const box = svgRef.current!.getBoundingClientRect()
     return { x: event.clientX - box.left, y: event.clientY - box.top }
   }
@@ -481,6 +609,33 @@ export function CanvasViewport() {
       return
     }
     if (event.button !== 0) return
+    if (activeLayout && activeTool === 'select') {
+      const paper = screenToWorld(localPoint(event), camera)
+      const hit = viewportAt(paper)
+      if (!hit) {
+        selectViewport(null)
+        // Pressing the desk lets go of the viewport being worked in, which is how you get back out
+        // of a view without hunting for the right double-click.
+        enterViewport(null)
+        return
+      }
+      selectViewport(hit.id)
+      /*
+       * Inside the viewport being worked in, a drag slides the drawing under a frame that stays put;
+       * anywhere else on a sheet, a drag moves the frame itself across the paper.
+       */
+      if (hit.id === enteredViewportId && !hit.locked) {
+        setViewportPan({ id: hit.id, last: paper })
+        return
+      }
+      if (!hit.locked) {
+        setViewportDrag({
+          id: hit.id,
+          grab: { x: paper.x - hit.center.x, y: paper.y - hit.center.y },
+        })
+      }
+      return
+    }
     const local = localPoint(event)
     // A window whose first corner is already down is waiting for its second click, and nothing
     // else may take that click: not a grip, not an object under it. Mouse up closes the window.
@@ -523,11 +678,114 @@ export function CanvasViewport() {
       setFenceEnd(local)
       return
     }
-    applyDrawTool(resolvePoint(local).point)
+    /*
+     * A value typed for this step wins over the press position: typing a length and then tapping
+     * the direction is how a phone places an exact segment, since there is no cursor to hover and
+     * no second click to measure from. With nothing typed this is the press point as before.
+     */
+    applyDrawTool(hasTypedValue(dynamicFields) ? commandPoint ?? resolvePoint(local).point : resolvePoint(local).point)
   }
 
-  const handleMouseMove = (event: MouseEvent<SVGSVGElement>) => {
-    const local = localPoint(event)
+  const handleMouseMove = (event: MouseEvent<SVGSVGElement>) =>
+    trackCursor(event.clientX, event.clientY)
+
+  /**
+   * A phone has no hover, so the finger is the only thing that says where the cursor is.
+   * Touch has to feed the same path as the mouse or the dimension boxes never appear at
+   * all on a touch screen: they are positioned from the cursor, and a tap produces no
+   * mousemove of its own. A touch drag does produce compatibility mouse events, but only
+   * while it stays inside the browser's tap slop.
+   */
+  const trackTouch = (event: ReactTouchEvent<SVGSVGElement>) => {
+    // Two fingers are a pinch, not a cursor: following the first one would drag the crosshair
+    // and the dimension boxes along behind a view that is already moving.
+    if (event.touches.length > 1) return
+    const touch = event.touches[0] ?? event.changedTouches[0]
+    if (touch) trackCursor(touch.clientX, touch.clientY)
+  }
+
+  /*
+   * Two fingers move the view: the spread between them scales the zoom, and their midpoint
+   * carries the drawing along with it, so one gesture both zooms and pans — the gesture every
+   * map and drawing app has already taught the hand. On a phone it is the only way to do
+   * either, because panning is bound to the middle mouse button and zooming to the wheel, and
+   * a touch screen has neither.
+   *
+   * These are native listeners rather than React's onTouchStart on purpose: the browser's own
+   * pinch-zoom has to be cancelled for the gesture to reach us at all, and React registers
+   * touch listeners as passive, so a preventDefault() inside its handler is ignored.
+   */
+  useEffect(() => {
+    const element = svgRef.current
+    if (!element) return
+
+    const middle = (touches: TouchList) => ({
+      clientX: (touches[0].clientX + touches[1].clientX) / 2,
+      clientY: (touches[0].clientY + touches[1].clientY) / 2,
+    })
+    const separation = (touches: TouchList) =>
+      Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
+    const toLocal = (point: { clientX: number; clientY: number }): Vec2 => {
+      const box = element.getBoundingClientRect()
+      return { x: point.clientX - box.left, y: point.clientY - box.top }
+    }
+
+    const begin = (touches: TouchList) => {
+      const { camera: current } = useCadStore.getState()
+      pinch.current = {
+        spread: Math.max(1, separation(touches)),
+        zoom: current.zoom,
+        anchor: screenToWorld(toLocal(middle(touches)), current),
+      }
+    }
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length < 2) return
+      // Without this the browser zooms the whole page rather than the drawing.
+      if (event.cancelable) event.preventDefault()
+      begin(event.touches)
+    }
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (event.touches.length < 2) return
+      if (event.cancelable) event.preventDefault()
+      if (!pinch.current) {
+        begin(event.touches)
+        return
+      }
+      const gesture = pinch.current
+      const zoom = Math.min(
+        ZOOM_MAX,
+        Math.max(ZOOM_MIN, gesture.zoom * (separation(event.touches) / gesture.spread)),
+      )
+      const centre = toLocal(middle(event.touches))
+      // Holding the anchored drawing point under the fingers does both jobs at once: the
+      // drawing scales about the pinch centre and follows it as the centre travels.
+      setCamera({
+        zoom,
+        x: centre.x - gesture.anchor.x * zoom,
+        y: centre.y - gesture.anchor.y * zoom,
+      })
+    }
+
+    const onTouchEnd = (event: TouchEvent) => {
+      if (event.touches.length < 2) pinch.current = null
+    }
+
+    element.addEventListener('touchstart', onTouchStart, { passive: false })
+    element.addEventListener('touchmove', onTouchMove, { passive: false })
+    element.addEventListener('touchend', onTouchEnd)
+    element.addEventListener('touchcancel', onTouchEnd)
+    return () => {
+      element.removeEventListener('touchstart', onTouchStart)
+      element.removeEventListener('touchmove', onTouchMove)
+      element.removeEventListener('touchend', onTouchEnd)
+      element.removeEventListener('touchcancel', onTouchEnd)
+    }
+  }, [setCamera])
+
+  const trackCursor = (clientX: number, clientY: number) => {
+    const local = localPoint({ clientX, clientY })
     setCursorScreen(local)
     if (boxStart) setBoxEnd(local)
     if (fenceStart) setFenceEnd(local)
@@ -553,9 +811,31 @@ export function CanvasViewport() {
       setTrackingLabel(tracking)
       return
     }
+    if (viewportPan && activeLayout) {
+      const paper = screenToWorld(local, camera)
+      panViewport(activeLayout.id, viewportPan.id, {
+        x: paper.x - viewportPan.last.x,
+        y: paper.y - viewportPan.last.y,
+      })
+      setViewportPan({ id: viewportPan.id, last: paper })
+      return
+    }
+
+    if (viewportDrag && activeLayout) {
+      // The grab point stays under the cursor, so the frame moves with the hand rather than jumping
+      // its centre to wherever the press happened to land.
+      const paper = screenToWorld(local, camera)
+      const target = activeLayout.viewports.find((viewport) => viewport.id === viewportDrag.id)
+      if (target) {
+        updateViewport(activeLayout.id, target.id, {
+          center: { x: paper.x - viewportDrag.grab.x, y: paper.y - viewportDrag.grab.y },
+        })
+      }
+      return
+    }
     if (panning && lastMouse) {
-      setCamera({ x: camera.x + (event.clientX - lastMouse.x), y: camera.y + (event.clientY - lastMouse.y) })
-      setLastMouse({ x: event.clientX, y: event.clientY })
+      setCamera({ x: camera.x + (clientX - lastMouse.x), y: camera.y + (clientY - lastMouse.y) })
+      setLastMouse({ x: clientX, y: clientY })
       return
     }
     const { point, snap, tracking } = resolvePoint(local)
@@ -579,6 +859,23 @@ export function CanvasViewport() {
     setHoverGrip(overGrip ? { entityId: overGrip.entity.id, grip: overGrip.grip } : null)
   }
 
+  /*
+   * Switching to a sheet frames it. Without this the camera is wherever model space left it, so a
+   * 297 mm sheet can open half off-screen. Keyed on the space alone on purpose: re-running whenever
+   * the document changed would yank the view back every time a viewport was nudged.
+   */
+  useEffect(() => {
+    const layout = activeLayoutId
+      ? useCadStore.getState().doc.layouts.find((candidate) => candidate.id === activeLayoutId)
+      : null
+    const box = svgRef.current?.getBoundingClientRect()
+    if (!layout || !box || box.width < 10 || box.height < 10) return
+    const page = pageSizeMm(layout.paper, layout.orientation)
+    // A little air around the sheet, so its edge is visibly an edge rather than the window frame.
+    const zoom = Math.min(box.width / (page.width * 1.15), box.height / (page.height * 1.15))
+    setCamera({ zoom, x: (box.width - page.width * zoom) / 2, y: (box.height - page.height * zoom) / 2 })
+  }, [activeLayoutId, setCamera])
+
   // The store needs the crosshair position so a typed distance knows which way to go.
   useEffect(() => {
     publishCursorWorld(cursorWorld)
@@ -596,6 +893,8 @@ export function CanvasViewport() {
   const handleMouseUp = (event: MouseEvent<SVGSVGElement>) => {
     setPanning(false)
     setLastMouse(null)
+    setViewportDrag(null)
+    setViewportPan(null)
 
     if (gripDrag) {
       const travelled = Math.hypot(gripDrag.to.x - gripDrag.grip.point.x, gripDrag.to.y - gripDrag.grip.point.y)
@@ -664,7 +963,7 @@ export function CanvasViewport() {
         const start = screenToWorld(boxStart, camera)
         const end = screenToWorld(boxEnd, camera)
         const mode = selectionModeFor(start, end)
-        const ids = selectEntitiesInRect(pickableEntities, rectFromPoints(start, end), mode)
+        const ids = selectEntitiesInRect(pickableEntities, rectFromPoints(start, end), mode, doc.blocks)
         applySelection(ids, modifier)
         setStatusMessage(`${mode === 'window' ? 'Window' : 'Crossing'} selected ${ids.length} object(s)`)
       }
@@ -701,6 +1000,8 @@ export function CanvasViewport() {
   const handleMouseLeave = () => {
     setPanning(false)
     setLastMouse(null)
+    setViewportDrag(null)
+    setViewportPan(null)
     setBoxStart(null)
     setBoxEnd(null)
     setBoxLatched(false)
@@ -710,6 +1011,14 @@ export function CanvasViewport() {
     setObjectDrag(null)
     setHoverGrip(null)
     setHoverId(null)
+    /*
+     * The cursor survives a leave while a command is running. A finger lifting off the glass
+     * synthesises a mouseleave even though it never left the canvas, and the dimension boxes
+     * hang off the cursor — so clearing it here is what made them unreachable on a phone:
+     * they appeared with the tap and vanished the moment it ended. With a mouse this only
+     * means the crosshair waits where it was instead of disappearing, which is no worse.
+     */
+    if (activeTool !== 'select' || draftPoints.length > 0) return
     setCursorScreen(null)
     setCursorWorld(null)
     setActiveSnap(null)
@@ -717,9 +1026,45 @@ export function CanvasViewport() {
 
   const handleWheel = (event: WheelEvent<SVGSVGElement>) => {
     const local = localPoint(event)
+    /*
+     * Inside the viewport being worked in, the wheel resizes the view rather than the sheet: the
+     * frame stays where it is and the drawing grows or shrinks within it, which is the whole point
+     * of entering it. A locked viewport holds its view, so the wheel is swallowed rather than
+     * falling through to the page.
+     */
+    const entered =
+      activeLayout && enteredViewportId
+        ? activeLayout.viewports.find((viewport) => viewport.id === enteredViewportId)
+        : undefined
+    if (activeLayout && entered) {
+      if (!entered.locked) {
+        zoomViewport(
+          activeLayout.id,
+          entered.id,
+          screenToWorld(local, camera),
+          event.deltaY > 0 ? 0.9 : 1.1,
+        )
+      }
+      return
+    }
+
     const worldBefore = screenToWorld(local, camera)
-    const zoom = Math.min(50, Math.max(0.02, camera.zoom * (event.deltaY > 0 ? 0.9 : 1.1)))
+    const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, camera.zoom * (event.deltaY > 0 ? 0.9 : 1.1)))
     setCamera({ zoom, x: local.x - worldBefore.x * zoom, y: local.y - worldBefore.y * zoom })
+  }
+
+  /** Which viewport a point on the sheet falls in — the frame a press or a double-click means. */
+  const viewportAt = (paper: Vec2): Viewport | undefined =>
+    activeLayout
+      ? [...activeLayout.viewports].reverse().find((viewport) => inViewportFrame(viewport, paper))
+      : undefined
+
+  const handleDoubleClick = (event: MouseEvent<SVGSVGElement>) => {
+    if (!activeLayout) return
+    const hit = viewportAt(screenToWorld(localPoint(event), camera))
+    // Double-clicking a frame enters it; double-clicking the desk leaves, as does double-clicking
+    // the frame already being worked in.
+    enterViewport(hit && hit.id !== enteredViewportId ? hit.id : null)
   }
 
   const { width, height } = size
@@ -1279,6 +1624,115 @@ export function CanvasViewport() {
     )
   }, [boxEnd, boxLatched, boxStart, palette])
 
+  /**
+   * The drawing in model coordinates. Model space drops it straight onto the grid; a layout
+   * repeats the very same nodes inside each viewport's transform, so what a sheet shows can
+   * never drift from what the model actually holds.
+   */
+  const modelEntities = (entities: CadEntity[] = modelVisible) =>
+    entities.map((entity) => {
+      const layer = doc.layers.find((candidate) => candidate.id === entity.layerId)
+      const linetypeId = entity.linetypeId ?? layer?.linetypeId
+      const linetype = doc.linetypes.find((candidate) => candidate.id === linetypeId)
+      const selected = selectedIds.includes(entity.id)
+      const hovered = !selected && entity.id === hoverId
+      return renderEntity(entity, {
+        selected,
+        color: readableOnCanvas(entity.color ?? layer?.color ?? palette.fallbackEntity, palette),
+        dash: linetype?.pattern.length ? linetype.pattern.join(' ') : undefined,
+        width: hovered ? 2.5 : lwDisplay ? lineweightPixels(layer?.lineweight) : undefined,
+        dimStyle: doc.dimStyle,
+        palette,
+        blocks: doc.blocks,
+      })
+    })
+
+  /**
+   * The active sheet. Paper space is measured in millimetres from the paper's bottom-left corner,
+   * which is the same unit the camera pans over, so nothing needs converting. A viewport clips the
+   * model to its frame and then applies its own scale about its own centre — inside it are the
+   * very same nodes model space draws, so the sheet cannot show something the drawing does not.
+   */
+  const paperSheet = (layout: Layout) => {
+    const page = pageSizeMm(layout.paper, layout.orientation)
+    const margin = layout.marginMm
+    return (
+      <g>
+        {/*
+         * Paper is white whatever the theme is, because this is what goes on the page — but a
+         * white sheet on a light canvas would be invisible, so it carries a visible edge.
+         */}
+        <rect x={0} y={0} width={page.width} height={page.height} fill="#ffffff" />
+        <rect
+          x={0}
+          y={0}
+          width={page.width}
+          height={page.height}
+          fill="none"
+          stroke={palette.gridMajor}
+          strokeWidth={1.5}
+          vectorEffect="non-scaling-stroke"
+        />
+        <rect
+          x={margin}
+          y={margin}
+          width={Math.max(1, page.width - margin * 2)}
+          height={Math.max(1, page.height - margin * 2)}
+          fill="none"
+          stroke={palette.gridMajor}
+          strokeDasharray="6 4"
+          vectorEffect="non-scaling-stroke"
+        />
+
+        {layout.viewports.map((viewport) => {
+          const left = viewport.center.x - viewport.widthMm / 2
+          const bottom = viewport.center.y - viewport.heightMm / 2
+          const clipId = `viewport-clip-${viewport.id}`
+          const current = viewport.id === activeViewportId
+          /*
+           * The viewport being worked in draws heaviest, so it is never in doubt which frame the
+           * wheel and a drag will act on — a sheet can carry any number of them.
+           */
+          const entered = viewport.id === enteredViewportId
+          return (
+            <g key={viewport.id}>
+              <defs>
+                <clipPath id={clipId}>
+                  <rect x={left} y={bottom} width={viewport.widthMm} height={viewport.heightMm} />
+                </clipPath>
+              </defs>
+              <g
+                clipPath={`url(#${clipId})`}
+                transform={`translate(${viewport.center.x}, ${viewport.center.y}) scale(${1 / viewport.unitsPerMm}) translate(${-viewport.modelCenter.x}, ${-viewport.modelCenter.y})`}
+              >
+                {modelEntities()}
+              </g>
+              <rect
+                x={left}
+                y={bottom}
+                width={viewport.widthMm}
+                height={viewport.heightMm}
+                fill="none"
+                stroke={entered || current ? palette.selection : palette.gridMajor}
+                strokeWidth={entered ? 3 : current ? 2 : 1}
+                vectorEffect="non-scaling-stroke"
+                style={{ cursor: entered ? 'move' : 'pointer' }}
+                onPointerDown={() => selectViewport(viewport.id)}
+              />
+            </g>
+          )
+        })}
+
+        {/*
+         * The sheet's own objects, drawn after the viewports so a border and a title block sit on top
+         * of the frames' edges rather than under them. They are measured in paper millimetres, so
+         * they land on the page exactly as they were drawn — the sheet's unit is the page.
+         */}
+        <g>{modelEntities(visibleEntities)}</g>
+      </g>
+    )
+  }
+
   return (
     <div className="viewport-shell" ref={frameRef}>
       <svg
@@ -1289,7 +1743,10 @@ export function CanvasViewport() {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
+        onTouchStart={trackTouch}
+        onTouchMove={trackTouch}
         onWheel={handleWheel}
+        onDoubleClick={handleDoubleClick}
         onContextMenu={(event) => {
           // Right-click stands in for Enter, matching AutoCAD with shortcut menus turned off.
           event.preventDefault()
@@ -1303,35 +1760,37 @@ export function CanvasViewport() {
           else repeatLastCommand()
         }}
       >
-        <rect x={0} y={0} width={width} height={height} fill={palette.background} />
+        {/*
+         * Paper space sits on a tinted desk rather than the drawing's own background, which is the
+         * cue AutoCAD uses: white paper cannot be told from a white canvas any other way.
+         */}
+        <rect
+          x={0}
+          y={0}
+          width={width}
+          height={height}
+          fill={activeLayout ? palette.gridMinor : palette.background}
+        />
 
         <g transform={`translate(${camera.x}, ${camera.y}) scale(${camera.zoom})`}>
-          {grid}
-          <line x1={-1e5} y1={0} x2={1e5} y2={0} stroke={palette.axisX} strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          <line x1={0} y1={-1e5} x2={0} y2={1e5} stroke={palette.axisY} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          {activeLayout ? (
+            paperSheet(activeLayout)
+          ) : (
+            <>
+              {grid}
+              <line x1={-1e5} y1={0} x2={1e5} y2={0} stroke={palette.axisX} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+              <line x1={0} y1={-1e5} x2={0} y2={1e5} stroke={palette.axisY} strokeWidth={1} vectorEffect="non-scaling-stroke" />
 
-          {visibleEntities.map((entity) => {
-            const layer = doc.layers.find((candidate) => candidate.id === entity.layerId)
-            const linetypeId = entity.linetypeId ?? layer?.linetypeId
-            const linetype = doc.linetypes.find((candidate) => candidate.id === linetypeId)
-            const selected = selectedIds.includes(entity.id)
-            const hovered = !selected && entity.id === hoverId
-            return renderEntity(entity, {
-              selected,
-              color: readableOnCanvas(entity.color ?? layer?.color ?? palette.fallbackEntity, palette),
-              dash: linetype?.pattern.length ? linetype.pattern.join(' ') : undefined,
-              width: hovered ? 2.5 : lwDisplay ? lineweightPixels(layer?.lineweight) : undefined,
-              dimStyle: doc.dimStyle,
-              palette,
-            })
-          })}
+              {modelEntities()}
 
-          {grips}
-          {dragPreview}
-          {trimExtendPreview}
-          {tangentHighlight}
-          {modifyPreview}
-          {preview}
+              {grips}
+              {dragPreview}
+              {trimExtendPreview}
+              {tangentHighlight}
+              {modifyPreview}
+              {preview}
+            </>
+          )}
         </g>
 
         {selectionBox}
@@ -1377,31 +1836,59 @@ export function CanvasViewport() {
                 {trackingLabel}
               </text>
             )}
+          </g>
+        )}
+
+        {/*
+         * The dimension boxes sit outside that overlay on purpose. Everything above is
+         * a readout and must not intercept the pointer; these are controls, so they take
+         * pointer events and the whole row — box, label and number — is the target.
+         */}
+        {cursorScreen && snapScreen && dynamicFields.length > 0 && (
+          <g className="dynamic-input">
             {dynamicFields.map((field, index) => {
-              const top = snapScreen.y + 14 + index * 21
+              const box = boxAt(snapScreen, index, dynamicFields.length)
               const isActive = index === fieldIndex
               const typed = field.typed !== undefined && field.typed !== ''
+              const middle = box.y + boxHeight / 2 + boxFont * 0.36
               return (
-                <g key={field.key}>
+                <g
+                  key={field.key}
+                  className={isActive ? 'dynamic-field is-active' : 'dynamic-field'}
+                  style={{ cursor: 'text', touchAction: 'none' }}
+                  onPointerDown={tapField(index)}
+                  /*
+                   * iOS raises the keyboard for a focus taken in a touch handler, not always for one
+                   * taken in pointerdown, so the tap is honoured again at the end of the gesture.
+                   * Focusing what is already focused costs nothing.
+                   */
+                  onTouchEnd={(event) => {
+                    event.stopPropagation()
+                    focusCommandInput()
+                  }}
+                  onClick={() => focusCommandInput()}
+                  onMouseDown={blockTap}
+                  onTouchStart={blockTap}
+                >
                   <rect
-                    x={snapScreen.x + 14}
-                    y={top}
-                    width={140}
-                    height={19}
-                    rx={3}
+                    x={box.x}
+                    y={box.y}
+                    width={boxWidth}
+                    height={boxHeight}
+                    rx={narrow ? 8 : 3}
                     fill={palette.tooltipBackground}
                     stroke={isActive ? palette.typed : palette.hint}
                     strokeWidth={1}
                   />
-                  <text x={snapScreen.x + 21} y={top + 13} fill={palette.hint} fontSize={11}>
+                  <text x={box.x + boxPad} y={middle} fill={palette.hint} fontSize={boxFont}>
                     {field.label}
                   </text>
                   <text
-                    x={snapScreen.x + 147}
-                    y={top + 13}
+                    x={box.x + boxWidth - boxPad}
+                    y={middle}
                     textAnchor="end"
                     fill={typed ? palette.typed : palette.hint}
-                    fontSize={11}
+                    fontSize={boxFont}
                   >
                     {`${typed ? field.typed : field.tracked.toFixed(2)}${field.suffix ?? ''}`}
                   </text>

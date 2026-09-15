@@ -219,7 +219,8 @@ export function PreferencesMenu() {
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        Preferences
+        <span className="menu-label-full">Preferences</span>
+        <span className="menu-label-short" aria-hidden="true">Prefs</span>
       </button>
 
       {open && (

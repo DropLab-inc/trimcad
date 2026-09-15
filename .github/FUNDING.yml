@@ -1,0 +1,7 @@
+# Sponsorship for TrimCAD runs through GitHub Sponsors.
+#
+# The profile is published at https://github.com/sponsors/DropLab-inc, and the
+# app's Support page links to the same place from .env (VITE_SPONSOR_URL). Keep
+# the two in step: GitHub reads this file for the repo's Sponsor button, the app
+# reads the build variable for its own.
+github: [DropLab-inc]

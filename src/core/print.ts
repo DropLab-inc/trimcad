@@ -2,13 +2,13 @@ import { jsPDF } from 'jspdf'
 import { flattenEntity, pointsOfEntity } from './flatten'
 import { isLayerPlottable, layerOf, plottableEntities } from './layers'
 import type { Vec2 } from './math/vec2'
-import type { CadEntity, DrawingDocument, Layer } from './types'
+import type { CadEntity, DrawingDocument, Layer, Layout, PaperOrientation, PaperSize } from './types'
+
+/** Paper sizes and orientations are part of the document model, so layouts can name them too. */
+export type { PaperOrientation, PaperSize }
 
 /** What region of the drawing is mapped onto the paper. */
 export type PlotArea = 'extents' | 'display' | 'window' | 'selection'
-
-export type PaperSize = 'a4' | 'a3' | 'a2' | 'a1' | 'letter' | 'legal' | 'tabloid'
-export type PaperOrientation = 'landscape' | 'portrait'
 
 /**
  * How drawing units relate to millimetres on the paper.
@@ -78,6 +78,14 @@ const NAMED_SCALES: Record<Exclude<PlotScaleMode, 'fit' | 'custom'>, number> = {
 
 /** AutoCAD plots a lineweight of "Default" at 0.25 mm. */
 const DEFAULT_LINEWEIGHT_MM = 0.25
+
+/**
+ * The scales a viewport may be set to, as drawing units per millimetre of paper: 50 shows the model
+ * at 1:50. Deliberately restricted to the round numbers a drawing office uses, so a sheet always
+ * reads at a real scale rather than something like 1:37. Both the viewport a new layout is born
+ * with and the dropdown that changes it later come from this one list, so they cannot disagree.
+ */
+export const VIEWPORT_SCALES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000, 2000, 5000]
 
 const hexToRgb = (hex: string): [number, number, number] => {
   const clean = hex.replace('#', '')
@@ -329,4 +337,118 @@ export const exportPdf = (
   pdf.restoreGraphicsState()
   pdf.save(fileName ?? `trimcad-${options.paper}-${options.scaleMode}.pdf`)
   return layout
+}
+
+/**
+ * Draws objects onto the page, mapping every drawing point through `toPage` and sizing text by the
+ * space's own units per millimetre. Inside a viewport that is the viewport's scale; on the sheet
+ * itself it is 1, because there a millimetre of drawing is a millimetre of paper.
+ *
+ * Shared by both passes so a sheet's own border and the model inside its viewports are drawn by the
+ * same code — a line is a line wherever it lands, and the two can never disagree about lineweight,
+ * colour or how a curve is flattened.
+ */
+const plotEntities = (
+  pdf: jsPDF,
+  document: DrawingDocument,
+  entities: CadEntity[],
+  toPage: (point: Vec2) => [number, number],
+  unitsPerMm: number,
+): void => {
+  for (const entity of entities) {
+    const layer = layerOf(document, entity)
+    const [r, g, b] = plotColor(colorOf(document, entity))
+    pdf.setDrawColor(r, g, b)
+    pdf.setTextColor(r, g, b)
+    // Lineweight is a plotted width in millimetres, so it does not follow any scale.
+    pdf.setLineWidth(lineweightOf(layer))
+
+    if (entity.type === 'text') {
+      const [x, y] = toPage(entity.position)
+      pdf.setFontSize((entity.height / unitsPerMm) * (72 / 25.4))
+      pdf.text(entity.value, x, y)
+      continue
+    }
+
+    for (const run of flattenEntity(entity)) {
+      if (run.points.length < 2) continue
+      const pts = run.points.map(toPage)
+      const [startX, startY] = pts[0]
+      const deltas = pts
+        .slice(1)
+        .map(([x, y], index) => [x - pts[index][0], y - pts[index][1]] as [number, number])
+      if (run.closed) {
+        const [lastX, lastY] = pts[pts.length - 1]
+        deltas.push([startX - lastX, startY - lastY])
+      }
+      pdf.lines(deltas, startX, startY)
+    }
+  }
+}
+
+/**
+ * Plots a sheet.
+ *
+ * A layout is already composed at paper scale, so there is no area to choose and no scale to apply:
+ * the page *is* the paper, and each viewport brings the model to it at its own scale. That is the
+ * split AutoCAD makes between plotting model space and plotting a layout, and it is what takes the
+ * guesswork out of issuing a drawing — nothing here has to be told how big the drawing is.
+ */
+export const exportLayoutPdf = (
+  document: DrawingDocument,
+  layout: Layout,
+  /** Override the download name; tests pass a no-op save by stubbing jsPDF instead. */
+  fileName?: string,
+): void => {
+  const page = pageSizeMm(layout.paper, layout.orientation)
+  const pdf = new jsPDF({
+    orientation: layout.orientation,
+    unit: 'mm',
+    format: [page.width, page.height],
+  })
+
+  pdf.setLineJoin('round')
+  pdf.setLineCap('round')
+
+  for (const viewport of layout.viewports) {
+    // Drawing units land on the sheet through the viewport's own scale. The sheet's y runs down the
+    // page exactly as the canvas draws it — the same convention the DXF writer uses when it hands
+    // coordinates over verbatim — so the sheet plots as composed.
+    const toPage = (point: Vec2): [number, number] => {
+      const mmX = viewport.center.x + (point.x - viewport.modelCenter.x) / viewport.unitsPerMm
+      const mmY = viewport.center.y + (point.y - viewport.modelCenter.y) / viewport.unitsPerMm
+      return [mmX, mmY]
+    }
+
+    pdf.saveGraphicsState()
+    // Clip to the frame exactly as the canvas does, so a viewport can never bleed across the sheet.
+    pdf.rect(
+      viewport.center.x - viewport.widthMm / 2,
+      viewport.center.y - viewport.heightMm / 2,
+      viewport.widthMm,
+      viewport.heightMm,
+    )
+    pdf.clip()
+    pdf.discardPath()
+
+    plotEntities(pdf, document, plottableEntities(document), toPage, viewport.unitsPerMm)
+
+    pdf.restoreGraphicsState()
+  }
+
+  /*
+   * The sheet's own objects go on last, at 1:1 and on top of the frames: a border, a title block and
+   * notes are measured in the paper's millimetres and must not scale with any viewport. Drawing them
+   * after the viewports is what lets a title block sit over a frame edge rather than under it.
+   */
+  plotEntities(
+    pdf,
+    document,
+    plottableEntities({ ...document, entities: layout.entities }),
+    (point) => [point.x, point.y],
+    1,
+  )
+
+  const slug = layout.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  pdf.save(fileName ?? `trimcad-${slug || 'layout'}.pdf`)
 }

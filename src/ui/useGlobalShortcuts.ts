@@ -11,11 +11,15 @@ const isTyping = (target: EventTarget | null): boolean => {
 /**
  * The accelerators every desktop application shares: file handling, undo and redo, and the
  * clipboard. Drawing keys such as Escape and Enter belong to the canvas and stay there.
+ *
+ * `enabled` is false while a reader page (documentation, requests, support) is open, so a
+ * search box or a request form never collides with a drawing shortcut.
  */
-export const useGlobalShortcuts = () => {
+export const useGlobalShortcuts = (enabled = true) => {
   const files = useFileActions()
 
   useEffect(() => {
+    if (!enabled) return
     const onKeyDown = (event: KeyboardEvent) => {
       const accel = event.ctrlKey || event.metaKey
       if (!accel || event.altKey) return
@@ -78,5 +82,5 @@ export const useGlobalShortcuts = () => {
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [files])
+  }, [files, enabled])
 }
