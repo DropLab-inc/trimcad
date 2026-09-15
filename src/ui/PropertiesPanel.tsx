@@ -1,9 +1,21 @@
 import { DEFAULT_LAYER_COLOR } from '../core/layers'
 import { HATCH_PATTERN_LABELS, HATCH_PATTERNS } from '../core/hatch'
-import { VIEWPORT_SCALES } from '../core/print'
+import { pageSizeMm, VIEWPORT_SCALES } from '../core/print'
+import type { PaperOrientation, PaperSize } from '../core/types'
+
+/** The paper a sheet can be plotted on, in the order a drawing office thinks of them. */
+const PAPER_SIZES: { value: PaperSize; label: string }[] = [
+  { value: 'a4', label: 'A4' },
+  { value: 'a3', label: 'A3' },
+  { value: 'a2', label: 'A2' },
+  { value: 'a1', label: 'A1' },
+  { value: 'letter', label: 'Letter' },
+  { value: 'legal', label: 'Legal' },
+  { value: 'tabloid', label: 'Tabloid' },
+]
 import { useCadStore } from '../core/store'
 import { dimensionScale } from './renderers'
-import type { DimensionEntity, HatchEntity, HatchPattern } from '../core/types'
+import type { DimensionEntity, HatchEntity, HatchPattern, Layout } from '../core/types'
 
 const round1 = (value: number) => Math.round(value * 10) / 10
 
@@ -16,6 +28,7 @@ export function PropertiesPanel() {
   const resizeDimensions = useCadStore((state) => state.resizeDimensions)
   const updateHatches = useCadStore((state) => state.updateHatches)
   const activeLayoutId = useCadStore((state) => state.activeLayoutId)
+  const updateLayout = useCadStore((state) => state.updateLayout)
   const activeViewportId = useCadStore((state) => state.activeViewportId)
   const updateViewport = useCadStore((state) => state.updateViewport)
   const selected = doc.entities.filter((entity) => selectedIds.includes(entity.id))
@@ -113,6 +126,68 @@ export function PropertiesPanel() {
   }
 
   if (selected.length === 0) {
+    /*
+     * With nothing selected, AutoCAD's Properties palette shows the drawing's own settings — and for a
+     * sheet that means its page setup. There was no way at all to change a layout's paper before: the
+     * size was fixed when the sheet was made, so "how do I change the paper type" had no answer.
+     */
+    if (layout) {
+      const sheet = layout
+      const page = pageSizeMm(sheet.paper, sheet.orientation)
+      const patchSheet = (patch: Partial<Layout>) => updateLayout(sheet.id, patch)
+      return (
+        <section className="panel">
+          <h3>Sheet</h3>
+          <label title="The name on the layout's tab.">
+            Name
+            <input
+              value={sheet.name}
+              aria-label="Layout name"
+              onChange={(event) => patchSheet({ name: event.target.value })}
+            />
+          </label>
+          <label title={`${Math.round(page.width)} × ${Math.round(page.height)} mm`}>
+            Paper
+            <select
+              value={sheet.paper}
+              aria-label="Paper size"
+              onChange={(event) => patchSheet({ paper: event.target.value as PaperSize })}
+            >
+              {PAPER_SIZES.map((size) => (
+                <option key={size.value} value={size.value}>
+                  {size.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label title="Which way round the paper goes.">
+            Orientation
+            <select
+              value={sheet.orientation}
+              aria-label="Paper orientation"
+              onChange={(event) => patchSheet({ orientation: event.target.value as PaperOrientation })}
+            >
+              <option value="landscape">Landscape</option>
+              <option value="portrait">Portrait</option>
+            </select>
+          </label>
+          <label title="How far the printable area is inset from the paper's edge, in millimetres.">
+            Margin (mm)
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={sheet.marginMm}
+              aria-label="Margin in millimetres"
+              onChange={(event) => patchSheet({ marginMm: Math.max(0, Number(event.target.value)) })}
+            />
+          </label>
+          <p className="panel-note">
+            {Math.round(page.width)} × {Math.round(page.height)} mm of paper
+          </p>
+        </section>
+      )
+    }
     return (
       <section className="panel">
         <h3>Properties</h3>
