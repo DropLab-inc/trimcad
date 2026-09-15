@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { matchCommands, COMMANDS, type CommandDef } from '../core/commandRegistry'
 import { currentPrompt, useCadStore } from '../core/store'
-import { formatPrompt } from '../core/prompts'
+import { formatPrompt, matchKeyword } from '../core/prompts'
 import { COMMAND_INPUT_ID, focusCommandInput } from './commandFocus'
 import { Icon } from './Icon'
 import { useFileActions } from './useFileActions'
@@ -78,8 +78,25 @@ export function CommandLine() {
 
   const suggestions = useMemo(() => matchCommands(value).slice(0, 8), [value])
 
-  /** A prompt waiting for text or a number is asking a question, so the line answers it literally. */
-  const answering = prompt?.kind === 'text' || prompt?.kind === 'number'
+  /**
+   * The option of the running prompt that what was typed names, if any.
+   *
+   * A prompt's bracketed options ARE commands of a sort, and the store reads one before it reads a
+   * command name — `T` cuts edges during TRIM at the same time as it starts TEXT at an idle prompt.
+   * So the line has to agree rather than "helpfully" completing the text: without this, `T` was
+   * filled in as TEXT, `S` as SAVE and `R` as RECTANG, and most of the sub-menu in the command line
+   * silently ran a different command instead of picking the option.
+   */
+  const option = useMemo(
+    () => (prompt ? matchKeyword(value, prompt.keywords) : null),
+    [prompt, value],
+  )
+
+  /**
+   * A prompt waiting for text or a number is asking a question, so the line answers it literally —
+   * and so does one of its own options, which is an answer too.
+   */
+  const answering = prompt?.kind === 'text' || prompt?.kind === 'number' || option !== null
 
   // Keep the newest scrollback line in view as commands run.
   useEffect(() => {
@@ -308,7 +325,7 @@ export function CommandLine() {
               spellCheck={false}
             />
           </form>
-          {suggestions.length > 0 && (
+          {suggestions.length > 0 && option === null && (
             <ul className="command-suggestions">
               {suggestions.map((command, index) => (
                 <li key={command.name}>

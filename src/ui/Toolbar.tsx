@@ -597,13 +597,19 @@ export function Toolbar() {
               </label>
             </>
           )}
+          {/*
+            * One control, three states: not narrowing at all, picking the edges, and a set picked.
+            * While it is picking, `edgeIds` is still null, so testing that alone made the second
+            * click start picking again and left no way back to "All objects" except Escape — a
+            * sub-menu option that could not be turned off.
+            */}
           {editingEdges && (
             <label className="ribbon-field" title="Which objects act as cutting or boundary edges">
               Edges
               <button
                 type="button"
                 className="ribbon-btn"
-                onClick={() => (edgeIds === null ? beginEdgeSelection() : useAllEdges())}
+                onClick={() => (pickingEdges || edgeIds !== null ? useAllEdges() : beginEdgeSelection())}
               >
                 {pickingEdges ? 'Picking…' : edgeIds === null ? 'All objects' : `${edgeIds.length} chosen`}
               </button>

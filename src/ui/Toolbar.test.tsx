@@ -180,6 +180,50 @@ describe('rectangle construction dropdown', () => {
   })
 })
 
+describe('the Edges control during TRIM and EXTEND', () => {
+  const edgesButton = () =>
+    screen.getByText(/All objects|Picking…|chosen/).closest('button') as HTMLButtonElement
+
+  beforeEach(() => {
+    useCadStore.getState().setTool('select')
+    useCadStore.setState({ edgeIds: null, pickingEdges: false })
+  })
+
+  it('is not offered by commands that have no edges to pick', () => {
+    render(<Toolbar />)
+    expect(screen.queryByText('All objects')).toBeNull()
+  })
+
+  it('narrows to chosen edges and back to every object in one click each', () => {
+    useCadStore.getState().setTool('trim')
+    render(<Toolbar />)
+    expect(edgesButton().textContent).toBe('All objects')
+
+    fireEvent.click(edgesButton())
+    expect(useCadStore.getState().pickingEdges).toBe(true)
+    expect(edgesButton().textContent).toBe('Picking…')
+
+    // Clicking again is how the option is turned off: while picking, no edges are chosen yet, so
+    // testing the chosen set alone left this button re-entering the same state and no way back.
+    fireEvent.click(edgesButton())
+    expect(useCadStore.getState().pickingEdges).toBe(false)
+    expect(useCadStore.getState().edgeIds).toBeNull()
+    expect(edgesButton().textContent).toBe('All objects')
+  })
+
+  it('drops a chosen set back to every object', () => {
+    useCadStore.getState().setTool('extend')
+    useCadStore.setState({ edgeIds: ['a', 'b'] })
+    render(<Toolbar />)
+    expect(edgesButton().textContent).toBe('2 chosen')
+
+    fireEvent.click(edgesButton())
+
+    expect(useCadStore.getState().edgeIds).toBeNull()
+    expect(edgesButton().textContent).toBe('All objects')
+  })
+})
+
 describe('ribbon fields belong to the command that uses them', () => {
   const sidesBox = () => screen.queryByTitle('Number of polygon sides')
 
