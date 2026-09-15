@@ -59,6 +59,21 @@ describe('editing on a sheet stays on the sheet', () => {
     expect(state().doc.entities).toHaveLength(0)
   })
 
+  it('copies a sheet object and pastes it back onto the sheet', () => {
+    state().addLayout()
+    const line = drawOnSheet()
+    state().setSelection([line.id])
+
+    state().copySelection()
+    expect(state().clipboard).toHaveLength(1)
+
+    state().pasteClipboard()
+
+    // Copy, cut and paste all addressed the model before, so on a sheet the clipboard came back empty.
+    expect(sheetEntities()).toHaveLength(2)
+    expect(state().doc.entities).toHaveLength(0)
+  })
+
   it('still edits the model when the model is what is open', () => {
     const line = createLine(state().doc.layers[0].id, { x: 0, y: 0 }, { x: 10, y: 0 })
     state().addEntity(line)

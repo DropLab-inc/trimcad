@@ -1323,17 +1323,17 @@ export const useCadStore = create<CadState>((set, get) => ({
   },
   stretchGrip: (entityId, grip, point) => {
     const state = get()
-    const target = state.doc.entities.find((entity) => entity.id === entityId)
+    // Grips are shown for what is on screen, so the object being reshaped is in the open space.
+    const target = spaceEntitiesOf(state).find((entity) => entity.id === entityId)
     if (!target) return
     // A locked layer shows its grips but will not budge, which is what AutoCAD does.
     if (!isLayerEditable(layerOf(state.doc, target))) {
       state.setStatusMessage('That object is on a locked layer.')
       return
     }
-    state.updateDocument((doc) => ({
-      ...doc,
-      entities: doc.entities.map((entity) => (entity.id === entityId ? dragGrip(entity, grip, point) : entity)),
-    }))
+    state.updateSpaceEntities((entities) =>
+      entities.map((entity) => (entity.id === entityId ? dragGrip(entity, grip, point) : entity)),
+    )
     state.setStatusMessage(`Stretched ${target.type}`)
   },
   moveSelectionBy: (delta) => {
@@ -1366,7 +1366,7 @@ export const useCadStore = create<CadState>((set, get) => ({
   },
   copySelection: () => {
     const state = get()
-    const chosen = state.doc.entities.filter((entity) => state.selectedIds.includes(entity.id))
+    const chosen = spaceEntitiesOf(state).filter((entity) => state.selectedIds.includes(entity.id))
     if (chosen.length === 0) {
       state.setStatusMessage('Select objects before copying.')
       return
@@ -1375,7 +1375,7 @@ export const useCadStore = create<CadState>((set, get) => ({
   },
   cutSelection: () => {
     const state = get()
-    const chosen = state.doc.entities.filter((entity) => state.selectedIds.includes(entity.id))
+    const chosen = spaceEntitiesOf(state).filter((entity) => state.selectedIds.includes(entity.id))
     if (chosen.length === 0) {
       state.setStatusMessage('Select objects before cutting.')
       return
@@ -2236,6 +2236,18 @@ const runOverkill = (state: CadStoreState) => {
 }
 
 /**
+ * The objects of the space that is open — the model, or the sheet being worked on.
+ *
+ * Commands that started life before paper space existed address "the entities" directly. Any of them
+ * that can run while a sheet is open has to ask this instead, or it edits a drawing the user cannot
+ * see while reporting that it worked.
+ */
+const spaceEntitiesOf = (state: Pick<CadStoreState, 'doc' | 'activeLayoutId'>): CadEntity[] =>
+  state.activeLayoutId
+    ? state.doc.layouts.find((layout) => layout.id === state.activeLayoutId)?.entities ?? []
+    : state.doc.entities
+
+/**
  * Every block in the drawing, and how many times it is placed.
  *
  * This is what "list blocks" means, and it had no answer: the only route to a block's name was a `?`
@@ -2805,7 +2817,7 @@ const applyModifyTool = (state: CadStoreState, point: Vec2, swapped: boolean): b
       useCadStore.setState({ modifyTargetId: target.id, statusMessage: 'Specify point on side to offset:' })
       return true
     }
-    const target = state.doc.entities.find((entity) => entity.id === state.modifyTargetId)
+    const target = spaceEntitiesOf(state).find((entity) => entity.id === state.modifyTargetId)
     // Through mode ignores the set distance and puts the copy where the crosshair is instead.
     const distance = state.offsetThrough && target ? distanceToEntity(point, target) : state.offsetDistance
     const offset = target && distance > 0 ? offsetEntity(target, distance, point) : null
@@ -2818,10 +2830,8 @@ const applyModifyTool = (state: CadStoreState, point: Vec2, swapped: boolean): b
     const placed = state.offsetToCurrentLayer ? { ...offset, layerId: state.activeLayerId } : offset
     state.addEntity(placed)
     if (state.offsetErase && target) {
-      state.updateDocument((doc) => ({
-        ...doc,
-        entities: doc.entities.filter((entity) => entity.id !== target.id),
-      }))
+      // Erasing the source of an offset erases it in the space it was picked in.
+      state.updateSpaceEntities((entities) => entities.filter((entity) => entity.id !== target.id))
     }
 
     useCadStore.setState({
@@ -2975,10 +2985,10 @@ export const finishArray = (state: CadStoreState): boolean => {
     state,
     (make, describe) => {
       let added = 0
-      state.updateDocument((doc) => {
-        const copies = make(doc.entities.filter((entity) => selected.has(entity.id)))
+      state.updateSpaceEntities((entities) => {
+        const copies = make(entities.filter((entity) => selected.has(entity.id)))
         added = copies.length
-        return { ...doc, entities: [...doc.entities, ...copies] }
+        return [...entities, ...copies]
       })
       state.clearDraft()
       state.endCommand()
