@@ -121,13 +121,18 @@ describe('two-finger pinch', () => {
     expect(useCadStore.getState().camera.zoom).toBeCloseTo(4, 5)
   })
 
-  it('forgets the gesture once the fingers lift', () => {
+  it('does not keep a finished gesture alive', () => {
     const svg = setup()
     fireTouch(svg, 'touchstart', spread(200, 40))
     fireTouch(svg, 'touchend', [])
     const settled = useCadStore.getState().camera
 
-    // A stray move with no fingers down must not keep dragging the view.
+    // Fingers lifted mid-gesture: a move arriving with nothing down drags nothing.
+    fireTouch(svg, 'touchmove', [])
+    expect(useCadStore.getState().camera).toEqual(settled)
+
+    // And a move that arrives with fingers but no touchstart must re-anchor from the current
+    // camera instead of resuming the finished gesture, so it cannot jump the view either.
     fireTouch(svg, 'touchmove', spread(200, 300))
     expect(useCadStore.getState().camera).toEqual(settled)
   })
