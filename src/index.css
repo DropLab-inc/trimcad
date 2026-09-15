@@ -693,6 +693,46 @@ button:disabled .icon .accent {
   color: var(--danger);
 }
 
+/* The colour well and the ByLayer hand-back beside it, in the ribbon and in the panel. */
+.ribbon-field input[type='color'],
+.property-color input[type='color'] {
+  width: 26px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ribbon-color {
+  gap: 6px;
+}
+
+.property-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.property-color-owner,
+.ribbon-color-owner {
+  font: inherit;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+/* Whichever is in force reads as chosen: an override, or the layer's own colour. */
+.property-color-owner.active,
+.ribbon-color-owner.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .layout-tab-add {
   padding: 5px 12px;
   font-size: 15px;

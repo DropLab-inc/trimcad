@@ -1,4 +1,5 @@
 import { useCadStore } from '../core/store'
+import { DEFAULT_LAYER_COLOR } from '../core/layers'
 import { shortestAlias, resolveCommand } from '../core/commandRegistry'
 import { Icon, type IconName } from './Icon'
 import { HATCH_PATTERN_LABELS, HATCH_PATTERNS } from '../core/hatch'
@@ -278,6 +279,8 @@ const tooltip = (item: { label: string; command: string; hint?: string }): strin
 export function Toolbar() {
   const activeTool = useCadStore((state) => state.activeTool)
   const setTool = useCadStore((state) => state.setTool)
+  const currentColor = useCadStore((state) => state.currentColor)
+  const setCurrentColor = useCadStore((state) => state.setCurrentColor)
   const executeCommand = useCadStore((state) => state.executeCommand)
   const polygonSides = useCadStore((state) => state.polygonSides)
   const setPolygonSides = useCadStore((state) => state.setPolygonSides)
@@ -353,6 +356,37 @@ export function Toolbar() {
                 <span>{item.label}</span>
               </button>
             ))}
+            {/*
+             * The colour new objects are drawn in. ByLayer is the default and stays a real option:
+             * colour is a property of an object, not only of a layer, so a red detail does not need a
+             * red layer to live on.
+             */}
+            {group.title === 'Draw' && (
+              <label
+                className="ribbon-field ribbon-color"
+                title={
+                  currentColor
+                    ? `New objects are drawn in ${currentColor}. ByLayer hands them back to their layer's colour.`
+                    : "New objects take the colour of the layer they land on (ByLayer). Pick a colour to draw in one of your own without making a layer for every colour."
+                }
+              >
+                <input
+                  type="color"
+                  aria-label="Colour for new objects"
+                  value={currentColor ?? DEFAULT_LAYER_COLOR}
+                  onChange={(event) => setCurrentColor(event.target.value)}
+                />
+                Draw in
+                <button
+                  type="button"
+                  className={`ribbon-color-owner ${currentColor ? '' : 'active'}`}
+                  aria-pressed={!currentColor}
+                  onClick={() => setCurrentColor(null)}
+                >
+                  ByLayer
+                </button>
+              </label>
+            )}
             {activeTool === 'circle' && (
               <label className="ribbon-field" title={`How the circle is pinned down\n${chosen(circleModes, circleMode).hint}`}>
                 <Icon name={chosen(circleModes, circleMode).icon} />

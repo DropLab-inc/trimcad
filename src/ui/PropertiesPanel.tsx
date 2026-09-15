@@ -10,7 +10,8 @@ const round1 = (value: number) => Math.round(value * 10) / 10
 export function PropertiesPanel() {
   const doc = useCadStore((state) => state.doc)
   const selectedIds = useCadStore((state) => state.selectedIds)
-  const updateDocument = useCadStore((state) => state.updateDocument)
+  const setSelectionColor = useCadStore((state) => state.setSelectionColor)
+  const updateSpaceEntities = useCadStore((state) => state.updateSpaceEntities)
   const moveSelectionToLayer = useCadStore((state) => state.moveSelectionToLayer)
   const resizeDimensions = useCadStore((state) => state.resizeDimensions)
   const updateHatches = useCadStore((state) => state.updateHatches)
@@ -155,20 +156,29 @@ export function PropertiesPanel() {
           ))}
         </select>
       </label>
-      <label>
+      <label title="The colour this object is drawn in. ByLayer takes the layer's colour, so recolouring the layer moves the object with it.">
         Color
-        <input
-          type="color"
-          value={first.color ?? DEFAULT_LAYER_COLOR}
-          onChange={(event) => {
-            updateDocument((draft) => ({
-              ...draft,
-              entities: draft.entities.map((entity) =>
-                selectedIds.includes(entity.id) ? { ...entity, color: event.target.value } : entity,
-              ),
-            }))
-          }}
-        />
+        <span className="property-color">
+          <input
+            type="color"
+            aria-label="Colour of the selection"
+            value={
+              first.color ??
+              doc.layers.find((layer) => layer.id === first.layerId)?.color ??
+              DEFAULT_LAYER_COLOR
+            }
+            onChange={(event) => setSelectionColor(event.target.value)}
+          />
+          <button
+            type="button"
+            className={`property-color-owner ${first.color === undefined ? 'active' : ''}`}
+            aria-pressed={first.color === undefined}
+            title="Take the colour of the layer this object is on"
+            onClick={() => setSelectionColor(null)}
+          >
+            ByLayer
+          </button>
+        </span>
       </label>
       <label>
         Lineweight
@@ -180,12 +190,12 @@ export function PropertiesPanel() {
           value={first.lineweight ?? 1}
           onChange={(event) => {
             const lineweight = Number(event.target.value)
-            updateDocument((draft) => ({
-              ...draft,
-              entities: draft.entities.map((entity) =>
+            // Written through the space that is open, so a sheet's objects are not left out.
+            updateSpaceEntities((entities) =>
+              entities.map((entity) =>
                 selectedIds.includes(entity.id) ? { ...entity, lineweight } : entity,
               ),
-            }))
+            )
           }}
         />
       </label>

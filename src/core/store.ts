@@ -379,6 +379,17 @@ type CadState = {
   zoomViewport: (layoutId: string, viewportId: string, anchorPaper: Vec2, factor: number) => void
   /** Slides the drawing inside a viewport by a distance measured on the sheet. */
   panViewport: (layoutId: string, viewportId: string, deltaPaper: Vec2) => void
+
+  /**
+   * The colour new objects take, or null for ByLayer — the default, and the reason a drawing can be
+   * made in colours without inventing a layer for each one.
+   */
+  currentColor: string | null
+  setCurrentColor: (color: string | null) => void
+  /** Recolours the selection, or hands it back to its layer's colour when given null. */
+  setSelectionColor: (color: string | null) => void
+  /** Applies a change to the objects of whichever space is open — the model, or the sheet. */
+  updateSpaceEntities: (updater: (entities: CadEntity[]) => CadEntity[]) => void
   setCommandInput: (input: string) => void
   setStatusMessage: (message: string) => void
   toggleOsnap: () => void
@@ -482,6 +493,7 @@ export const useCadStore = create<CadState>((set, get) => ({
   activeLayoutId: null,
   activeViewportId: null,
   enteredViewportId: null,
+  currentColor: null,
   draftPoints: [],
   typed: EMPTY_TYPED,
   snapModes: defaultSnapModes,
@@ -1000,6 +1012,14 @@ export const useCadStore = create<CadState>((set, get) => ({
   },
   addEntity: (entity) => {
     /*
+     * A new object takes the colour being drawn in, unless it already carries one of its own. ByLayer
+     * stays the default, so this only bites when a colour has deliberately been chosen — which is
+     * what keeps a drawing from being organised one layer per colour.
+     */
+    const colour = entity.color ?? get().currentColor
+    const drawn = colour ? { ...entity, color: colour } : entity
+
+    /*
      * A sheet carries its own geometry — a border, a title block, notes — measured in paper
      * millimetres. What is drawn while a sheet is open therefore lands on the sheet and not in the
      * model: the two spaces are separate, and a border drawn at 1:1 on the paper must not turn up
@@ -1010,14 +1030,14 @@ export const useCadStore = create<CadState>((set, get) => ({
       get().updateDocument((doc) => ({
         ...doc,
         layouts: doc.layouts.map((layout) =>
-          layout.id === layoutId ? { ...layout, entities: [...layout.entities, entity] } : layout,
+          layout.id === layoutId ? { ...layout, entities: [...layout.entities, drawn] } : layout,
         ),
       }))
       autosaveDoc(get().doc)
       return
     }
 
-    controller.addEntity(entity)
+    controller.addEntity(drawn)
     const doc = controller.getDocument()
     autosaveDoc(doc)
     set({ doc, selectedIds: controller.getSelection() })
@@ -1172,6 +1192,50 @@ export const useCadStore = create<CadState>((set, get) => ({
     }))
     state.setStatusMessage(`Deleted layer ${layer?.name}`)
   },
+  setCurrentColor: (color) =>
+    set({ currentColor: color, statusMessage: color ? `New objects: ${color}` : 'New objects: ByLayer' }),
+
+  /*
+   * Colour belongs to an object as much as to its layer: an object set to ByLayer wears whatever its
+   * layer wears, while an object given a colour keeps it wherever it is moved. Handing one back to
+   * its layer is a real choice, not an absence — without it a recoloured object could never return,
+   * which is what happens when the only control is a colour well that always shows a colour.
+   */
+  setSelectionColor: (color) => {
+    const state = get()
+    const wanted = new Set(state.selectedIds)
+    if (wanted.size === 0) return
+
+    state.updateSpaceEntities((entities) =>
+      entities.map((entity) => {
+        if (!wanted.has(entity.id)) return entity
+        if (color) return { ...entity, color }
+        // Setting it back to ByLayer means dropping the override, not painting the layer's colour on.
+        const { color: _dropped, ...rest } = entity
+        return rest as CadEntity
+      }),
+    )
+    state.setStatusMessage(
+      color
+        ? `Colour set on ${describeCount(wanted.size)}`
+        : `${describeCount(wanted.size)} back to their layer's colour`,
+    )
+  },
+
+  updateSpaceEntities: (updater) => {
+    const layoutId = get().activeLayoutId
+    if (layoutId) {
+      get().updateDocument((doc) => ({
+        ...doc,
+        layouts: doc.layouts.map((layout) =>
+          layout.id === layoutId ? { ...layout, entities: updater(layout.entities) } : layout,
+        ),
+      }))
+      return
+    }
+    get().updateDocument((doc) => ({ ...doc, entities: updater(doc.entities) }))
+  },
+
   moveSelectionToLayer: (layerId) => {
     const state = get()
     const layer = state.doc.layers.find((candidate) => candidate.id === layerId)
@@ -1184,14 +1248,21 @@ export const useCadStore = create<CadState>((set, get) => ({
       return false
     }
     const wanted = new Set(state.selectedIds)
-    const already = state.doc.entities.filter((entity) => wanted.has(entity.id) && entity.layerId === layerId).length
+    // Objects live in whichever space is open, so a layer change has to happen in that space too.
+    const sheet = state.activeLayoutId
+      ? state.doc.layouts.find((layout) => layout.id === state.activeLayoutId)
+      : undefined
+    const space = sheet ? sheet.entities : state.doc.entities
+    const already = space.filter((entity) => wanted.has(entity.id) && entity.layerId === layerId).length
     const moving = state.selectedIds.length - already
-    state.updateDocument((doc) => ({
-      ...doc,
-      entities: doc.entities.map((entity) => (wanted.has(entity.id) ? { ...entity, layerId } : entity)),
-    }))
+    state.updateSpaceEntities((entities) =>
+      entities.map((entity) => (wanted.has(entity.id) ? { ...entity, layerId } : entity)),
+    )
     // Objects that landed on a locked or off layer can no longer stay selected.
-    const stillEditable = editableEntities(get().doc).map((entity) => entity.id)
+    const after = get().activeLayoutId
+      ? get().doc.layouts.find((layout) => layout.id === get().activeLayoutId)?.entities ?? []
+      : get().doc.entities
+    const stillEditable = editableEntities({ ...get().doc, entities: after }).map((entity) => entity.id)
     const kept = get().selectedIds.filter((selectedId) => stillEditable.includes(selectedId))
     controller.select(kept)
     set({
