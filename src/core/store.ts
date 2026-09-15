@@ -62,7 +62,7 @@ import {
   offsetEntity,
   trimResult,
 } from './modify'
-import { COMMANDS, resolveCommand, type CommandDef } from './commandRegistry'
+import { COMMANDS, resolveCommand, suggestCommand, type CommandDef } from './commandRegistry'
 import {
   formatPrompt,
   matchKeyword,
@@ -390,6 +390,13 @@ type CadState = {
   setSelectionColor: (color: string | null) => void
   /** Applies a change to the objects of whichever space is open — the model, or the sheet. */
   updateSpaceEntities: (updater: (entities: CadEntity[]) => CadEntity[]) => void
+
+  /**
+   * Arms INSERT with a block already chosen, which is what clicking one in the Blocks panel does.
+   * It skips the name prompt entirely, so a block can be placed without remembering what it is
+   * called — the thing the command line alone cannot offer.
+   */
+  insertBlockFromPalette: (blockId: string) => void
   setCommandInput: (input: string) => void
   setStatusMessage: (message: string) => void
   toggleOsnap: () => void
@@ -1007,8 +1014,18 @@ export const useCadStore = create<CadState>((set, get) => ({
       return
     }
 
-    state.log('error', `Unknown command "${cmd}".`)
-    set({ statusMessage: `Unknown command: ${cmd}` })
+    /*
+     * AutoCAD offers a correction rather than only reporting a dead end. Worth having here because
+     * "list blocks" is not a command there either — the nearest real one is the palette that lists
+     * them, and being told so beats being left at a dead end twice.
+     */
+    const suggestion = suggestCommand(cmd)
+    state.log('error', `Unknown command "${cmd}".${suggestion ? ` Did you mean ${suggestion}?` : ''}`)
+    set({
+      statusMessage: suggestion
+        ? `Unknown command: ${cmd} — did you mean ${suggestion}?`
+        : `Unknown command: ${cmd}`,
+    })
   },
   addEntity: (entity) => {
     /*
@@ -1234,6 +1251,23 @@ export const useCadStore = create<CadState>((set, get) => ({
       return
     }
     get().updateDocument((doc) => ({ ...doc, entities: updater(doc.entities) }))
+  },
+
+  insertBlockFromPalette: (blockId) => {
+    const state = get()
+    const block = state.doc.blocks.find((candidate) => candidate.id === blockId)
+    if (!block) return
+    // The name step is already answered, so INSERT goes straight to asking where it goes.
+    useCadStore.setState({
+      activeTool: 'insert',
+      insertBlockId: block.id,
+      insertPending: null,
+      blockNamePending: false,
+      draftPoints: [],
+    })
+    const next = formatPrompt(currentPrompt(useCadStore.getState()))
+    state.log('prompt', `Inserting "${block.name}". ${next}`)
+    state.setStatusMessage(`Inserting ${block.name}`)
   },
 
   moveSelectionToLayer: (layerId) => {
@@ -2203,6 +2237,31 @@ const runOverkill = (state: CadStoreState) => {
   state.setStatusMessage(message)
 }
 
+/**
+ * Every block in the drawing, and how many times it is placed.
+ *
+ * This is what "list blocks" means, and it had no answer: the only route to a block's name was a `?`
+ * keyword hidden inside INSERT's name prompt, so a block was invisible unless you already remembered
+ * what it was called. The command line, the palette and the `?` keyword all read from here, so they
+ * cannot disagree about what exists.
+ */
+const listBlocks = (state: CadStoreState, style: 'names' | 'placements'): string => {
+  const { blocks } = state.doc
+  if (blocks.length === 0) {
+    return 'No blocks defined yet. Select objects and use BLOCK to make one.'
+  }
+
+  const placements = (blockId: string) =>
+    [...state.doc.entities, ...state.doc.layouts.flatMap((layout) => layout.entities)].filter(
+      (entity) => entity.type === 'insert' && entity.blockId === blockId,
+    ).length
+
+  if (style === 'names') return `Blocks: ${blocks.map((block) => block.name).join(', ')}`
+  return blocks
+    .map((block) => `${block.name} — placed ${placements(block.id)} time${placements(block.id) === 1 ? '' : 's'}`)
+    .join(', ')
+}
+
 /* ---------------------------------------------------- blocks & inserts */
 
 /** Resolves a free-text answer at a `text` prompt: BLOCK and INSERT's name step. */
@@ -2459,6 +2518,22 @@ const runCommandDef = (state: CadStoreState, command: CommandDef, argument = '')
     case 'EXPLODE':
       runExplode(state)
       return
+    case 'BLOCKPALETTE':
+      /*
+       * AutoCAD's Blocks palette: what exists, and a way to place one without knowing its name. The
+       * panel is always on screen, so this command answers the question and says where to look.
+       */
+      state.log('result', listBlocks(state, 'placements'))
+      state.setStatusMessage(
+        state.doc.blocks.length > 0
+          ? `${state.doc.blocks.length} block(s) — the Blocks panel inserts them`
+          : 'No blocks defined yet',
+      )
+      return
+    case 'BCOUNT':
+      state.log('result', listBlocks(state, 'placements'))
+      state.setStatusMessage('Block counts')
+      return
     case 'OVERKILL':
       runOverkill(state)
       return
@@ -2665,8 +2740,8 @@ const runKeyword = (state: CadStoreState, keyword: Keyword) => {
       )
       return
     case 'List blocks': {
-      const names = state.doc.blocks.map((block) => block.name)
-      state.log('result', names.length > 0 ? `Blocks: ${names.join(', ')}` : 'No blocks defined yet.')
+      // Names only, as AutoCAD's -INSERT ? answers, so the command line stays a command line.
+      state.log('result', listBlocks(state, 'names'))
       state.log('prompt', formatPrompt(currentPrompt(state)))
       return
     }

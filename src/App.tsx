@@ -10,6 +10,7 @@ import { Icon } from './ui/Icon'
 import { PreferencesMenu } from './ui/PreferencesMenu'
 import { PrintDialog } from './ui/PrintDialog'
 import { LayerPanel } from './ui/LayerPanel'
+import { BlocksPanel } from './ui/BlocksPanel'
 import { LayoutTabs } from './ui/LayoutTabs'
 import { PropertiesPanel } from './ui/PropertiesPanel'
 import { QuickAccess } from './ui/QuickAccess'
@@ -112,6 +113,7 @@ function App() {
         )}
         <aside className={`rightbar ${panelsOpen ? 'open' : ''}`} id="drawing-panels">
           <LayerPanel />
+          <BlocksPanel />
           <SnapPanel />
           <PropertiesPanel />
         </aside>

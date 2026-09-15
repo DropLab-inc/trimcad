@@ -733,6 +733,65 @@ button:disabled .icon .accent {
   color: var(--accent);
 }
 
+/* The blocks palette: what exists, how often it is placed, and a click to place another. */
+.block-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.block-insert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 6px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.block-insert:hover {
+  border-color: var(--accent);
+}
+
+.block-preview {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  background: transparent;
+}
+
+.block-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* How many are placed, so the palette doubles as BCOUNT. */
+.block-count {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .layout-tab-add {
   padding: 5px 12px;
   font-size: 15px;
