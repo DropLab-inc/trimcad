@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import { angularSweep, makeDimensionLabel, polar } from '../core/geometry'
 import { hatchBaseAngle, hatchTileSize, HATCH_PATTERNS as PATTERN_LIST } from '../core/hatch'
 import { add, mul, normalize, sub, type Vec2 } from '../core/math/vec2'
-import type { CadEntity, DimensionEntity, DimStyle, HatchEntity, HatchPattern } from '../core/types'
+import type { BlockDefinition, CadEntity, DimensionEntity, DimStyle, HatchEntity, HatchPattern } from '../core/types'
 import type { CanvasPalette } from './theme'
 
 export const HATCH_PATTERNS: HatchPattern[] = PATTERN_LIST
@@ -228,6 +228,36 @@ export const renderDimension = (
   )
 }
 
+/** How deep a block may nest before rendering gives up; a definition cycle cannot loop forever. */
+const MAX_BLOCK_NESTING = 8
+
+/** The SVG transform an insert applies: place, turn, size, then shift off the block's base point. */
+const insertTransform = (position: Vec2, rotation: number, scale: number, basePoint: Vec2): string =>
+  `translate(${position.x}, ${position.y}) rotate(${(rotation * 180) / Math.PI}) scale(${scale}) translate(${-basePoint.x}, ${-basePoint.y})`
+
+/** A block's members, recursing through nested inserts with a depth guard against cycles. */
+const renderBlockMembers = (
+  block: BlockDefinition,
+  blocks: BlockDefinition[],
+  depth: number,
+  options: Parameters<typeof renderEntity>[1],
+): (ReactElement | null)[] => {
+  if (depth > MAX_BLOCK_NESTING) return []
+  return block.entities.map((member) => {
+    if (member.type === 'insert') {
+      const nested = blocks.find((candidate) => candidate.id === member.blockId)
+      if (!nested) return null
+      const base = nested.basePoint ?? { x: 0, y: 0 }
+      return (
+        <g key={member.id} transform={insertTransform(member.position, member.rotation, member.scale, base)}>
+          {renderBlockMembers(nested, blocks, depth + 1, options)}
+        </g>
+      )
+    }
+    return renderEntity(member, options)
+  })
+}
+
 export const renderEntity = (
   entity: CadEntity,
   options: {
@@ -237,9 +267,11 @@ export const renderEntity = (
     dimStyle: DimStyle
     width?: number
     palette: CanvasPalette
+    /** Definitions to expand an insert against; absent means inserts draw nothing. */
+    blocks?: BlockDefinition[]
   },
 ): ReactElement | null => {
-  const { selected, color, dash, dimStyle, width, palette } = options
+  const { selected, color, dash, dimStyle, width, palette, blocks = [] } = options
   const stroke = selected ? palette.selection : color
   const common = {
     stroke,
@@ -286,16 +318,16 @@ export const renderEntity = (
       )
     case 'dimension':
       return renderDimension(entity, dimStyle, selected ? palette.selection : palette.dimension, entity.id)
-    case 'insert':
+    case 'insert': {
+      const block = blocks.find((candidate) => candidate.id === entity.blockId)
+      if (!block) return null
+      const base = block.basePoint ?? { x: 0, y: 0 }
       return (
-        <g
-          key={entity.id}
-          transform={`translate(${entity.position.x}, ${entity.position.y}) rotate(${(entity.rotation * 180) / Math.PI}) scale(${entity.scale})`}
-        >
-          <rect x={-5} y={-5} width={10} height={10} {...common} />
-          <line x1={-5} y1={-5} x2={5} y2={5} {...common} />
+        <g key={entity.id} transform={insertTransform(entity.position, entity.rotation, entity.scale, base)}>
+          {renderBlockMembers(block, blocks, 0, options)}
         </g>
       )
+    }
     default:
       return null
   }

@@ -15,7 +15,7 @@ export type RectPending = 'length' | 'width' | 'rotation'
  */
 
 /** What kind of answer the running command is waiting for. */
-export type PromptKind = 'point' | 'number' | 'entity' | 'selection'
+export type PromptKind = 'point' | 'number' | 'entity' | 'selection' | 'text'
 
 export type Keyword = {
   /** The letters the user types, upper case. */
@@ -86,11 +86,21 @@ export type PromptContext = {
   edgeCount: number | null
   /** Shift is held, which swaps TRIM and EXTEND. */
   swapped: boolean
+  /** INSERT is waiting for a block name; once set it holds the definition it will place. */
+  insertBlockId: string | null
+  /** INSERT is waiting for a typed scale or rotation, or null while it wants the base point. */
+  insertPending: 'scale' | 'rotation' | null
+  /** BLOCK is waiting for the block's name. */
+  blockNamePending: boolean
 }
 
 const point = (text: string, keywords: Keyword[] = []): Prompt => ({ text, kind: 'point', keywords })
 const entity = (text: string, keywords: Keyword[] = []): Prompt => ({ text, kind: 'entity', keywords })
 const selection = (text: string, keywords: Keyword[] = []): Prompt => ({ text, kind: 'selection', keywords })
+const textPrompt = (text: string, keywords: Keyword[] = []): Prompt => ({ text, kind: 'text', keywords })
+
+/** The option shared by BLOCK and INSERT that lists every defined block into the command line. */
+const LIST_BLOCKS: Keyword[] = [{ key: '?', label: 'List blocks' }]
 
 /** What ARRAY asks for once one of its counts has been chosen for editing. */
 const ARRAY_OPTION_PROMPTS: Record<ArrayOption, string> = {
@@ -335,7 +345,17 @@ const promptsForTool = (ctx: PromptContext): Prompt[] => {
     case 'boundary':
       return [point('Pick an internal point to trace')]
     case 'insert':
+      if (ctx.insertBlockId === null) return [textPrompt('Enter block name', LIST_BLOCKS)]
+      if (ctx.insertPending === 'scale') {
+        return [{ ...point('Specify scale factor'), kind: 'number', defaultValue: '1' }]
+      }
+      if (ctx.insertPending === 'rotation') {
+        return [{ ...point('Specify rotation angle'), kind: 'number', defaultValue: '0' }]
+      }
       return [point('Specify insertion point')]
+    case 'block':
+      if (ctx.blockNamePending) return [textPrompt('Enter block name', LIST_BLOCKS)]
+      return [point('Specify base point')]
     case 'dimension':
       return DIM_PROMPTS[ctx.dimensionType] ?? DIM_PROMPTS.linear
     case 'offset':

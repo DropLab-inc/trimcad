@@ -50,6 +50,7 @@ export type IconName =
   | 'text'
   | 'hatch'
   | 'insert'
+  | 'block'
   | 'new'
   | 'open'
   | 'save'
@@ -418,6 +419,12 @@ const GLYPHS: Record<IconName, ReactElement> = {
       <rect x={4} y={8} width={12} height={12} strokeDasharray="2 2" />
       <path className="accent" d="M14 10 L21 3 M21 7 L21 3 L17 3" />
       {grip(4, 20)}
+    </g>
+  ),
+  block: (
+    <g>
+      <rect x={4} y={4} width={16} height={16} />
+      <path className="accent" d="M12 2 L12 8 M12 16 L12 22 M2 12 L8 12 M16 12 L22 12" />
     </g>
   ),
   erase: (

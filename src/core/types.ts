@@ -148,6 +148,8 @@ export type BlockDefinition = {
   id: string
   name: string
   entities: CadEntity[]
+  /** Where the block's own origin sits. INSERT places this point. Absent means {0, 0}. */
+  basePoint?: Vec2
 }
 
 export type DrawingDocument = {
@@ -214,6 +216,7 @@ export type ToolMode =
   | 'boundary'
   | 'dimension'
   | 'insert'
+  | 'block'
   | 'offset'
   | 'trim'
   | 'extend'

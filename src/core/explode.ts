@@ -30,10 +30,12 @@ const explodeInsert = (entity: InsertEntity, blocks: BlockDefinition[]): CadEnti
   const block = blocks.find((candidate) => candidate.id === entity.blockId)
   if (!block || block.entities.length === 0) return null
 
-  const origin = { x: 0, y: 0 }
+  const base = block.basePoint ?? { x: 0, y: 0 }
   return block.entities.map((member) => {
-    const sized = scaleEntity({ ...member, id: uid() }, origin, entity.scale)
-    const turned = rotateEntity(sized, origin, entity.rotation)
+    // Shift the base point to the origin, size and turn there, then carry to the insert point.
+    const fromBase = moveEntity({ ...member, id: uid() }, { x: -base.x, y: -base.y })
+    const sized = scaleEntity(fromBase, { x: 0, y: 0 }, entity.scale)
+    const turned = rotateEntity(sized, { x: 0, y: 0 }, entity.rotation)
     const placed = moveEntity(turned, entity.position)
     // A block's contents may be drawn on layer 0 to take on the insert's layer, which is what
     // AutoCAD does, so the pieces land on the layer the insert was sitting on.

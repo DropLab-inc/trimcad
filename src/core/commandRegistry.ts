@@ -31,6 +31,7 @@ export const COMMANDS: CommandDef[] = [
   { name: 'POLYGON', aliases: ['POL'], category: 'Draw', summary: 'Regular polygon', tool: 'polygon' },
   { name: 'SPLINE', aliases: ['SPL'], category: 'Draw', summary: 'Smooth curve through points', tool: 'spline' },
   { name: 'HATCH', aliases: ['H'], category: 'Draw', summary: 'Fill an enclosed area', tool: 'hatch' },
+  { name: 'INSERT', aliases: ['I'], category: 'Draw', summary: 'Insert a block', tool: 'insert' },
 
   // Annotate
   { name: 'TEXT', aliases: ['DT'], category: 'Annotate', summary: 'Single line of text', tool: 'text' },
@@ -59,6 +60,7 @@ export const COMMANDS: CommandDef[] = [
   { name: 'ERASE', aliases: ['E'], category: 'Modify', summary: 'Delete the selection' },
   { name: 'JOIN', aliases: ['J'], category: 'Modify', summary: 'Make one object out of several that meet' },
   { name: 'EXPLODE', aliases: ['X'], category: 'Modify', summary: 'Break objects into their pieces' },
+  { name: 'BLOCK', aliases: ['B'], category: 'Modify', summary: 'Define a block from the selection', tool: 'block' },
   { name: 'OVERKILL', aliases: ['OV'], category: 'Modify', summary: 'Delete duplicate and overlapping geometry' },
   { name: 'BOUNDARY', aliases: ['BO'], category: 'Modify', summary: 'Trace a closed area as a polyline', tool: 'boundary' },
   { name: 'GROUP', aliases: ['G'], category: 'Modify', summary: 'Group the selection' },

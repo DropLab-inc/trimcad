@@ -753,7 +753,7 @@ export function CanvasViewport() {
         const start = screenToWorld(boxStart, camera)
         const end = screenToWorld(boxEnd, camera)
         const mode = selectionModeFor(start, end)
-        const ids = selectEntitiesInRect(pickableEntities, rectFromPoints(start, end), mode)
+        const ids = selectEntitiesInRect(pickableEntities, rectFromPoints(start, end), mode, doc.blocks)
         applySelection(ids, modifier)
         setStatusMessage(`${mode === 'window' ? 'Window' : 'Crossing'} selected ${ids.length} object(s)`)
       }
@@ -1422,6 +1422,7 @@ export function CanvasViewport() {
               width: hovered ? 2.5 : lwDisplay ? lineweightPixels(layer?.lineweight) : undefined,
               dimStyle: doc.dimStyle,
               palette,
+              blocks: doc.blocks,
             })
           })}
 

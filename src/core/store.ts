@@ -79,6 +79,7 @@ import { distance as distanceBetween, sub, type Vec2 } from './math/vec2'
 import type {
   ArcMode,
   ArrayType,
+  BlockDefinition,
   CadEntity,
   CircleMode,
   PolygonFit,
@@ -86,6 +87,7 @@ import type {
   DrawingDocument,
   HatchEntity,
   HatchPattern,
+  InsertEntity,
   Layer,
   RectMode,
   SnapMode,
@@ -228,6 +230,20 @@ type CadState = {
   edgeIds: string[] | null
   /** True while TRIM or EXTEND is collecting its edges instead of editing objects. */
   pickingEdges: boolean
+  /** True while BLOCK is waiting for its name. */
+  blockNamePending: boolean
+  /** The name BLOCK will define or redefine, held between the name step and the base point. */
+  blockName: string
+  /** The objects BLOCK captured when it started, so the base-point pick cannot lose them. */
+  blockEntityIds: string[]
+  /** The block INSERT will place; null while INSERT is waiting for a name. */
+  insertBlockId: string | null
+  /** INSERT's scale factor, accepted at its scale prompt. */
+  insertScale: number
+  /** INSERT's rotation in radians, accepted at its rotation prompt. */
+  insertRotation: number
+  /** Which of INSERT's typed values is waiting: scale or rotation. */
+  insertPending: 'scale' | 'rotation' | null
   /** Scrollback shown above the command input. */
   history: HistoryLine[]
   /** The last command that ran, which Enter or Space at an empty prompt repeats. */
@@ -353,6 +369,13 @@ const perCommandOptions = {
   rectRotation: 0,
   hatchPending: null as 'scale' | 'angle' | null,
   arrayPending: null as ArrayOption | null,
+  blockNamePending: false,
+  blockName: '',
+  blockEntityIds: [] as string[],
+  insertBlockId: null as string | null,
+  insertScale: 1,
+  insertRotation: 0,
+  insertPending: null as 'scale' | 'rotation' | null,
 }
 
 const autosaveDoc = (doc: DrawingDocument) => {
@@ -411,6 +434,13 @@ export const useCadStore = create<CadState>((set, get) => ({
   hatchAngle: 0,
   hatchPending: null,
   offsetDistance: 10,
+  blockNamePending: false,
+  blockName: '',
+  blockEntityIds: [],
+  insertBlockId: null,
+  insertScale: 1,
+  insertRotation: 0,
+  insertPending: null,
   filletRadius: 10,
   chamferDistance: 10,
   cornerPending: false,
@@ -661,6 +691,11 @@ export const useCadStore = create<CadState>((set, get) => ({
 
     // Enter on its own finishes the running command, or repeats the last one at an idle prompt.
     if (!raw) {
+      // INSERT's scale and rotation take Enter for their default, like a transform's angle.
+      if (state.activeTool === 'insert' && state.insertPending) {
+        acceptInsertDefault(state)
+        return
+      }
       if (state.draftPoints.length > 0 || state.pickingEdges) {
         if (state.pickingEdges) state.finishEdgeSelection()
         else state.finishDraft()
@@ -694,6 +729,13 @@ export const useCadStore = create<CadState>((set, get) => ({
     const keyword = matchKeyword(cmd, currentPrompt(state).keywords)
     if (keyword) {
       runKeyword(state, keyword)
+      return
+    }
+
+    // A `text` prompt takes the whole line: BLOCK and INSERT read their name this way, so a
+    // phone's keyboard can type it without a modal dialog.
+    if (currentPrompt(state).kind === 'text') {
+      applyTypedText(state, raw)
       return
     }
 
@@ -986,7 +1028,7 @@ type CadStoreState = ReturnType<typeof useCadStore.getState>
 const pickEntity = (state: CadStoreState, point: Vec2): CadEntity | undefined =>
   [...editableEntities(state.doc)]
     .reverse()
-    .find((entity) => isPointNearEntity(point, entity, getPreferences().pickBoxSize / state.camera.zoom))
+    .find((entity) => isPointNearEntity(point, entity, getPreferences().pickBoxSize / state.camera.zoom, state.doc.blocks))
 
 /* ------------------------------------------------------- trim and extend */
 
@@ -1452,7 +1494,8 @@ const promptTakesItsOwnNumber = (state: CadStoreState): boolean =>
       state.circlePending ||
       state.arcPending ||
       state.rectPending ||
-      state.hatchPending,
+      state.hatchPending ||
+      state.insertPending,
   )
 
 /** The command step the current draft is on: typed values belong to one step and no other. */
@@ -1607,6 +1650,24 @@ const applyTypedNumber = (state: CadStoreState, value: number): boolean => {
       state.endCommand()
       return true
     }
+  }
+
+  // INSERT's scale and rotation are typed numbers, like a transform's factor and angle.
+  if (state.insertPending && state.activeTool === 'insert') {
+    if (state.insertPending === 'scale') {
+      if (value <= 0) {
+        state.log('error', 'The scale factor must be greater than zero.')
+        return true
+      }
+      useCadStore.setState({ insertScale: value, insertPending: 'rotation' })
+      state.log('result', `Scale factor ${value}`)
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return true
+    }
+    useCadStore.setState({ insertRotation: (value * Math.PI) / 180, insertPending: null })
+    state.log('result', `Rotation ${value}°`)
+    finishInsert(useCadStore.getState())
+    return true
   }
 
   if (state.hatchPending && state.activeTool === 'hatch') {
@@ -1777,9 +1838,135 @@ const runOverkill = (state: CadStoreState) => {
   state.setStatusMessage(message)
 }
 
-/** Runs a command from the registry, echoing what it is waiting for next. */
+/* ---------------------------------------------------- blocks & inserts */
+
+/** Resolves a free-text answer at a `text` prompt: BLOCK and INSERT's name step. */
+const applyTypedText = (state: CadStoreState, text: string): void => {
+  const name = text.trim()
+  if (!name) {
+    state.log('error', 'The block name cannot be empty.')
+    return
+  }
+  if (state.activeTool === 'insert') {
+    const block = state.doc.blocks.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase())
+    if (!block) {
+      state.log('error', `No block named "${name}".`)
+      return
+    }
+    useCadStore.setState({ insertBlockId: block.id })
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return
+  }
+  if (state.activeTool === 'block') {
+    useCadStore.setState({ blockName: name, blockNamePending: false })
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return
+  }
+}
+
+/** INSERT's base point; after it the command asks for scale then rotation. */
+const placeInsertBase = (state: CadStoreState, point: Vec2): void => {
+  state.addDraftPoint(point)
+  useCadStore.setState({ insertPending: 'scale' })
+  state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+}
+
+/** Accepts Enter at INSERT's scale or rotation prompt, taking the default. */
+const acceptInsertDefault = (state: CadStoreState): void => {
+  if (state.insertPending === 'scale') {
+    useCadStore.setState({ insertScale: 1, insertPending: 'rotation' })
+    state.log('result', 'Scale factor 1')
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return
+  }
+  useCadStore.setState({ insertRotation: 0, insertPending: null })
+  state.log('result', 'Rotation 0°')
+  finishInsert(useCadStore.getState())
+}
+
+/** Places the insert, then returns to the idle prompt. */
+const finishInsert = (state: CadStoreState): void => {
+  const block = state.doc.blocks.find((candidate) => candidate.id === state.insertBlockId)
+  const base = state.draftPoints[0]
+  if (!block || !base) {
+    state.log('error', 'The block went missing; cancel the command and try again.')
+    state.cancelCommand()
+    return
+  }
+  state.addEntity({
+    id: uid(),
+    type: 'insert',
+    layerId: state.activeLayerId || state.doc.layers[0].id,
+    blockId: block.id,
+    position: base,
+    rotation: state.insertRotation,
+    scale: state.insertScale,
+  })
+  state.endCommand()
+}
+
+/** Defines (or redefines) a block and replaces the source objects with one insert in place. */
+const defineBlock = (state: CadStoreState, basePoint: Vec2): void => {
+  const name = state.blockName.trim()
+  if (!name) {
+    state.log('error', 'The block name cannot be empty.')
+    state.cancelCommand()
+    return
+  }
+  const doc = state.doc
+  const ids = new Set(state.blockEntityIds.length > 0 ? state.blockEntityIds : state.selectedIds)
+  const members = doc.entities.filter((entity) => ids.has(entity.id))
+  if (members.length === 0) {
+    state.log('error', 'Nothing selected to define the block.')
+    state.cancelCommand()
+    return
+  }
+  const existing = doc.blocks.find((block) => block.name.toLowerCase() === name.toLowerCase())
+  const blockId = existing?.id ?? uid()
+  const insertId = uid()
+  const definition: BlockDefinition = { id: blockId, name, basePoint, entities: members }
+  const blocks = existing
+    ? doc.blocks.map((block) => (block.id === blockId ? definition : block))
+    : [...doc.blocks, definition]
+  const remaining = doc.entities.filter((entity) => !ids.has(entity.id))
+  const insert: InsertEntity = {
+    id: insertId,
+    type: 'insert',
+    layerId: state.activeLayerId || doc.layers[0].id,
+    blockId,
+    position: basePoint,
+    rotation: 0,
+    scale: 1,
+  }
+  state.updateDocument(() => ({ ...doc, blocks, entities: [...remaining, insert] }))
+  state.setSelection([insertId])
+  const now = useCadStore.getState()
+  now.log('result', existing ? `Block "${name}" redefined` : `Block "${name}" defined`)
+  now.endCommand()
+}
+
 const runCommandDef = (state: CadStoreState, command: CommandDef, argument = '') => {
   useCadStore.setState({ lastCommand: command.name })
+
+  // BLOCK needs a selection up front, then a name, then a base point. The name step is a `text`
+  // prompt handled by applyTypedText; the base point comes through the 'block' tool.
+  if (command.name === 'BLOCK') {
+    if (state.selectedIds.length === 0) {
+      state.log('error', 'Select objects before defining a block.')
+      return
+    }
+    state.setTool('block')
+    useCadStore.setState({ blockNamePending: true, blockEntityIds: [...state.selectedIds] })
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return
+  }
+
+  // INSERT asks for the block name before it enters the point-driven tool.
+  if (command.name === 'INSERT') {
+    state.setTool('insert')
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return
+  }
 
   if (command.tool) {
     state.setTool(command.tool)
@@ -1992,6 +2179,9 @@ export const promptContextFor = (state: CadStoreState, swapped = false): PromptC
   pickingEdges: state.pickingEdges,
   edgeCount: state.edgeIds === null ? null : state.edgeIds.length,
   swapped,
+  insertBlockId: state.insertBlockId,
+  insertPending: state.insertPending,
+  blockNamePending: state.blockNamePending,
 })
 
 /**
@@ -2109,6 +2299,12 @@ const runKeyword = (state: CadStoreState, keyword: Keyword) => {
           : 'Copies will keep the heading the original has.',
       )
       return
+    case 'List blocks': {
+      const names = state.doc.blocks.map((block) => block.name)
+      state.log('result', names.length > 0 ? `Blocks: ${names.join(', ')}` : 'No blocks defined yet.')
+      state.log('prompt', formatPrompt(currentPrompt(state)))
+      return
+    }
     case 'Inscribed in circle':
     case 'Circumscribed about circle':
       state.setPolygonFit(keyword.key === 'I' ? 'inscribed' : 'circumscribed')
@@ -2467,6 +2663,16 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
 
   if (activeTool === 'spline') {
     addDraftPoint(point)
+    return
+  }
+
+  if (activeTool === 'block') {
+    defineBlock(state, point)
+    return
+  }
+
+  if (activeTool === 'insert') {
+    placeInsertBase(state, point)
     return
   }
 

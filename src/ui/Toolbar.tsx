@@ -23,6 +23,7 @@ const groups: ToolGroup[] = [
       { tool: 'ellipse', label: 'Ellipse', icon: 'ellipse', command: 'ELLIPSE' },
       { tool: 'polygon', label: 'Polygon', icon: 'polygon', command: 'POLYGON' },
       { tool: 'spline', label: 'Spline', icon: 'spline', command: 'SPLINE' },
+      { tool: 'insert', label: 'Insert', icon: 'insert', command: 'INSERT', hint: 'Place a block by its base point, scaled and turned' },
     ],
   },
 ]
@@ -251,6 +252,12 @@ const selectionCommands: { label: string; icon: IconName; command: string; hint:
     icon: 'explode',
     command: 'EXPLODE',
     hint: 'Break polylines into their segments and blocks into their contents',
+  },
+  {
+    label: 'Block',
+    icon: 'block',
+    command: 'BLOCK',
+    hint: 'Turn the selection into a reusable block, kept in place as an insert',
   },
   {
     label: 'Overkill',
