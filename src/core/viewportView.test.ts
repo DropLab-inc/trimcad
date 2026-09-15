@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { makeDefaultDocument } from './document'
 import { useCadStore, VIEWPORT_ZOOM_MAX, VIEWPORT_ZOOM_MIN } from './store'
 import type { Vec2 } from './math/vec2'
 import type { Layout, Viewport } from './types'
@@ -8,12 +7,13 @@ const state = () => useCadStore.getState()
 
 const reset = () => {
   useCadStore.setState({
-    doc: makeDefaultDocument(),
     activeLayoutId: null,
     activeViewportId: null,
     enteredViewportId: null,
     selectedIds: [],
   })
+  // As in layouts.test: the drawing has to be replaced through the controller the store mirrors.
+  state().newDrawing()
 }
 
 /** Open a sheet and hand back its fitted viewport, which is what a layout is born with. */

@@ -1,15 +1,19 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createLine } from './commands'
-import { makeDefaultDocument } from './document'
 import { VIEWPORT_SCALES } from './print'
 import { useCadStore } from './store'
 import type { CadEntity } from './types'
 
 /** Start every test from a clean drawing, with no sheet open. */
 const reset = (entities: CadEntity[] = []) => {
-  const doc = { ...makeDefaultDocument(), entities }
-  useCadStore.setState({ doc, activeLayoutId: null, activeViewportId: null, selectedIds: [] })
-  useCadStore.getState().updateDocument(() => doc)
+  useCadStore.setState({ activeLayoutId: null, activeViewportId: null, selectedIds: [] })
+  /*
+   * The store mirrors a document controller, so the drawing is replaced through the store's own
+   * path: assigning `doc` directly leaves the controller holding the previous test's drawing and
+   * handing it back on the next edit, and merging over it would leave that drawing's sheets behind.
+   */
+  state().newDrawing()
+  if (entities.length > 0) useCadStore.getState().updateDocument((doc) => ({ ...doc, entities }))
 }
 
 const state = () => useCadStore.getState()

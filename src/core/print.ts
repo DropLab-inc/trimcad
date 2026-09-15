@@ -340,6 +340,53 @@ export const exportPdf = (
 }
 
 /**
+ * Draws objects onto the page, mapping every drawing point through `toPage` and sizing text by the
+ * space's own units per millimetre. Inside a viewport that is the viewport's scale; on the sheet
+ * itself it is 1, because there a millimetre of drawing is a millimetre of paper.
+ *
+ * Shared by both passes so a sheet's own border and the model inside its viewports are drawn by the
+ * same code — a line is a line wherever it lands, and the two can never disagree about lineweight,
+ * colour or how a curve is flattened.
+ */
+const plotEntities = (
+  pdf: jsPDF,
+  document: DrawingDocument,
+  entities: CadEntity[],
+  toPage: (point: Vec2) => [number, number],
+  unitsPerMm: number,
+): void => {
+  for (const entity of entities) {
+    const layer = layerOf(document, entity)
+    const [r, g, b] = plotColor(colorOf(document, entity))
+    pdf.setDrawColor(r, g, b)
+    pdf.setTextColor(r, g, b)
+    // Lineweight is a plotted width in millimetres, so it does not follow any scale.
+    pdf.setLineWidth(lineweightOf(layer))
+
+    if (entity.type === 'text') {
+      const [x, y] = toPage(entity.position)
+      pdf.setFontSize((entity.height / unitsPerMm) * (72 / 25.4))
+      pdf.text(entity.value, x, y)
+      continue
+    }
+
+    for (const run of flattenEntity(entity)) {
+      if (run.points.length < 2) continue
+      const pts = run.points.map(toPage)
+      const [startX, startY] = pts[0]
+      const deltas = pts
+        .slice(1)
+        .map(([x, y], index) => [x - pts[index][0], y - pts[index][1]] as [number, number])
+      if (run.closed) {
+        const [lastX, lastY] = pts[pts.length - 1]
+        deltas.push([startX - lastX, startY - lastY])
+      }
+      pdf.lines(deltas, startX, startY)
+    }
+  }
+}
+
+/**
  * Plots a sheet.
  *
  * A layout is already composed at paper scale, so there is no area to choose and no scale to apply:
@@ -384,38 +431,23 @@ export const exportLayoutPdf = (
     pdf.clip()
     pdf.discardPath()
 
-    for (const entity of plottableEntities(document)) {
-      const layer = layerOf(document, entity)
-      const [r, g, b] = plotColor(colorOf(document, entity))
-      pdf.setDrawColor(r, g, b)
-      pdf.setTextColor(r, g, b)
-      // Lineweight is a plotted width in millimetres, so it does not follow the viewport's scale.
-      pdf.setLineWidth(lineweightOf(layer))
-
-      if (entity.type === 'text') {
-        const [x, y] = toPage(entity.position)
-        pdf.setFontSize((entity.height / viewport.unitsPerMm) * (72 / 25.4))
-        pdf.text(entity.value, x, y)
-        continue
-      }
-
-      for (const run of flattenEntity(entity)) {
-        if (run.points.length < 2) continue
-        const pts = run.points.map(toPage)
-        const [startX, startY] = pts[0]
-        const deltas = pts
-          .slice(1)
-          .map(([x, y], index) => [x - pts[index][0], y - pts[index][1]] as [number, number])
-        if (run.closed) {
-          const [lastX, lastY] = pts[pts.length - 1]
-          deltas.push([startX - lastX, startY - lastY])
-        }
-        pdf.lines(deltas, startX, startY)
-      }
-    }
+    plotEntities(pdf, document, plottableEntities(document), toPage, viewport.unitsPerMm)
 
     pdf.restoreGraphicsState()
   }
+
+  /*
+   * The sheet's own objects go on last, at 1:1 and on top of the frames: a border, a title block and
+   * notes are measured in the paper's millimetres and must not scale with any viewport. Drawing them
+   * after the viewports is what lets a title block sit over a frame edge rather than under it.
+   */
+  plotEntities(
+    pdf,
+    document,
+    plottableEntities({ ...document, entities: layout.entities }),
+    (point) => [point.x, point.y],
+    1,
+  )
 
   const slug = layout.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
   pdf.save(fileName ?? `trimcad-${slug || 'layout'}.pdf`)

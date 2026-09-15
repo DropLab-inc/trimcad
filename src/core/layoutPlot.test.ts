@@ -79,6 +79,38 @@ const reset = () => {
 }
 
 describe('plotting a sheet', () => {
+  it("puts the sheet's own objects on the page at 1:1", () => {
+    reset()
+    const doc = makeDefaultDocument()
+    const layout = sheetWith(50)
+    // A border drawn on the paper: 20 mm in from the corner, running 100 mm across.
+    layout.entities = [createLine(layerId(doc), { x: 20, y: 20 }, { x: 120, y: 20 })]
+
+    exportLayoutPdf({ ...doc, entities: [] }, layout)
+
+    // Nothing is in the model, so the only line on the page is the sheet's — and it lands at the
+    // paper millimetres it was drawn in.
+    expect(captured.lines[0].start).toEqual([20, 20])
+    expect(captured.lines[0].deltas).toEqual([[100, 0]])
+  })
+
+  it("keeps a viewport's scale out of the sheet's own objects", () => {
+    reset()
+    const doc = makeDefaultDocument()
+    const layout = sheetWith(50)
+    const line = createLine(layerId(doc), { x: 0, y: 0 }, { x: 100, y: 0 })
+    layout.entities = [line]
+
+    exportLayoutPdf({ ...doc, entities: [line] }, layout)
+
+    // The same 100-unit line, twice: inside a 1:50 viewport it is brought down to 2 mm of paper,
+    // while as the sheet's own object it stays 100 mm. That difference is the whole reason the two
+    // spaces exist, and it is the one thing a single pass could not get right.
+    const lengths = captured.lines.map((drawn) => Math.abs(drawn.deltas[0][0]))
+    expect(lengths).toContain(2)
+    expect(lengths).toContain(100)
+  })
+
   it('uses the layout paper and orientation, not a size chosen in the dialog', () => {
     reset()
     const doc = makeDefaultDocument()

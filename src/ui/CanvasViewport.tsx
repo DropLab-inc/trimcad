@@ -273,10 +273,32 @@ export function CanvasViewport() {
   const swapped = editingEdges && orthoHeld
   const promptText = useCadStore((state) => formatPrompt(currentPrompt(state, swapped)))
 
-  const visibleEntities = useMemo(() => visibleOnLayers(doc), [doc])
+  /** The sheet being worked on, or null while model space is showing. */
+  const activeLayout = activeLayoutId
+    ? doc.layouts.find((layout) => layout.id === activeLayoutId) ?? null
+    : null
+
+  /** The model's own visible objects, which is exactly what a viewport puts onto a sheet. */
+  const modelVisible = useMemo(() => visibleOnLayers(doc), [doc])
+
+  /*
+   * While a sheet is open the canvas works on the sheet: its own geometry is what is drawn on the
+   * paper, what a click may pick and what a snap may catch. Snapping to the model from paper space
+   * would drop points in the wrong space altogether — paper millimetres against drawing units — and
+   * the border of a title block has nothing to snap to in a drawing.
+   */
+  const spaceDoc = useMemo(
+    () => (activeLayout ? { ...doc, entities: activeLayout.entities } : doc),
+    [doc, activeLayout],
+  )
+
+  const visibleEntities = useMemo(
+    () => (activeLayout ? visibleOnLayers(spaceDoc) : modelVisible),
+    [activeLayout, spaceDoc, modelVisible],
+  )
 
   /** What a click may actually pick: locked layers stay on screen but refuse selection. */
-  const pickableEntities = useMemo(() => editableEntities(doc), [doc])
+  const pickableEntities = useMemo(() => editableEntities(spaceDoc), [spaceDoc])
 
   /** The objects showing grips, and so the only ones that can be reshaped by hand. */
   const selectedEntities = useMemo(
@@ -587,12 +609,7 @@ export function CanvasViewport() {
       return
     }
     if (event.button !== 0) return
-    /*
-     * Paper space is composed rather than drawn: a press picks the viewport it lands in and begins
-     * to move it. Running a draw tool here would drop model geometry at paper coordinates, and a
-     * locked viewport refuses to be nudged rather than quietly moving anyway.
-     */
-    if (activeLayout) {
+    if (activeLayout && activeTool === 'select') {
       const paper = screenToWorld(localPoint(event), camera)
       const hit = viewportAt(paper)
       if (!hit) {
@@ -1607,18 +1624,13 @@ export function CanvasViewport() {
     )
   }, [boxEnd, boxLatched, boxStart, palette])
 
-  /** The sheet being worked on, or null while model space is showing. */
-  const activeLayout = activeLayoutId
-    ? doc.layouts.find((layout) => layout.id === activeLayoutId) ?? null
-    : null
-
   /**
    * The drawing in model coordinates. Model space drops it straight onto the grid; a layout
    * repeats the very same nodes inside each viewport's transform, so what a sheet shows can
    * never drift from what the model actually holds.
    */
-  const modelEntities = () =>
-    visibleEntities.map((entity) => {
+  const modelEntities = (entities: CadEntity[] = modelVisible) =>
+    entities.map((entity) => {
       const layer = doc.layers.find((candidate) => candidate.id === entity.layerId)
       const linetypeId = entity.linetypeId ?? layer?.linetypeId
       const linetype = doc.linetypes.find((candidate) => candidate.id === linetypeId)
@@ -1710,6 +1722,13 @@ export function CanvasViewport() {
             </g>
           )
         })}
+
+        {/*
+         * The sheet's own objects, drawn after the viewports so a border and a title block sit on top
+         * of the frames' edges rather than under them. They are measured in paper millimetres, so
+         * they land on the page exactly as they were drawn — the sheet's unit is the page.
+         */}
+        <g>{modelEntities(visibleEntities)}</g>
       </g>
     )
   }

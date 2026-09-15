@@ -999,6 +999,24 @@ export const useCadStore = create<CadState>((set, get) => ({
     set({ statusMessage: `Unknown command: ${cmd}` })
   },
   addEntity: (entity) => {
+    /*
+     * A sheet carries its own geometry — a border, a title block, notes — measured in paper
+     * millimetres. What is drawn while a sheet is open therefore lands on the sheet and not in the
+     * model: the two spaces are separate, and a border drawn at 1:1 on the paper must not turn up
+     * in the drawing at 1:1 of the drawing's own units.
+     */
+    const layoutId = get().activeLayoutId
+    if (layoutId) {
+      get().updateDocument((doc) => ({
+        ...doc,
+        layouts: doc.layouts.map((layout) =>
+          layout.id === layoutId ? { ...layout, entities: [...layout.entities, entity] } : layout,
+        ),
+      }))
+      autosaveDoc(get().doc)
+      return
+    }
+
     controller.addEntity(entity)
     const doc = controller.getDocument()
     autosaveDoc(doc)
@@ -1026,6 +1044,32 @@ export const useCadStore = create<CadState>((set, get) => ({
     set({ doc, selectedIds: controller.getSelection() })
   },
   deleteSelection: () => {
+    const state = get()
+    /*
+     * Erasing works in whichever space is open. A sheet's objects are its own — nothing drawn on the
+     * paper is in the model — so a delete there can only ever remove paper-space objects.
+     */
+    const layoutId = state.activeLayoutId
+    if (layoutId) {
+      const ids = new Set(state.selectedIds)
+      const sheet = state.doc.layouts.find((layout) => layout.id === layoutId)
+      const removed = (sheet?.entities ?? []).filter((entity) => ids.has(entity.id)).length
+      if (removed === 0) return
+      state.updateDocument((doc) => ({
+        ...doc,
+        layouts: doc.layouts.map((layout) =>
+          layout.id === layoutId
+            ? { ...layout, entities: layout.entities.filter((entity) => !ids.has(entity.id)) }
+            : layout,
+        ),
+      }))
+      set({
+        selectedIds: [],
+        statusMessage: `Deleted ${describeCount(removed)} from the sheet`,
+      })
+      return
+    }
+
     const ids = controller.getSelection()
     controller.deleteEntities(ids)
     const doc = controller.getDocument()
@@ -1191,10 +1235,30 @@ export const useCadStore = create<CadState>((set, get) => ({
   },
   moveSelectionBy: (delta) => {
     const state = get()
-    const editable = new Set(editableEntities(state.doc).map((entity) => entity.id))
+    /*
+     * A drag distance on a sheet is paper millimetres, which is the space its objects are measured
+     * in, so the same drag moves a border the distance it was dragged rather than the far larger
+     * distance the same drag would mean in drawing units.
+     */
+    const layoutId = state.activeLayoutId
+    const sheet = layoutId ? state.doc.layouts.find((layout) => layout.id === layoutId) : undefined
+    const space = sheet ? sheet.entities : state.doc.entities
+    const editable = new Set(editableEntities({ ...state.doc, entities: space }).map((entity) => entity.id))
     const ids = state.selectedIds.filter((id) => editable.has(id))
     if (ids.length === 0) return
-    state.updateDocument((doc) => ({ ...doc, entities: moveEntities(doc.entities, ids, delta) }))
+
+    if (sheet) {
+      state.updateDocument((doc) => ({
+        ...doc,
+        layouts: doc.layouts.map((layout) =>
+          layout.id === sheet.id
+            ? { ...layout, entities: moveEntities(layout.entities, ids, delta) }
+            : layout,
+        ),
+      }))
+    } else {
+      state.updateDocument((doc) => ({ ...doc, entities: moveEntities(doc.entities, ids, delta) }))
+    }
     state.setStatusMessage(`Moved ${describeCount(ids.length)}`)
   },
   copySelection: () => {
