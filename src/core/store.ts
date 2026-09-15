@@ -634,21 +634,19 @@ export const useCadStore = create<CadState>((set, get) => ({
   resizeDimensions: (ids, scale) => {
     const size = clampDimScale(scale)
     const wanted = new Set(ids)
-    get().updateDocument((doc) => ({
-      ...doc,
-      entities: doc.entities.map((entity) =>
+    get().updateSpaceEntities((entities) =>
+      entities.map((entity) =>
         entity.type === 'dimension' && wanted.has(entity.id) ? { ...entity, scale: size } : entity,
       ),
-    }))
+    )
   },
   setHatchPattern: (hatchPattern) => set({ hatchPattern }),
   setHatchScale: (scale) => set({ hatchScale: clampHatchScale(scale) }),
   setHatchAngle: (angle) => set({ hatchAngle: clampHatchAngle(angle) }),
   updateHatches: (ids, patch) => {
     const wanted = new Set(ids)
-    get().updateDocument((doc) => ({
-      ...doc,
-      entities: doc.entities.map((entity) => {
+    get().updateSpaceEntities((entities) =>
+      entities.map((entity) => {
         if (entity.type !== 'hatch' || !wanted.has(entity.id)) return entity
         return {
           ...entity,
@@ -657,7 +655,7 @@ export const useCadStore = create<CadState>((set, get) => ({
           ...(patch.angle !== undefined ? { angle: clampHatchAngle(patch.angle) } : {}),
         }
       }),
-    }))
+    )
   },
   toggleSnapMode: (mode) =>
     set((state) => ({
@@ -1395,7 +1393,8 @@ export const useCadStore = create<CadState>((set, get) => ({
     }
 
     const pasted = structuredClone(clipboard).map((entity) => ({ ...entity, id: uid() }))
-    state.updateDocument((doc) => ({ ...doc, entities: [...doc.entities, ...pasted] }))
+    // Onto the sheet when a sheet is open: a title block's pieces belong where they were copied from.
+    state.updateSpaceEntities((entities) => [...entities, ...pasted])
     controller.select(pasted.map((entity) => entity.id))
 
     // AutoCAD hands the pasted objects to the crosshair rather than dropping them somewhere you
@@ -1819,15 +1818,15 @@ const runTransform = (state: CadStoreState, point: Vec2) => {
   const base = draftPoints[0]
   const selected = new Set(selectedIds)
 
-  state.updateDocument((doc) => {
-    const transformed = transformedBy(activeTool, doc.entities, selectedIds, base, point)
+  state.updateSpaceEntities((entities) => {
+    const transformed = transformedBy(activeTool, entities, selectedIds, base, point)
     if (activeTool === 'copy') {
       const copies = transformed
         .filter((entity) => selected.has(entity.id))
         .map((entity) => ({ ...entity, id: uid() }))
-      return { ...doc, entities: [...doc.entities, ...copies] }
+      return [...entities, ...copies]
     }
-    return { ...doc, entities: transformed }
+    return transformed
   })
 
   const finished = activeTool.toUpperCase()
@@ -1848,26 +1847,25 @@ const applyTransformValue = (state: CadStoreState, value: number): boolean => {
   const selected = new Set(selectedIds)
 
   if (activeTool === 'rotate') {
-    state.updateDocument((doc) => ({
-      ...doc,
-      entities: rotateEntities(doc.entities, selectedIds, base, value),
-    }))
+    state.updateSpaceEntities((entities) => rotateEntities(entities, selectedIds, base, value))
   } else if (activeTool === 'scale') {
     if (value <= 0) {
       state.setStatusMessage('The scale factor must be greater than zero.')
       return true
     }
-    state.updateDocument((doc) => ({ ...doc, entities: scaleEntities(doc.entities, selectedIds, base, value) }))
+    state.updateSpaceEntities((entities) => scaleEntities(entities, selectedIds, base, value))
   } else if (activeTool === 'move' || activeTool === 'copy') {
     // Without a cursor direction a bare number is taken along the X axis, as AutoCAD does.
     const direction = state.cursorWorld ? sub(state.cursorWorld, base) : { x: 1, y: 0 }
     const length = Math.hypot(direction.x, direction.y) || 1
     const delta = { x: (direction.x / length) * value, y: (direction.y / length) * value }
-    state.updateDocument((doc) => {
-      const moved = moveEntities(doc.entities, selectedIds, delta)
-      if (activeTool === 'move') return { ...doc, entities: moved }
-      const copies = moved.filter((entity) => selected.has(entity.id)).map((entity) => ({ ...entity, id: uid() }))
-      return { ...doc, entities: [...doc.entities, ...copies] }
+    state.updateSpaceEntities((entities) => {
+      const moved = moveEntities(entities, selectedIds, delta)
+      if (activeTool === 'move') return moved
+      const copies = moved
+        .filter((entity) => selected.has(entity.id))
+        .map((entity) => ({ ...entity, id: uid() }))
+      return [...entities, ...copies]
     })
   } else {
     return false
@@ -2898,10 +2896,10 @@ const runArray = (state: CadStoreState, point: Vec2) => {
   const selected = new Set(state.selectedIds)
   const commit = (make: (sources: CadEntity[]) => CadEntity[], describe: (added: number) => string) => {
     let added = 0
-    state.updateDocument((doc) => {
-      const copies = make(doc.entities.filter((entity) => selected.has(entity.id)))
+    state.updateSpaceEntities((entities) => {
+      const copies = make(entities.filter((entity) => selected.has(entity.id)))
       added = copies.length
-      return { ...doc, entities: [...doc.entities, ...copies] }
+      return [...entities, ...copies]
     })
     state.clearDraft()
     state.endCommand()
