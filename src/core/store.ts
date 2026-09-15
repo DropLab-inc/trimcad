@@ -89,12 +89,53 @@ import type {
   HatchPattern,
   InsertEntity,
   Layer,
+  Layout,
+  PaperOrientation,
+  PaperSize,
   RectMode,
   SnapMode,
   ToolMode,
+  Viewport,
 } from './types'
+import { extentsBounds, pageSizeMm } from './print'
 
 const controller = new DocumentController(makeDefaultDocument())
+
+/**
+ * The scales a new viewport is allowed to land on, as drawing units per millimetre of paper:
+ * 50 shows the model at 1:50. Restricted to the round numbers a drawing office actually uses so
+ * a fitted viewport reads as a real scale rather than something like 1:37.
+ */
+const STANDARD_VIEWPORT_SCALES = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+
+/**
+ * A viewport filling the printable area, showing the whole drawing at the smallest standard scale
+ * that fits it — what AutoCAD hands you when a layout is first made, rather than a blank sheet
+ * with nothing to look at.
+ */
+const fittedViewport = (
+  doc: DrawingDocument,
+  page: { width: number; height: number },
+  marginMm: number,
+  id: string,
+): Viewport => {
+  const inset = 8
+  const widthMm = Math.max(20, page.width - (marginMm + inset) * 2)
+  const heightMm = Math.max(20, page.height - (marginMm + inset) * 2)
+  const bounds = extentsBounds(doc)
+  const drawingW = Math.max(1e-6, bounds.maxX - bounds.minX)
+  const drawingH = Math.max(1e-6, bounds.maxY - bounds.minY)
+  const needed = Math.max(drawingW / widthMm, drawingH / heightMm)
+  return {
+    id,
+    center: { x: page.width / 2, y: page.height / 2 },
+    widthMm,
+    heightMm,
+    modelCenter: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 },
+    unitsPerMm: STANDARD_VIEWPORT_SCALES.find((scale) => scale >= needed) ?? Math.ceil(needed),
+    locked: false,
+  }
+}
 
 type CameraState = {
   x: number
@@ -158,6 +199,13 @@ type CadState = {
   /** Objects held by COPYCLIP or CUTCLIP, kept out of the document until pasted. */
   clipboard: CadEntity[]
   camera: CameraState
+  /**
+   * Which sheet is being worked on. `null` is model space — where the drawing is made, and where
+   * the app starts. Any other value is a layout's id: a sheet that shows the model on paper.
+   */
+  activeLayoutId: string | null
+  /** The viewport picked on the current sheet, so the properties panel can edit its scale. */
+  activeViewportId: string | null
   draftPoints: Vec2[]
   /**
    * What the dynamic input is holding: which step of which command the typed values belong
@@ -301,6 +349,19 @@ type CadState = {
   setTool: (tool: ToolMode) => void
   setActiveLayerId: (layerId: string) => void
   setCamera: (camera: Partial<CameraState>) => void
+  /** Switches to a layout, or back to model space with `null`. */
+  setActiveLayout: (layoutId: string | null) => void
+  /** Adds a sheet with one viewport already scaled to fit the drawing, as AutoCAD opens a layout. */
+  addLayout: () => void
+  updateLayout: (
+    layoutId: string,
+    patch: Partial<Pick<Layout, 'name' | 'paper' | 'orientation' | 'marginMm'>>,
+  ) => void
+  deleteLayout: (layoutId: string) => void
+  addViewport: (layoutId: string) => void
+  updateViewport: (layoutId: string, viewportId: string, patch: Partial<Viewport>) => void
+  deleteViewport: (layoutId: string, viewportId: string) => void
+  selectViewport: (viewportId: string | null) => void
   setCommandInput: (input: string) => void
   setStatusMessage: (message: string) => void
   toggleOsnap: () => void
@@ -401,6 +462,8 @@ export const useCadStore = create<CadState>((set, get) => ({
   fileName: `Drawing1${DRAWING_EXTENSION}`,
   clipboard: [],
   camera: { x: 400, y: 300, zoom: 1 },
+  activeLayoutId: null,
+  activeViewportId: null,
   draftPoints: [],
   typed: EMPTY_TYPED,
   snapModes: defaultSnapModes,
@@ -640,6 +703,99 @@ export const useCadStore = create<CadState>((set, get) => ({
     }),
   setActiveLayerId: (activeLayerId) => set({ activeLayerId }),
   setCamera: (camera) => set((state) => ({ camera: { ...state.camera, ...camera } })),
+  setActiveLayout: (layoutId) => {
+    const layout = layoutId ? get().doc.layouts.find((candidate) => candidate.id === layoutId) : null
+    set({
+      activeLayoutId: layout ? layout.id : null,
+      activeViewportId: null,
+      // A sheet and the model do not share a selection: what is picked in one means nothing in the other.
+      selectedIds: [],
+      draftPoints: [],
+      activeTool: 'select',
+      statusMessage: layout ? `Layout: ${layout.name}` : 'Model',
+    })
+  },
+  addLayout: () => {
+    const state = get()
+    const name = `Layout ${state.doc.layouts.length + 1}`
+    const paper: PaperSize = 'a4'
+    const orientation: PaperOrientation = 'landscape'
+    const marginMm = 12
+    const layoutId = uid()
+    const viewport = fittedViewport(state.doc, pageSizeMm(paper, orientation), marginMm, uid())
+    state.updateDocument((doc) => ({
+      ...doc,
+      layouts: [
+        ...doc.layouts,
+        { id: layoutId, name, paper, orientation, marginMm, entities: [], viewports: [viewport] },
+      ],
+    }))
+    set({
+      activeLayoutId: layoutId,
+      activeViewportId: viewport.id,
+      selectedIds: [],
+      activeTool: 'select',
+      statusMessage: `Layout: ${name}`,
+    })
+  },
+  updateLayout: (layoutId, patch) =>
+    get().updateDocument((doc) => ({
+      ...doc,
+      layouts: doc.layouts.map((layout) => (layout.id === layoutId ? { ...layout, ...patch } : layout)),
+    })),
+  deleteLayout: (layoutId) => {
+    get().updateDocument((doc) => ({
+      ...doc,
+      layouts: doc.layouts.filter((layout) => layout.id !== layoutId),
+    }))
+    if (get().activeLayoutId === layoutId) {
+      set({ activeLayoutId: null, activeViewportId: null, statusMessage: 'Model' })
+    }
+  },
+  addViewport: (layoutId) => {
+    const state = get()
+    const layout = state.doc.layouts.find((candidate) => candidate.id === layoutId)
+    if (!layout) return
+    const page = pageSizeMm(layout.paper, layout.orientation)
+    const viewport = fittedViewport(state.doc, page, layout.marginMm, uid())
+    // Offset a later viewport so it does not land exactly on top of the one already there.
+    if (layout.viewports.length > 0) {
+      viewport.center = { x: viewport.center.x + 16, y: viewport.center.y - 16 }
+    }
+    state.updateDocument((doc) => ({
+      ...doc,
+      layouts: doc.layouts.map((candidate) =>
+        candidate.id === layoutId ? { ...candidate, viewports: [...candidate.viewports, viewport] } : candidate,
+      ),
+    }))
+    set({ activeViewportId: viewport.id, statusMessage: 'Viewport added' })
+  },
+  updateViewport: (layoutId, viewportId, patch) =>
+    get().updateDocument((doc) => ({
+      ...doc,
+      layouts: doc.layouts.map((layout) =>
+        layout.id === layoutId
+          ? {
+              ...layout,
+              viewports: layout.viewports.map((viewport) =>
+                viewport.id === viewportId ? { ...viewport, ...patch } : viewport,
+              ),
+            }
+          : layout,
+      ),
+    })),
+  deleteViewport: (layoutId, viewportId) => {
+    get().updateDocument((doc) => ({
+      ...doc,
+      layouts: doc.layouts.map((layout) =>
+        layout.id === layoutId
+          ? { ...layout, viewports: layout.viewports.filter((viewport) => viewport.id !== viewportId) }
+          : layout,
+      ),
+    }))
+    if (get().activeViewportId === viewportId) set({ activeViewportId: null })
+  },
+  selectViewport: (viewportId) => set({ activeViewportId: viewportId }),
   setCommandInput: (commandInput) => set({ commandInput }),
   setStatusMessage: (statusMessage) => set({ statusMessage }),
   toggleOsnap: () => set((state) => ({ osnapEnabled: !state.osnapEnabled })),

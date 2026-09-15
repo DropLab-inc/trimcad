@@ -10,6 +10,7 @@ import { Icon } from './ui/Icon'
 import { PreferencesMenu } from './ui/PreferencesMenu'
 import { PrintDialog } from './ui/PrintDialog'
 import { LayerPanel } from './ui/LayerPanel'
+import { LayoutTabs } from './ui/LayoutTabs'
 import { PropertiesPanel } from './ui/PropertiesPanel'
 import { QuickAccess } from './ui/QuickAccess'
 import { SnapPanel } from './ui/SnapPanel'
@@ -125,6 +126,7 @@ function App() {
         />
       )}
 
+      <LayoutTabs />
       <CommandLine />
       <StatusBar />
       <PrintDialog />

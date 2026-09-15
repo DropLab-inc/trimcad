@@ -33,6 +33,7 @@ export const makeDefaultDocument = (): DrawingDocument => ({
   blocks: [],
   entities: [],
   groups: [],
+  layouts: [],
 })
 
 export class DocumentController {

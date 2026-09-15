@@ -2,13 +2,13 @@ import { jsPDF } from 'jspdf'
 import { flattenEntity, pointsOfEntity } from './flatten'
 import { isLayerPlottable, layerOf, plottableEntities } from './layers'
 import type { Vec2 } from './math/vec2'
-import type { CadEntity, DrawingDocument, Layer } from './types'
+import type { CadEntity, DrawingDocument, Layer, PaperOrientation, PaperSize } from './types'
+
+/** Paper sizes and orientations are part of the document model, so layouts can name them too. */
+export type { PaperOrientation, PaperSize }
 
 /** What region of the drawing is mapped onto the paper. */
 export type PlotArea = 'extents' | 'display' | 'window' | 'selection'
-
-export type PaperSize = 'a4' | 'a3' | 'a2' | 'a1' | 'letter' | 'legal' | 'tabloid'
-export type PaperOrientation = 'landscape' | 'portrait'
 
 /**
  * How drawing units relate to millimetres on the paper.

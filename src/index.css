@@ -629,6 +629,76 @@ button:disabled .icon .accent {
   user-select: none;
 }
 
+/*
+ * The strip that switches between the drawing and its sheets, sitting between the canvas and the
+ * command line the way AutoCAD's model and layout tabs do. It takes only the height it needs, so
+ * the drawing keeps the workspace.
+ */
+.layout-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 8px;
+  min-height: 30px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.layout-tab-group {
+  display: flex;
+  align-items: stretch;
+  border-radius: 6px 6px 0 0;
+  overflow: hidden;
+}
+
+.layout-tab,
+.layout-tab-add,
+.layout-tab-remove {
+  font: inherit;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.layout-tab {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+.layout-tab:hover,
+.layout-tab-add:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.layout-tab.active {
+  background: var(--surface-0);
+  color: var(--text-bright);
+  font-weight: 600;
+}
+
+.layout-tab-remove {
+  padding: 0 8px;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.45;
+}
+
+.layout-tab-remove:hover {
+  opacity: 1;
+  color: var(--danger);
+}
+
+.layout-tab-add {
+  padding: 5px 12px;
+  font-size: 15px;
+  line-height: 1;
+}
+
 .viewport-status {
   position: absolute;
   bottom: 0.5rem;

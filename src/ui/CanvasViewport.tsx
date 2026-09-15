@@ -11,7 +11,7 @@ import {
 } from 'react'
 import { applyDrawTool, currentPrompt, previewTrimExtend, useCadStore } from '../core/store'
 import { usePreferences } from '../core/preferences'
-import { normalizeBounds } from '../core/print'
+import { normalizeBounds, pageSizeMm } from '../core/print'
 import {
   cancelPlotWindow,
   finishPlotWindow,
@@ -34,7 +34,7 @@ import { canFillet, chamferCorner, filletCorner, hasStraightSegments, offsetEnti
 import { canBeTangent, circleOnDiameter, circleThroughPoints, cornerRadius, polygonOnEdge, rectFromCenter, rectFromCorners, arcFromCenterStartEnd, arcFromStartCenterEnd, arcThroughPoints } from '../core/construct'
 import { polarArrayCopies, rectangularArrayCopies } from '../core/array'
 import { dragGrip, entityGrips, findGripAt, type Grip } from '../core/grips'
-import type { CadEntity, DimensionEntity, PolylineEntity, SnapMode } from '../core/types'
+import type { CadEntity, DimensionEntity, Layout, PolylineEntity, SnapMode } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
 import { COMMAND_INPUT_ID, focusCommandInput } from './commandFocus'
 import { NARROW_QUERY, useMediaQuery } from './useMediaQuery'
@@ -149,6 +149,9 @@ export function CanvasViewport() {
   const selectedIds = useCadStore((state) => state.selectedIds)
   const activeTool = useCadStore((state) => state.activeTool)
   const camera = useCadStore((state) => state.camera)
+  const activeLayoutId = useCadStore((state) => state.activeLayoutId)
+  const activeViewportId = useCadStore((state) => state.activeViewportId)
+  const selectViewport = useCadStore((state) => state.selectViewport)
   const setCamera = useCadStore((state) => state.setCamera)
   const applySelection = useCadStore((state) => state.applySelection)
   const selectAll = useCadStore((state) => state.selectAll)
@@ -570,6 +573,9 @@ export function CanvasViewport() {
       return
     }
     if (event.button !== 0) return
+    // Paper space is composed, not drawn. A click there picks a viewport (whose frame handles it)
+    // and nothing else — running a draw tool would drop model geometry at paper coordinates.
+    if (activeLayout) return
     const local = localPoint(event)
     // A window whose first corner is already down is waiting for its second click, and nothing
     // else may take that click: not a grip, not an object under it. Mouse up closes the window.
@@ -770,6 +776,23 @@ export function CanvasViewport() {
         : null
     setHoverGrip(overGrip ? { entityId: overGrip.entity.id, grip: overGrip.grip } : null)
   }
+
+  /*
+   * Switching to a sheet frames it. Without this the camera is wherever model space left it, so a
+   * 297 mm sheet can open half off-screen. Keyed on the space alone on purpose: re-running whenever
+   * the document changed would yank the view back every time a viewport was nudged.
+   */
+  useEffect(() => {
+    const layout = activeLayoutId
+      ? useCadStore.getState().doc.layouts.find((candidate) => candidate.id === activeLayoutId)
+      : null
+    const box = svgRef.current?.getBoundingClientRect()
+    if (!layout || !box || box.width < 10 || box.height < 10) return
+    const page = pageSizeMm(layout.paper, layout.orientation)
+    // A little air around the sheet, so its edge is visibly an edge rather than the window frame.
+    const zoom = Math.min(box.width / (page.width * 1.15), box.height / (page.height * 1.15))
+    setCamera({ zoom, x: (box.width - page.width * zoom) / 2, y: (box.height - page.height * zoom) / 2 })
+  }, [activeLayoutId, setCamera])
 
   // The store needs the crosshair position so a typed distance knows which way to go.
   useEffect(() => {
@@ -1479,6 +1502,108 @@ export function CanvasViewport() {
     )
   }, [boxEnd, boxLatched, boxStart, palette])
 
+  /** The sheet being worked on, or null while model space is showing. */
+  const activeLayout = activeLayoutId
+    ? doc.layouts.find((layout) => layout.id === activeLayoutId) ?? null
+    : null
+
+  /**
+   * The drawing in model coordinates. Model space drops it straight onto the grid; a layout
+   * repeats the very same nodes inside each viewport's transform, so what a sheet shows can
+   * never drift from what the model actually holds.
+   */
+  const modelEntities = () =>
+    visibleEntities.map((entity) => {
+      const layer = doc.layers.find((candidate) => candidate.id === entity.layerId)
+      const linetypeId = entity.linetypeId ?? layer?.linetypeId
+      const linetype = doc.linetypes.find((candidate) => candidate.id === linetypeId)
+      const selected = selectedIds.includes(entity.id)
+      const hovered = !selected && entity.id === hoverId
+      return renderEntity(entity, {
+        selected,
+        color: readableOnCanvas(entity.color ?? layer?.color ?? palette.fallbackEntity, palette),
+        dash: linetype?.pattern.length ? linetype.pattern.join(' ') : undefined,
+        width: hovered ? 2.5 : lwDisplay ? lineweightPixels(layer?.lineweight) : undefined,
+        dimStyle: doc.dimStyle,
+        palette,
+        blocks: doc.blocks,
+      })
+    })
+
+  /**
+   * The active sheet. Paper space is measured in millimetres from the paper's bottom-left corner,
+   * which is the same unit the camera pans over, so nothing needs converting. A viewport clips the
+   * model to its frame and then applies its own scale about its own centre — inside it are the
+   * very same nodes model space draws, so the sheet cannot show something the drawing does not.
+   */
+  const paperSheet = (layout: Layout) => {
+    const page = pageSizeMm(layout.paper, layout.orientation)
+    const margin = layout.marginMm
+    return (
+      <g>
+        {/*
+         * Paper is white whatever the theme is, because this is what goes on the page — but a
+         * white sheet on a light canvas would be invisible, so it carries a visible edge.
+         */}
+        <rect x={0} y={0} width={page.width} height={page.height} fill="#ffffff" />
+        <rect
+          x={0}
+          y={0}
+          width={page.width}
+          height={page.height}
+          fill="none"
+          stroke={palette.gridMajor}
+          strokeWidth={1.5}
+          vectorEffect="non-scaling-stroke"
+        />
+        <rect
+          x={margin}
+          y={margin}
+          width={Math.max(1, page.width - margin * 2)}
+          height={Math.max(1, page.height - margin * 2)}
+          fill="none"
+          stroke={palette.gridMajor}
+          strokeDasharray="6 4"
+          vectorEffect="non-scaling-stroke"
+        />
+
+        {layout.viewports.map((viewport) => {
+          const left = viewport.center.x - viewport.widthMm / 2
+          const bottom = viewport.center.y - viewport.heightMm / 2
+          const clipId = `viewport-clip-${viewport.id}`
+          const current = viewport.id === activeViewportId
+          return (
+            <g key={viewport.id}>
+              <defs>
+                <clipPath id={clipId}>
+                  <rect x={left} y={bottom} width={viewport.widthMm} height={viewport.heightMm} />
+                </clipPath>
+              </defs>
+              <g
+                clipPath={`url(#${clipId})`}
+                transform={`translate(${viewport.center.x}, ${viewport.center.y}) scale(${1 / viewport.unitsPerMm}) translate(${-viewport.modelCenter.x}, ${-viewport.modelCenter.y})`}
+              >
+                {modelEntities()}
+              </g>
+              <rect
+                x={left}
+                y={bottom}
+                width={viewport.widthMm}
+                height={viewport.heightMm}
+                fill="none"
+                stroke={current ? palette.selection : palette.gridMajor}
+                strokeWidth={current ? 2 : 1}
+                vectorEffect="non-scaling-stroke"
+                style={{ cursor: 'pointer' }}
+                onPointerDown={() => selectViewport(viewport.id)}
+              />
+            </g>
+          )
+        })}
+      </g>
+    )
+  }
+
   return (
     <div className="viewport-shell" ref={frameRef}>
       <svg
@@ -1505,36 +1630,37 @@ export function CanvasViewport() {
           else repeatLastCommand()
         }}
       >
-        <rect x={0} y={0} width={width} height={height} fill={palette.background} />
+        {/*
+         * Paper space sits on a tinted desk rather than the drawing's own background, which is the
+         * cue AutoCAD uses: white paper cannot be told from a white canvas any other way.
+         */}
+        <rect
+          x={0}
+          y={0}
+          width={width}
+          height={height}
+          fill={activeLayout ? palette.gridMinor : palette.background}
+        />
 
         <g transform={`translate(${camera.x}, ${camera.y}) scale(${camera.zoom})`}>
-          {grid}
-          <line x1={-1e5} y1={0} x2={1e5} y2={0} stroke={palette.axisX} strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          <line x1={0} y1={-1e5} x2={0} y2={1e5} stroke={palette.axisY} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          {activeLayout ? (
+            paperSheet(activeLayout)
+          ) : (
+            <>
+              {grid}
+              <line x1={-1e5} y1={0} x2={1e5} y2={0} stroke={palette.axisX} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+              <line x1={0} y1={-1e5} x2={0} y2={1e5} stroke={palette.axisY} strokeWidth={1} vectorEffect="non-scaling-stroke" />
 
-          {visibleEntities.map((entity) => {
-            const layer = doc.layers.find((candidate) => candidate.id === entity.layerId)
-            const linetypeId = entity.linetypeId ?? layer?.linetypeId
-            const linetype = doc.linetypes.find((candidate) => candidate.id === linetypeId)
-            const selected = selectedIds.includes(entity.id)
-            const hovered = !selected && entity.id === hoverId
-            return renderEntity(entity, {
-              selected,
-              color: readableOnCanvas(entity.color ?? layer?.color ?? palette.fallbackEntity, palette),
-              dash: linetype?.pattern.length ? linetype.pattern.join(' ') : undefined,
-              width: hovered ? 2.5 : lwDisplay ? lineweightPixels(layer?.lineweight) : undefined,
-              dimStyle: doc.dimStyle,
-              palette,
-              blocks: doc.blocks,
-            })
-          })}
+              {modelEntities()}
 
-          {grips}
-          {dragPreview}
-          {trimExtendPreview}
-          {tangentHighlight}
-          {modifyPreview}
-          {preview}
+              {grips}
+              {dragPreview}
+              {trimExtendPreview}
+              {tangentHighlight}
+              {modifyPreview}
+              {preview}
+            </>
+          )}
         </g>
 
         {selectionBox}
