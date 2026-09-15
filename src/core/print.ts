@@ -2,7 +2,7 @@ import { jsPDF } from 'jspdf'
 import { flattenEntity, pointsOfEntity } from './flatten'
 import { isLayerPlottable, layerOf, plottableEntities } from './layers'
 import type { Vec2 } from './math/vec2'
-import type { CadEntity, DrawingDocument, Layer, PaperOrientation, PaperSize } from './types'
+import type { CadEntity, DrawingDocument, Layer, Layout, PaperOrientation, PaperSize } from './types'
 
 /** Paper sizes and orientations are part of the document model, so layouts can name them too. */
 export type { PaperOrientation, PaperSize }
@@ -329,4 +329,85 @@ export const exportPdf = (
   pdf.restoreGraphicsState()
   pdf.save(fileName ?? `trimcad-${options.paper}-${options.scaleMode}.pdf`)
   return layout
+}
+
+/**
+ * Plots a sheet.
+ *
+ * A layout is already composed at paper scale, so there is no area to choose and no scale to apply:
+ * the page *is* the paper, and each viewport brings the model to it at its own scale. That is the
+ * split AutoCAD makes between plotting model space and plotting a layout, and it is what takes the
+ * guesswork out of issuing a drawing — nothing here has to be told how big the drawing is.
+ */
+export const exportLayoutPdf = (
+  document: DrawingDocument,
+  layout: Layout,
+  /** Override the download name; tests pass a no-op save by stubbing jsPDF instead. */
+  fileName?: string,
+): void => {
+  const page = pageSizeMm(layout.paper, layout.orientation)
+  const pdf = new jsPDF({
+    orientation: layout.orientation,
+    unit: 'mm',
+    format: [page.width, page.height],
+  })
+
+  pdf.setLineJoin('round')
+  pdf.setLineCap('round')
+
+  for (const viewport of layout.viewports) {
+    // Drawing units land on the sheet through the viewport's own scale, and PDF's y runs down the
+    // page where the drawing's runs up it, so the second axis is flipped about the paper's top.
+    const toPage = (point: Vec2): [number, number] => {
+      const mmX = viewport.center.x + (point.x - viewport.modelCenter.x) / viewport.unitsPerMm
+      const mmY = viewport.center.y + (point.y - viewport.modelCenter.y) / viewport.unitsPerMm
+      return [mmX, page.height - mmY]
+    }
+
+    pdf.saveGraphicsState()
+    // Clip to the frame exactly as the canvas does, so a viewport can never bleed across the sheet.
+    pdf.rect(
+      viewport.center.x - viewport.widthMm / 2,
+      page.height - viewport.center.y - viewport.heightMm / 2,
+      viewport.widthMm,
+      viewport.heightMm,
+    )
+    pdf.clip()
+    pdf.discardPath()
+
+    for (const entity of plottableEntities(document)) {
+      const layer = layerOf(document, entity)
+      const [r, g, b] = plotColor(colorOf(document, entity))
+      pdf.setDrawColor(r, g, b)
+      pdf.setTextColor(r, g, b)
+      // Lineweight is a plotted width in millimetres, so it does not follow the viewport's scale.
+      pdf.setLineWidth(lineweightOf(layer))
+
+      if (entity.type === 'text') {
+        const [x, y] = toPage(entity.position)
+        pdf.setFontSize((entity.height / viewport.unitsPerMm) * (72 / 25.4))
+        pdf.text(entity.value, x, y)
+        continue
+      }
+
+      for (const run of flattenEntity(entity)) {
+        if (run.points.length < 2) continue
+        const pts = run.points.map(toPage)
+        const [startX, startY] = pts[0]
+        const deltas = pts
+          .slice(1)
+          .map(([x, y], index) => [x - pts[index][0], y - pts[index][1]] as [number, number])
+        if (run.closed) {
+          const [lastX, lastY] = pts[pts.length - 1]
+          deltas.push([startX - lastX, startY - lastY])
+        }
+        pdf.lines(deltas, startX, startY)
+      }
+    }
+
+    pdf.restoreGraphicsState()
+  }
+
+  const slug = layout.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  pdf.save(fileName ?? `trimcad-${slug || 'layout'}.pdf`)
 }

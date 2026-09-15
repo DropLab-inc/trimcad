@@ -5,7 +5,9 @@ import {
   describeArea,
   describeScale,
   exportPdf,
+  exportLayoutPdf,
   layoutPlot,
+  pageSizeMm,
   resolvePlotBounds,
   type PaperOrientation,
   type PaperSize,
@@ -52,6 +54,11 @@ export function PrintDialog() {
   const session = usePrintSession()
   const log = useCadStore((state) => state.log)
   const doc = useCadStore((state) => state.doc)
+  /** The sheet being plotted, if one is open — a layout plots itself, not a region of the model. */
+  const activeLayoutId = useCadStore((state) => state.activeLayoutId)
+  const activeLayout = activeLayoutId
+    ? doc.layouts.find((layout) => layout.id === activeLayoutId) ?? null
+    : null
   const titleId = useId()
   const dialogRef = useRef<HTMLDivElement | null>(null)
 
@@ -85,6 +92,19 @@ export function PrintDialog() {
   const patch = (next: Partial<PrintOptions>) => setPrintOptions(next)
 
   const plot = () => {
+    /*
+     * A sheet is already at paper scale, so plotting one asks nothing about area or scale. Anything
+     * the model-space controls are holding is deliberately ignored here rather than half-applied.
+     */
+    if (activeLayout) {
+      exportLayoutPdf(doc, activeLayout)
+      log(
+        'result',
+        `Plotted ${activeLayout.name} at 1:1 on ${activeLayout.paper.toUpperCase()} ${activeLayout.orientation}`,
+      )
+      closePrintDialog()
+      return
+    }
     if (!canPlot) return
     const result = exportPdf(doc, options, session.view, session.selectedIds)
     if (!result) {
@@ -131,6 +151,22 @@ export function PrintDialog() {
         </header>
 
         <div className="print-dialog-body">
+          {activeLayout ? (
+            <section className="print-dialog-group">
+              <h3>{activeLayout.name}</h3>
+              <p className="print-dialog-note">
+                A sheet plots at 1:1 on its own paper — the size, orientation and margin come from
+                the layout, and each viewport brings the model to it at its own scale.
+              </p>
+              <p className="print-dialog-note">
+                {pageSizeMm(activeLayout.paper, activeLayout.orientation).width} ×{' '}
+                {pageSizeMm(activeLayout.paper, activeLayout.orientation).height} mm ·{' '}
+                {activeLayout.viewports.length} viewport
+                {activeLayout.viewports.length === 1 ? '' : 's'}
+              </p>
+            </section>
+          ) : (
+            <>
           <section className="print-dialog-group">
             <h3>Printer / plotter</h3>
             <p className="print-dialog-note">PDF file — downloads when you plot.</p>
@@ -272,6 +308,8 @@ export function PrintDialog() {
               </p>
             )}
           </section>
+            </>
+          )}
         </div>
 
         <footer className="print-dialog-footer">
