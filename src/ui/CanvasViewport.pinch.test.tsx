@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { resetPreferences } from '../core/preferences'
 import { EMPTY_TYPED, useCadStore } from '../core/store'
 import { CanvasViewport } from './CanvasViewport'
+import { ZOOM_MAX, ZOOM_MIN } from './CanvasViewport'
 
 /**
  * jsdom ships no Touch or TouchEvent of its own, and the viewport reads nothing from a touch
@@ -102,10 +103,17 @@ describe('two-finger pinch', () => {
 
   it('holds the zoom inside the same limits the wheel uses', () => {
     const svg = setup()
-    fireTouch(svg, 'touchstart', spread(200, 1))
-    fireTouch(svg, 'touchmove', spread(200, 400))
 
-    expect(useCadStore.getState().camera.zoom).toBe(50)
+    // Pinched far past the ceiling rather than to a number: the test is about the clamp holding, so
+    // it should not care what the ceiling is until someone changes it deliberately.
+    fireTouch(svg, 'touchstart', spread(200, 1))
+    fireTouch(svg, 'touchmove', spread(200, 5e6))
+    expect(useCadStore.getState().camera.zoom).toBe(ZOOM_MAX)
+
+    // And the same at the other end, where a gesture cannot shrink the view to nothing.
+    fireTouch(svg, 'touchstart', spread(200, 5e6))
+    fireTouch(svg, 'touchmove', spread(200, 1))
+    expect(useCadStore.getState().camera.zoom).toBe(ZOOM_MIN)
   })
 
   it('measures a second gesture from where the first one left off', () => {
