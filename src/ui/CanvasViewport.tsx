@@ -44,12 +44,17 @@ import { readableOnCanvas, useCanvasPalette } from './theme'
 type Camera = { x: number; y: number; zoom: number }
 
 /**
- * The wheel's zoom limits, shared with the two-finger pinch so a gesture cannot travel further
- * than a mouse can. Below the floor the grid and the snap aperture are finer than a pixel;
- * above the ceiling the coordinates the command line prints lose their precision.
+ * The wheel's zoom limits, shared with the two-finger pinch so a gesture cannot travel further than a
+ * mouse can.
+ *
+ * Deliberately extreme now. At the old ceiling of 50 pixels to the unit you could not get close
+ * enough to draw or snap a microscopic feature, which is most of what a CAD drawing is for. A floor
+ * and a ceiling still exist — zoom is a floating-point scale, and with no bound at all it eventually
+ * reaches infinity or zero and the view cannot be got back — but at a million to one either way
+ * nobody reaches them by accident.
  */
-const ZOOM_MIN = 0.02
-const ZOOM_MAX = 50
+export const ZOOM_MIN = 1e-6
+export const ZOOM_MAX = 1e6
 
 /** Where a two-finger gesture stood when it began, so each move is measured from its start. */
 type Pinch = {

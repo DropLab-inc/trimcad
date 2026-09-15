@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useCadStore } from '../core/store'
+import { formatPoint, formatZoom } from '../core/readout'
 
 /** The drafting toggles AutoCAD puts on function keys. */
 const TOGGLE_KEYS: Record<string, 'osnap' | 'ortho' | 'polar'> = {
@@ -39,7 +40,7 @@ export function StatusBar() {
   return (
     <footer className="statusbar">
       <span className="statusbar-coords">
-        {cursorWorld ? `${cursorWorld.x.toFixed(2)}, ${cursorWorld.y.toFixed(2)}` : '—, —'}
+        {cursorWorld ? formatPoint(cursorWorld, camera.zoom) : '—, —'}
       </span>
       <span className="statusbar-message">{statusMessage}</span>
       <span className="statusbar-spacer" />
@@ -78,7 +79,7 @@ export function StatusBar() {
       </button>
 
       <span className="statusbar-facts">
-        {doc.entities.length} objects · {selectedIds.length} selected · {camera.zoom.toFixed(2)}× · {doc.units}
+        {doc.entities.length} objects · {selectedIds.length} selected · {formatZoom(camera.zoom)} · {doc.units}
       </span>
     </footer>
   )
