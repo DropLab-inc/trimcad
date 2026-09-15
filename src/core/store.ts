@@ -98,14 +98,15 @@ import type {
   Viewport,
 } from './types'
 import { extentsBounds, pageSizeMm, VIEWPORT_SCALES } from './print'
+import { formatPoint } from './readout'
 
 /**
  * How far a viewport's view may be magnified or shrunk, in drawing units per millimetre of paper.
  * A viewport is zoomed by pointing at it rather than by choosing a number, so the ends of the range
- * have to be somewhere; these are wide enough for any sheet a drawing office would issue and tight
- * enough that the view cannot be lost down to nothing or blown out to where nothing is left.
+ * have to be somewhere; these are wide enough for any sheet a drawing office would issue — and for
+ * the microscopic end of a detail view — while still keeping the view recoverable.
  */
-export const VIEWPORT_ZOOM_MIN = 0.002
+export const VIEWPORT_ZOOM_MIN = 1e-6
 export const VIEWPORT_ZOOM_MAX = 100000
 
 /** The viewport a store action names, or undefined when that sheet or viewport is gone. */
@@ -990,7 +991,7 @@ export const useCadStore = create<CadState>((set, get) => ({
     const typedPoint = parseCoordinate(raw, state.draftPoints.at(-1))
     if (typedPoint) {
       applyDrawTool(typedPoint)
-      state.log('result', `Point ${typedPoint.x.toFixed(2)}, ${typedPoint.y.toFixed(2)}`)
+      state.log('result', `Point ${formatPoint(typedPoint, state.camera.zoom)}`)
       return
     }
 
