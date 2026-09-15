@@ -57,7 +57,7 @@ export function PropertiesPanel() {
             ))}
           </select>
         </label>
-        <label title="A locked viewport holds its scale and its centring against accidental edits.">
+        <label title="A locked viewport holds its view: the wheel and a drag leave what it shows alone.">
           Locked
           <input
             type="checkbox"

@@ -99,6 +99,23 @@ import type {
 } from './types'
 import { extentsBounds, pageSizeMm, VIEWPORT_SCALES } from './print'
 
+/**
+ * How far a viewport's view may be magnified or shrunk, in drawing units per millimetre of paper.
+ * A viewport is zoomed by pointing at it rather than by choosing a number, so the ends of the range
+ * have to be somewhere; these are wide enough for any sheet a drawing office would issue and tight
+ * enough that the view cannot be lost down to nothing or blown out to where nothing is left.
+ */
+export const VIEWPORT_ZOOM_MIN = 0.002
+export const VIEWPORT_ZOOM_MAX = 100000
+
+/** The viewport a store action names, or undefined when that sheet or viewport is gone. */
+const findViewport = (
+  doc: DrawingDocument,
+  layoutId: string,
+  viewportId: string,
+): Viewport | undefined =>
+  doc.layouts.find((layout) => layout.id === layoutId)?.viewports.find((v) => v.id === viewportId)
+
 const controller = new DocumentController(makeDefaultDocument())
 
 /**
@@ -199,6 +216,8 @@ type CadState = {
   activeLayoutId: string | null
   /** The viewport picked on the current sheet, so the properties panel can edit its scale. */
   activeViewportId: string | null
+  /** The viewport being worked in, if any. Its frame stays put while the drawing inside it moves. */
+  enteredViewportId: string | null
   draftPoints: Vec2[]
   /**
    * What the dynamic input is holding: which step of which command the typed values belong
@@ -355,6 +374,11 @@ type CadState = {
   updateViewport: (layoutId: string, viewportId: string, patch: Partial<Viewport>) => void
   deleteViewport: (layoutId: string, viewportId: string) => void
   selectViewport: (viewportId: string | null) => void
+  enterViewport: (viewportId: string | null) => void
+  /** Grows or shrinks the drawing inside a viewport, holding the model point under `anchorPaper`. */
+  zoomViewport: (layoutId: string, viewportId: string, anchorPaper: Vec2, factor: number) => void
+  /** Slides the drawing inside a viewport by a distance measured on the sheet. */
+  panViewport: (layoutId: string, viewportId: string, deltaPaper: Vec2) => void
   setCommandInput: (input: string) => void
   setStatusMessage: (message: string) => void
   toggleOsnap: () => void
@@ -457,6 +481,7 @@ export const useCadStore = create<CadState>((set, get) => ({
   camera: { x: 400, y: 300, zoom: 1 },
   activeLayoutId: null,
   activeViewportId: null,
+  enteredViewportId: null,
   draftPoints: [],
   typed: EMPTY_TYPED,
   snapModes: defaultSnapModes,
@@ -701,6 +726,8 @@ export const useCadStore = create<CadState>((set, get) => ({
     set({
       activeLayoutId: layout ? layout.id : null,
       activeViewportId: null,
+      // Leaving a sheet also leaves whatever viewport was being worked in.
+      enteredViewportId: null,
       // A sheet and the model do not share a selection: what is picked in one means nothing in the other.
       selectedIds: [],
       draftPoints: [],
@@ -787,8 +814,62 @@ export const useCadStore = create<CadState>((set, get) => ({
       ),
     }))
     if (get().activeViewportId === viewportId) set({ activeViewportId: null })
+    if (get().enteredViewportId === viewportId) set({ enteredViewportId: null })
   },
   selectViewport: (viewportId) => set({ activeViewportId: viewportId }),
+
+  /*
+   * Working *inside* a viewport, the way a drawing office does: the view moves, the frame stays.
+   * A viewport that is only selected can be repositioned; one that is entered can also be told what
+   * part of the drawing to show, which is the difference between one sheet per drawing and a sheet
+   * carrying a plan and a detail of it.
+   */
+  enterViewport: (viewportId) =>
+    set({
+      enteredViewportId: viewportId,
+      statusMessage: viewportId
+        ? 'Viewport active — wheel to zoom, drag to pan, double-click the desk to leave'
+        : 'Paper space',
+    }),
+
+  /*
+   * Zooming holds the drawing still under the pointer: the model point under the cursor before the
+   * zoom is the model point under it afterwards, so the view grows around whatever was pointed at
+   * instead of sliding away from it. The scale a viewport lands on after a zoom is whatever the
+   * fingers asked for, so the panel offers it as well as the round numbers.
+   */
+  zoomViewport: (layoutId, viewportId, anchorPaper, factor) => {
+    const viewport = findViewport(get().doc, layoutId, viewportId)
+    // A locked viewport holds its view against the pointer: both what it shows and how far it is
+    // zoomed. Editing it deliberately, from the panel, is still allowed.
+    if (!viewport || viewport.locked) return
+    const unitsPerMm = Math.min(
+      VIEWPORT_ZOOM_MAX,
+      Math.max(VIEWPORT_ZOOM_MIN, viewport.unitsPerMm / factor),
+    )
+    if (unitsPerMm === viewport.unitsPerMm) return
+
+    const offset = { x: anchorPaper.x - viewport.center.x, y: anchorPaper.y - viewport.center.y }
+    const held = {
+      x: viewport.modelCenter.x + offset.x * viewport.unitsPerMm,
+      y: viewport.modelCenter.y + offset.y * viewport.unitsPerMm,
+    }
+    get().updateViewport(layoutId, viewportId, {
+      unitsPerMm,
+      modelCenter: { x: held.x - offset.x * unitsPerMm, y: held.y - offset.y * unitsPerMm },
+    })
+  },
+
+  panViewport: (layoutId, viewportId, deltaPaper) => {
+    const viewport = findViewport(get().doc, layoutId, viewportId)
+    if (!viewport || viewport.locked) return
+    get().updateViewport(layoutId, viewportId, {
+      modelCenter: {
+        x: viewport.modelCenter.x - deltaPaper.x * viewport.unitsPerMm,
+        y: viewport.modelCenter.y - deltaPaper.y * viewport.unitsPerMm,
+      },
+    })
+  },
   setCommandInput: (commandInput) => set({ commandInput }),
   setStatusMessage: (statusMessage) => set({ statusMessage }),
   toggleOsnap: () => set((state) => ({ osnapEnabled: !state.osnapEnabled })),

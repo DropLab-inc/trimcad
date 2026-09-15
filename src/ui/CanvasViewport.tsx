@@ -34,7 +34,7 @@ import { canFillet, chamferCorner, filletCorner, hasStraightSegments, offsetEnti
 import { canBeTangent, circleOnDiameter, circleThroughPoints, cornerRadius, polygonOnEdge, rectFromCenter, rectFromCorners, arcFromCenterStartEnd, arcFromStartCenterEnd, arcThroughPoints } from '../core/construct'
 import { polarArrayCopies, rectangularArrayCopies } from '../core/array'
 import { dragGrip, entityGrips, findGripAt, type Grip } from '../core/grips'
-import type { CadEntity, DimensionEntity, Layout, PolylineEntity, SnapMode } from '../core/types'
+import type { CadEntity, DimensionEntity, Layout, PolylineEntity, SnapMode, Viewport } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
 import { COMMAND_INPUT_ID, focusCommandInput } from './commandFocus'
 import { NARROW_QUERY, useMediaQuery } from './useMediaQuery'
@@ -63,6 +63,11 @@ type Pinch = {
 
 /** Stable empty object so memo dependencies do not change on every render. */
 const NO_VALUES: Record<string, string> = {}
+
+/** Whether a point on the sheet falls inside a viewport's frame — the frame a press lands in. */
+const inViewportFrame = (viewport: Viewport, paper: Vec2): boolean =>
+  Math.abs(paper.x - viewport.center.x) <= viewport.widthMm / 2 &&
+  Math.abs(paper.y - viewport.center.y) <= viewport.heightMm / 2
 
 const screenToWorld = (point: Vec2, camera: Camera): Vec2 => ({
   x: (point.x - camera.x) / camera.zoom,
@@ -153,6 +158,10 @@ export function CanvasViewport() {
   const activeViewportId = useCadStore((state) => state.activeViewportId)
   const selectViewport = useCadStore((state) => state.selectViewport)
   const updateViewport = useCadStore((state) => state.updateViewport)
+  const enteredViewportId = useCadStore((state) => state.enteredViewportId)
+  const enterViewport = useCadStore((state) => state.enterViewport)
+  const zoomViewport = useCadStore((state) => state.zoomViewport)
+  const panViewport = useCadStore((state) => state.panViewport)
   const setCamera = useCadStore((state) => state.setCamera)
   const applySelection = useCadStore((state) => state.applySelection)
   const selectAll = useCadStore((state) => state.selectAll)
@@ -214,6 +223,8 @@ export function CanvasViewport() {
   const pinch = useRef<Pinch | null>(null)
   /** A viewport being dragged around its sheet, and where inside it the grab landed. */
   const [viewportDrag, setViewportDrag] = useState<{ id: string; grab: Vec2 } | null>(null)
+  /** A drawing being slid inside an entered viewport, and where the pointer last was on the sheet. */
+  const [viewportPan, setViewportPan] = useState<{ id: string; last: Vec2 } | null>(null)
   const [boxStart, setBoxStart] = useState<Vec2 | null>(null)
   const [boxEnd, setBoxEnd] = useState<Vec2 | null>(null)
   /**
@@ -583,18 +594,23 @@ export function CanvasViewport() {
      */
     if (activeLayout) {
       const paper = screenToWorld(localPoint(event), camera)
-      const hit = [...activeLayout.viewports]
-        .reverse()
-        .find(
-          (viewport) =>
-            Math.abs(paper.x - viewport.center.x) <= viewport.widthMm / 2 &&
-            Math.abs(paper.y - viewport.center.y) <= viewport.heightMm / 2,
-        )
+      const hit = viewportAt(paper)
       if (!hit) {
         selectViewport(null)
+        // Pressing the desk lets go of the viewport being worked in, which is how you get back out
+        // of a view without hunting for the right double-click.
+        enterViewport(null)
         return
       }
       selectViewport(hit.id)
+      /*
+       * Inside the viewport being worked in, a drag slides the drawing under a frame that stays put;
+       * anywhere else on a sheet, a drag moves the frame itself across the paper.
+       */
+      if (hit.id === enteredViewportId && !hit.locked) {
+        setViewportPan({ id: hit.id, last: paper })
+        return
+      }
       if (!hit.locked) {
         setViewportDrag({
           id: hit.id,
@@ -778,6 +794,16 @@ export function CanvasViewport() {
       setTrackingLabel(tracking)
       return
     }
+    if (viewportPan && activeLayout) {
+      const paper = screenToWorld(local, camera)
+      panViewport(activeLayout.id, viewportPan.id, {
+        x: paper.x - viewportPan.last.x,
+        y: paper.y - viewportPan.last.y,
+      })
+      setViewportPan({ id: viewportPan.id, last: paper })
+      return
+    }
+
     if (viewportDrag && activeLayout) {
       // The grab point stays under the cursor, so the frame moves with the hand rather than jumping
       // its centre to wherever the press happened to land.
@@ -851,6 +877,7 @@ export function CanvasViewport() {
     setPanning(false)
     setLastMouse(null)
     setViewportDrag(null)
+    setViewportPan(null)
 
     if (gripDrag) {
       const travelled = Math.hypot(gripDrag.to.x - gripDrag.grip.point.x, gripDrag.to.y - gripDrag.grip.point.y)
@@ -957,6 +984,7 @@ export function CanvasViewport() {
     setPanning(false)
     setLastMouse(null)
     setViewportDrag(null)
+    setViewportPan(null)
     setBoxStart(null)
     setBoxEnd(null)
     setBoxLatched(false)
@@ -981,9 +1009,45 @@ export function CanvasViewport() {
 
   const handleWheel = (event: WheelEvent<SVGSVGElement>) => {
     const local = localPoint(event)
+    /*
+     * Inside the viewport being worked in, the wheel resizes the view rather than the sheet: the
+     * frame stays where it is and the drawing grows or shrinks within it, which is the whole point
+     * of entering it. A locked viewport holds its view, so the wheel is swallowed rather than
+     * falling through to the page.
+     */
+    const entered =
+      activeLayout && enteredViewportId
+        ? activeLayout.viewports.find((viewport) => viewport.id === enteredViewportId)
+        : undefined
+    if (activeLayout && entered) {
+      if (!entered.locked) {
+        zoomViewport(
+          activeLayout.id,
+          entered.id,
+          screenToWorld(local, camera),
+          event.deltaY > 0 ? 0.9 : 1.1,
+        )
+      }
+      return
+    }
+
     const worldBefore = screenToWorld(local, camera)
     const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, camera.zoom * (event.deltaY > 0 ? 0.9 : 1.1)))
     setCamera({ zoom, x: local.x - worldBefore.x * zoom, y: local.y - worldBefore.y * zoom })
+  }
+
+  /** Which viewport a point on the sheet falls in — the frame a press or a double-click means. */
+  const viewportAt = (paper: Vec2): Viewport | undefined =>
+    activeLayout
+      ? [...activeLayout.viewports].reverse().find((viewport) => inViewportFrame(viewport, paper))
+      : undefined
+
+  const handleDoubleClick = (event: MouseEvent<SVGSVGElement>) => {
+    if (!activeLayout) return
+    const hit = viewportAt(screenToWorld(localPoint(event), camera))
+    // Double-clicking a frame enters it; double-clicking the desk leaves, as does double-clicking
+    // the frame already being worked in.
+    enterViewport(hit && hit.id !== enteredViewportId ? hit.id : null)
   }
 
   const { width, height } = size
@@ -1613,6 +1677,11 @@ export function CanvasViewport() {
           const bottom = viewport.center.y - viewport.heightMm / 2
           const clipId = `viewport-clip-${viewport.id}`
           const current = viewport.id === activeViewportId
+          /*
+           * The viewport being worked in draws heaviest, so it is never in doubt which frame the
+           * wheel and a drag will act on — a sheet can carry any number of them.
+           */
+          const entered = viewport.id === enteredViewportId
           return (
             <g key={viewport.id}>
               <defs>
@@ -1632,10 +1701,10 @@ export function CanvasViewport() {
                 width={viewport.widthMm}
                 height={viewport.heightMm}
                 fill="none"
-                stroke={current ? palette.selection : palette.gridMajor}
-                strokeWidth={current ? 2 : 1}
+                stroke={entered || current ? palette.selection : palette.gridMajor}
+                strokeWidth={entered ? 3 : current ? 2 : 1}
                 vectorEffect="non-scaling-stroke"
-                style={{ cursor: 'pointer' }}
+                style={{ cursor: entered ? 'move' : 'pointer' }}
                 onPointerDown={() => selectViewport(viewport.id)}
               />
             </g>
@@ -1658,6 +1727,7 @@ export function CanvasViewport() {
         onTouchStart={trackTouch}
         onTouchMove={trackTouch}
         onWheel={handleWheel}
+        onDoubleClick={handleDoubleClick}
         onContextMenu={(event) => {
           // Right-click stands in for Enter, matching AutoCAD with shortcut menus turned off.
           event.preventDefault()
