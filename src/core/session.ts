@@ -81,7 +81,7 @@ export function startSessionTracking(options: { collector?: string; now?: number
   window.addEventListener('pointermove', onActivity, { passive: true })
   window.addEventListener('keydown', onActivity, { passive: true })
 
-  const collector = options.collector ?? '/cdn-cgi/trimcad-session'
+  const collector = options.collector ?? '/trimcad-session'
   window.addEventListener('pagehide', () => report(collector))
   // Mobile Safari fires pagehide unreliably; visibilitychange to hidden is the same moment for it.
   document.addEventListener('visibilitychange', () => {
