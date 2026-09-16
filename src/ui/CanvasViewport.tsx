@@ -480,7 +480,9 @@ export function CanvasViewport() {
        * keyboard that cannot insert a space by itself: predictive keyboards add one as the user
        * types, and treating that as Enter commits a half-typed value.
        */
-      const spaceAccepts = event.key === ' ' && !navigator.maxTouchPoints
+      // A space accepts a command, never a prompt that is waiting for words: a note is mostly spaces.
+      const spaceAccepts =
+        event.key === ' ' && !navigator.maxTouchPoints && currentPrompt(useCadStore.getState()).kind !== 'text'
       if (event.key === 'Enter' || spaceAccepts) {
         event.preventDefault()
         if (pickingEdges) {

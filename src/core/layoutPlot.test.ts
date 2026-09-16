@@ -79,14 +79,14 @@ const reset = () => {
 }
 
 describe('plotting a sheet', () => {
-  it("puts the sheet's own objects on the page at 1:1", () => {
+  it("puts the sheet's own objects on the page at 1:1", async () => {
     reset()
     const doc = makeDefaultDocument()
     const layout = sheetWith(50)
     // A border drawn on the paper: 20 mm in from the corner, running 100 mm across.
     layout.entities = [createLine(layerId(doc), { x: 20, y: 20 }, { x: 120, y: 20 })]
 
-    exportLayoutPdf({ ...doc, entities: [] }, layout)
+    await exportLayoutPdf({ ...doc, entities: [] }, layout)
 
     // Nothing is in the model, so the only line on the page is the sheet's — and it lands at the
     // paper millimetres it was drawn in.
@@ -94,14 +94,14 @@ describe('plotting a sheet', () => {
     expect(captured.lines[0].deltas).toEqual([[100, 0]])
   })
 
-  it("keeps a viewport's scale out of the sheet's own objects", () => {
+  it("keeps a viewport's scale out of the sheet's own objects", async () => {
     reset()
     const doc = makeDefaultDocument()
     const layout = sheetWith(50)
     const line = createLine(layerId(doc), { x: 0, y: 0 }, { x: 100, y: 0 })
     layout.entities = [line]
 
-    exportLayoutPdf({ ...doc, entities: [line] }, layout)
+    await exportLayoutPdf({ ...doc, entities: [line] }, layout)
 
     // The same 100-unit line, twice: inside a 1:50 viewport it is brought down to 2 mm of paper,
     // while as the sheet's own object it stays 100 mm. That difference is the whole reason the two
@@ -111,21 +111,21 @@ describe('plotting a sheet', () => {
     expect(lengths).toContain(100)
   })
 
-  it('uses the layout paper and orientation, not a size chosen in the dialog', () => {
+  it('uses the layout paper and orientation, not a size chosen in the dialog', async () => {
     reset()
     const doc = makeDefaultDocument()
-    exportLayoutPdf(doc, sheetWith(50))
+    await exportLayoutPdf(doc, sheetWith(50))
     expect(captured.format).toEqual([297, 210])
     expect(captured.orientation).toBe('landscape')
   })
 
-  it('lands a 500 unit line at 10 mm long in a 1:50 viewport', () => {
+  it('lands a 500 unit line at 10 mm long in a 1:50 viewport', async () => {
     reset()
     const doc = makeDefaultDocument()
     const line = createLine(layerId(doc), { x: -250, y: 0 }, { x: 250, y: 0 })
     const withLine = { ...doc, entities: [line] }
 
-    exportLayoutPdf(withLine, sheetWith(50))
+    await exportLayoutPdf(withLine, sheetWith(50))
 
     expect(captured.lines).toHaveLength(1)
     const [{ start, deltas }] = captured.lines
@@ -137,14 +137,14 @@ describe('plotting a sheet', () => {
     expect(start[1]).toBeCloseTo(105, 6)
   })
 
-  it('keeps the sheet the way the canvas draws it, rather than flipping it', () => {
+  it('keeps the sheet the way the canvas draws it, rather than flipping it', async () => {
     reset()
     const doc = makeDefaultDocument()
     const layout = sheetWith(50)
     layout.viewports[0].center = { x: 148.5, y: 40 }
     const line = createLine(layerId(doc), { x: 0, y: 0 }, { x: 0, y: 500 })
 
-    exportLayoutPdf({ ...doc, entities: [line] }, layout)
+    await exportLayoutPdf({ ...doc, entities: [line] }, layout)
 
     const [{ start, deltas }] = captured.lines
     // The frame's centre lands 40 mm down a 210 mm page — not mirrored to 170 mm.
@@ -153,34 +153,34 @@ describe('plotting a sheet', () => {
     expect(deltas[0][1]).toBeCloseTo(10, 6)
   })
 
-  it('scales with the viewport rather than the drawing', () => {
+  it('scales with the viewport rather than the drawing', async () => {
     reset()
     const doc = makeDefaultDocument()
     const line = createLine(layerId(doc), { x: 0, y: 0 }, { x: 100, y: 0 })
 
-    exportLayoutPdf({ ...doc, entities: [line] }, sheetWith(1))
+    await exportLayoutPdf({ ...doc, entities: [line] }, sheetWith(1))
     const atOneToOne = captured.lines[0].deltas[0][0]
 
     reset()
-    exportLayoutPdf({ ...doc, entities: [line] }, sheetWith(10))
+    await exportLayoutPdf({ ...doc, entities: [line] }, sheetWith(10))
     const atOneToTen = captured.lines[0].deltas[0][0]
 
     expect(atOneToOne).toBeCloseTo(100, 6)
     expect(atOneToTen).toBeCloseTo(10, 6)
   })
 
-  it('names the file after the sheet', () => {
+  it('names the file after the sheet', async () => {
     reset()
     const doc = makeDefaultDocument()
-    exportLayoutPdf(doc, { ...sheetWith(50), name: 'Ground Floor' })
+    await exportLayoutPdf(doc, { ...sheetWith(50), name: 'Ground Floor' })
     expect(captured.saved).toEqual(['trimcad-ground-floor.pdf'])
   })
 
-  it('plots lineweight in millimetres, which no viewport scale may change', () => {
+  it('plots lineweight in millimetres, which no viewport scale may change', async () => {
     reset()
     const doc = makeDefaultDocument()
     const line = createLine(layerId(doc), { x: 0, y: 0 }, { x: 10, y: 0 })
-    exportLayoutPdf({ ...doc, entities: [line] }, sheetWith(5000))
+    await exportLayoutPdf({ ...doc, entities: [line] }, sheetWith(5000))
     expect(captured.lineWidths).toEqual([0.25])
   })
 })

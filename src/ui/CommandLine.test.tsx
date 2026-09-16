@@ -125,6 +125,34 @@ describe('the command line', () => {
     expect(state().activeTool).toBe('line')
   })
 
+  it('never takes a space as Enter while a prompt is waiting for words', () => {
+    /*
+     * A note is mostly spaces. With space accepting the line, `NOTES SEE SHEET` arrived as three text
+     * objects one line apart, because TEXT asks for the next line after every one of them.
+     */
+    render(<CommandLine />)
+    state().setTool('text')
+    useCadStore.setState({ textPending: 'text', draftPoints: [{ x: 0, y: 0 }] })
+    const input = screen.getByRole('textbox')
+
+    fireEvent.change(input, { target: { value: 'NOTES' } })
+    fireEvent.keyDown(input, { key: ' ' })
+
+    expect(state().doc.entities).toHaveLength(0)
+    expect(state().activeTool).toBe('text')
+    expect(input).toHaveValue('NOTES')
+  })
+
+  it('still takes a space as Enter for a command, as AutoCAD does', () => {
+    render(<CommandLine />)
+    const input = screen.getByRole('textbox')
+
+    fireEvent.change(input, { target: { value: 'LINE' } })
+    fireEvent.keyDown(input, { key: ' ' })
+
+    expect(state().activeTool).toBe('line')
+  })
+
   it('suggests commands as you type', () => {
     render(<CommandLine />)
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'CIR' } })

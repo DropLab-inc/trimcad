@@ -91,13 +91,13 @@ export function PrintDialog() {
 
   const patch = (next: Partial<PrintOptions>) => setPrintOptions(next)
 
-  const plot = () => {
+  const plot = async () => {
     /*
      * A sheet is already at paper scale, so plotting one asks nothing about area or scale. Anything
      * the model-space controls are holding is deliberately ignored here rather than half-applied.
      */
     if (activeLayout) {
-      exportLayoutPdf(doc, activeLayout)
+      await exportLayoutPdf(doc, activeLayout)
       log(
         'result',
         `Plotted ${activeLayout.name} at 1:1 on ${activeLayout.paper.toUpperCase()} ${activeLayout.orientation}`,
@@ -106,7 +106,7 @@ export function PrintDialog() {
       return
     }
     if (!canPlot) return
-    const result = exportPdf(doc, options, session.view, session.selectedIds)
+    const result = await exportPdf(doc, options, session.view, session.selectedIds)
     if (!result) {
       log('error', 'Nothing to plot in that area.')
       return
@@ -320,7 +320,7 @@ export function PrintDialog() {
             <button type="button" onClick={closePrintDialog}>
               Cancel
             </button>
-            <button type="button" className="print-dialog-primary" disabled={!canPlot} onClick={plot}>
+            <button type="button" className="print-dialog-primary" disabled={!canPlot} onClick={() => void plot()}>
               Plot
             </button>
           </div>

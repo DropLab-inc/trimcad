@@ -183,11 +183,14 @@ export function CommandLine() {
     // A key event that belongs to a composition is the keyboard's, not the command line's.
     if (composingRef.current || event.nativeEvent.isComposing) return
     /*
-     * Enter submits. Space does too, which is how AutoCAD accepts a command — but only on a
-     * keyboard that cannot insert one by itself: predictive keyboards add a trailing space as the
-     * user types, and treating that as Enter runs a command before the word is finished.
+     * Enter submits. Space does too, which is how AutoCAD accepts a COMMAND — but only on a keyboard
+     * that cannot insert one by itself (predictive keyboards add a trailing space as the user types,
+     * and treating that as Enter runs a command before the word is finished) and never while a prompt
+     * is waiting for words. A note is mostly spaces: with space accepting the line, `NOTES SEE SHEET`
+     * arrived as three separate text objects, one per word, because TEXT asks for the next line after
+     * every one of them.
      */
-    const spaceSubmits = event.key === ' ' && !navigator.maxTouchPoints
+    const spaceSubmits = event.key === ' ' && !navigator.maxTouchPoints && prompt?.kind !== 'text'
     if (event.key === 'Enter' || spaceSubmits || event.keyCode === 13) {
       event.preventDefault()
       // Enter takes the suggestion on show when what was typed cannot stand on its own.

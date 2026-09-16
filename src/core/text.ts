@@ -1,4 +1,4 @@
-import { FONT_ADVANCES, FIRST_CODE, TEXT_FONTS, type TextFont } from './textMetrics'
+import { FONT_ADVANCES, FONT_FACES, FIRST_CODE, TEXT_FONTS, type FontFace, type TextFont } from './textMetrics'
 import type { Vec2 } from './math/vec2'
 import type { MTextAttachment, MTextEntity, TextEntity, TextJustify, TextStyle } from './types'
 
@@ -46,7 +46,20 @@ export const textStylesOf = (document: { textStyles?: TextStyle[] }): TextStyle[
 export const styleFor = (
   document: { textStyles?: TextStyle[] },
   entity: { styleId?: string },
-): TextStyle => textStylesOf(document).find((style) => style.id === entity.styleId) ?? STANDARD_STYLE
+): TextStyle => {
+  const styles = textStylesOf(document)
+  const own = styles.find((style) => style.id === entity.styleId)
+  if (own) return own
+  /*
+   * An object that names no style is in Standard — the DRAWING's Standard, the one the style dialog
+   * edits. Answering with the built-in constant instead was a style you could edit for nothing: every
+   * object that did not name a style kept drawing in Helvetica.
+   */
+  return (
+    styles.find((style) => style.id === STANDARD_STYLE.id || style.name === STANDARD_STYLE.name) ??
+    STANDARD_STYLE
+  )
+}
 
 /**
  * The style an object draws in, with the width factor and oblique angle the object carries itself.
@@ -73,6 +86,10 @@ export const styleByName = (styles: TextStyle[], name: string): TextStyle | null
 const FALLBACK_ADVANCE = 556
 /** Wide scripts are not squeezed into a Latin advance; a full em is the safer guess. */
 const WIDE_ADVANCE = 1000
+
+/** How a style's font is drawn: the CSS family, the PDF family, and the file when it is shipped. */
+export const faceOf = (font: string): FontFace =>
+  FONT_FACES[(TEXT_FONTS.includes(font as TextFont) ? font : 'helvetica') as TextFont]
 
 const advanceOf = (font: TextFont, character: string): number => {
   const code = character.codePointAt(0) ?? 32

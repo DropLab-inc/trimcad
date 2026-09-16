@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import { angularSweep, makeDimensionLabel, polar } from '../core/geometry'
 import { hatchBaseAngle, hatchTileSize, HATCH_PATTERNS as PATTERN_LIST } from '../core/hatch'
 import { add, mul, normalize, sub, type Vec2 } from '../core/math/vec2'
-import { effectiveStyleFor, textLinesOf } from '../core/text'
+import { effectiveStyleFor, faceOf, textLinesOf } from '../core/text'
 import type {
   BlockDefinition,
   CadEntity,
@@ -19,27 +19,15 @@ import type { CanvasPalette } from './theme'
 export const HATCH_PATTERNS: HatchPattern[] = PATTERN_LIST
 
 /**
- * How a style's font name reads on the canvas.
+ * How a style's font is drawn on the canvas.
  *
- * The three families are the ones the plot can also draw, so a drawing's typography survives being
- * plotted: Helvetica/Arial, Times and Courier are metric-compatible pairs, and the canvas wraps a
- * paragraph from the same widths jsPDF plots it with.
+ * Every face here can also be PLOTTED — jsPDF's built-ins directly, the shipped files embedded into the
+ * PDF from the same TTF the page loads — so a drawing's typography is the same on screen and on paper,
+ * and a paragraph wraps from the widths the plot draws it with. See src/core/textMetrics.ts.
  */
-const FONT_FAMILIES: Record<string, string> = {
-  helvetica: 'Helvetica, Arial, sans-serif',
-  times: '"Times New Roman", Times, serif',
-  courier: '"Courier New", Courier, monospace',
-}
-
 export const cssFont = (font: string): { fontFamily: string; fontWeight: string; fontStyle: string } => {
-  const bold = font.includes('bold')
-  const italic = font.includes('italic')
-  const family = font.replace(/-?(bold|italic|bolditalic)$/, '') || 'helvetica'
-  return {
-    fontFamily: FONT_FAMILIES[family] ?? FONT_FAMILIES.helvetica,
-    fontWeight: bold ? 'bold' : 'normal',
-    fontStyle: italic ? 'italic' : 'normal',
-  }
+  const face = faceOf(font)
+  return { fontFamily: face.cssStack, fontWeight: face.cssWeight, fontStyle: face.cssStyle }
 }
 
 /**

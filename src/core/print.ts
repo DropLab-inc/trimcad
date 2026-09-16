@@ -1,6 +1,7 @@
 import { jsPDF, type Matrix } from 'jspdf'
 import { flattenEntity, pointsOfEntity } from './flatten'
-import { effectiveStyleFor, textLinesOf, textPoint } from './text'
+import { effectiveStyleFor, faceOf, textLinesOf, textPoint, textStylesOf } from './text'
+import { FONT_FACES, type TextFont } from './textMetrics'
 import { isLayerPlottable, layerOf, plottableEntities } from './layers'
 import type { Vec2 } from './math/vec2'
 import type {
@@ -282,14 +283,14 @@ export const describeArea = (options: PrintOptions): string => {
  * Builds the PDF and downloads it. Returns the layout that was used, or null when the chosen area
  * cannot be plotted (no window, empty selection).
  */
-export const exportPdf = (
+export const exportPdf = async (
   document: DrawingDocument,
   options: PrintOptions = DEFAULT_PRINT_OPTIONS,
   view: ViewFrame,
   selectedIds: string[] = [],
   /** Override the download name; tests pass a no-op save by stubbing jsPDF instead. */
   fileName?: string,
-): PlotLayout | null => {
+): Promise<PlotLayout | null> => {
   const bounds = resolvePlotBounds(document, options, view, selectedIds)
   if (!bounds) return null
 
@@ -299,6 +300,9 @@ export const exportPdf = (
     unit: 'mm',
     format: [layout.pageW, layout.pageH],
   })
+  // The shipped faces go in before anything is drawn: jsPDF has no such font until it is handed one.
+  const fonts = await fontDataFor(document)
+  registerFonts(pdf, fonts)
 
   // Drawing coordinates run up the page and PDF coordinates run down it, so y is flipped here.
   const toPage = (point: Vec2): [number, number] => [
@@ -324,7 +328,7 @@ export const exportPdf = (
     pdf.setLineWidth(lineweightOf(layer))
 
     if (entity.type === 'text' || entity.type === 'mtext') {
-      plotText(pdf, document, entity, toPage, 1 / layout.applied)
+      plotText(pdf, document, entity, toPage, 1 / layout.applied, fonts)
       continue
     }
 
@@ -381,11 +385,19 @@ const plotText = (
   entity: TextEntity | MTextEntity,
   toPage: (point: Vec2) => [number, number],
   unitsPerMm: number,
+  /** The shipped faces handed to this document, by font key. */
+  fonts: Map<string, string>,
 ): void => {
   const style = effectiveStyleFor(document, entity)
   const { lines, placement } = textLinesOf(entity, style)
-  const [family, weight] = fontParts(style.font)
-  pdf.setFont(family, weight)
+  const face = faceOf(style.font)
+  /*
+   * A shipped face is only in the document once it has been handed over; without it jsPDF has no such
+   * font and would throw. Falling back to the built-in keeps the plot coming out, and is the only case
+   * where the face drawn is not the face the style names.
+   */
+  const drawable = face.file && !fonts.has(style.font) ? FONT_FACES.helvetica : face
+  pdf.setFont(drawable.pdfFamily, drawable.pdfStyle)
   pdf.setFontSize((entity.height / unitsPerMm) * (72 / 25.4))
 
   const turn = ((entity.rotation ?? 0) * Math.PI) / 180
@@ -412,17 +424,49 @@ const plotText = (
   })
 }
 
-/** Splits a style's font name into the family and face jsPDF asks for. */
-const fontParts = (font: string): [string, string] => {
-  const family = font.split('-')[0]
-  const face = font.includes('bold') && font.includes('italic')
-    ? 'bolditalic'
-    : font.includes('bold')
-      ? 'bold'
-      : font.includes('italic')
-        ? 'italic'
-        : 'normal'
-  return [(['helvetica', 'times', 'courier'].includes(family) ? family : 'helvetica'), face]
+/**
+ * The faces a drawing uses that jsPDF cannot draw by itself, as base64 TTFs.
+ *
+ * jsPDF's five families are built in; the shipped ones have to be handed to the document before any
+ * text is drawn, and the same file the canvas loads is the one embedded, so the two cannot disagree.
+ * Fetched once per face and kept, so a plot of several sheets pays for it once.
+ */
+const fetchedFonts = new Map<string, string>()
+
+const fontDataFor = async (document: DrawingDocument): Promise<Map<string, string>> => {
+  const wanted = new Set<string>()
+  for (const style of textStylesOf(document)) {
+    if (FONT_FACES[style.font as TextFont]?.file) wanted.add(style.font)
+  }
+
+  const data = new Map<string, string>()
+  for (const font of wanted) {
+    const face = FONT_FACES[font as TextFont]
+    let base64 = fetchedFonts.get(font)
+    if (!base64) {
+      const response = await fetch(face.file as string)
+      const bytes = new Uint8Array(await response.arrayBuffer())
+      let binary = ''
+      // A TTF is bigger than a single `String.fromCharCode` spread can take.
+      for (let index = 0; index < bytes.length; index += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000))
+      }
+      base64 = btoa(binary)
+      fetchedFonts.set(font, base64)
+    }
+    data.set(font, base64)
+  }
+  return data
+}
+
+/** Hands the plot's own document the faces it will draw with. */
+const registerFonts = (pdf: jsPDF, fonts: Map<string, string>): void => {
+  for (const [font, base64] of fonts) {
+    const face = FONT_FACES[font as TextFont]
+    const name = `${font}.ttf`
+    pdf.addFileToVFS(name, base64)
+    pdf.addFont(name, face.pdfFamily, face.pdfStyle)
+  }
 }
 
 const plotEntities = (
@@ -431,6 +475,7 @@ const plotEntities = (
   entities: CadEntity[],
   toPage: (point: Vec2) => [number, number],
   unitsPerMm: number,
+  fonts: Map<string, string>,
 ): void => {
   for (const entity of entities) {
     const layer = layerOf(document, entity)
@@ -441,7 +486,7 @@ const plotEntities = (
     pdf.setLineWidth(lineweightOf(layer))
 
     if (entity.type === 'text' || entity.type === 'mtext') {
-      plotText(pdf, document, entity, toPage, unitsPerMm)
+      plotText(pdf, document, entity, toPage, unitsPerMm, fonts)
       continue
     }
 
@@ -469,18 +514,20 @@ const plotEntities = (
  * split AutoCAD makes between plotting model space and plotting a layout, and it is what takes the
  * guesswork out of issuing a drawing — nothing here has to be told how big the drawing is.
  */
-export const exportLayoutPdf = (
+export const exportLayoutPdf = async (
   document: DrawingDocument,
   layout: Layout,
   /** Override the download name; tests pass a no-op save by stubbing jsPDF instead. */
   fileName?: string,
-): void => {
+): Promise<void> => {
   const page = pageSizeMm(layout.paper, layout.orientation)
   const pdf = new jsPDF({
     orientation: layout.orientation,
     unit: 'mm',
     format: [page.width, page.height],
   })
+  const fonts = await fontDataFor(document)
+  registerFonts(pdf, fonts)
 
   pdf.setLineJoin('round')
   pdf.setLineCap('round')
@@ -506,7 +553,7 @@ export const exportLayoutPdf = (
     pdf.clip()
     pdf.discardPath()
 
-    plotEntities(pdf, document, plottableEntities(document), toPage, viewport.unitsPerMm)
+    plotEntities(pdf, document, plottableEntities(document), toPage, viewport.unitsPerMm, fonts)
 
     pdf.restoreGraphicsState()
   }
@@ -522,6 +569,7 @@ export const exportLayoutPdf = (
     plottableEntities({ ...document, entities: layout.entities }),
     (point) => [point.x, point.y],
     1,
+    fonts,
   )
 
   const slug = layout.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')

@@ -1,7 +1,7 @@
 import { useId, useState } from 'react'
 import { useCadStore } from '../core/store'
 import { STANDARD_STYLE, styleFor, textStylesOf } from '../core/text'
-import { TEXT_FONTS, type TextFont } from '../core/textMetrics'
+import { FONT_FACES, TEXT_FONTS, type TextFont } from '../core/textMetrics'
 
 /**
  * AutoCAD's Text Style dialog: the drawing's styles, and the four things a style is.
@@ -69,7 +69,7 @@ export function TextStylesDialog() {
                   >
                     {TEXT_FONTS.map((font) => (
                       <option key={font} value={font}>
-                        {font}
+                        {FONT_FACES[font].label}
                       </option>
                     ))}
                   </select>
