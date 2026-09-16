@@ -148,7 +148,23 @@ export type SplineEntity = BaseEntity & {
   controlPoints: Vec2[]
 }
 
-export type HatchPattern = 'solid' | 'ansi31' | 'ansi37' | 'dots' | 'net' | 'line'
+export type HatchPattern =
+  | 'ansi31'
+  | 'ansi32'
+  | 'ansi33'
+  | 'ansi34'
+  | 'ansi35'
+  | 'ansi36'
+  | 'ansi37'
+  | 'ansi38'
+  | 'brick'
+  | 'cross'
+  | 'dots'
+  | 'grid'
+  | 'line'
+  | 'net'
+  | 'sand'
+  | 'solid'
 
 export type HatchEntity = BaseEntity & {
   type: 'hatch'

@@ -53,7 +53,8 @@ describe('reading hatches, which the DXF parser drops', () => {
     expect(hatchPatternFor('CG_HONEYCOMB', false, 2)).toBe('ansi37')
     expect(hatchPatternFor('CG_HONEYCOMB', false, 1)).toBe('ansi31')
     expect(hatchPatternFor('ANSI37', false, 1)).toBe('ansi37')
-    expect(hatchPatternFor('AR-SAND', false, 1)).toBe('dots')
+    // AR-SAND is a standard name, so it is kept as the sand pattern rather than stood in for.
+    expect(hatchPatternFor('AR-SAND', false, 1)).toBe('sand')
   })
 
   it('reads a hatch inside a block as a member of that block', () => {

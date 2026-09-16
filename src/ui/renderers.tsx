@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import { angularSweep, makeDimensionLabel, polar } from '../core/geometry'
 import { distance } from '../core/math/vec2'
-import { hatchBaseAngle, hatchTileSize, HATCH_PATTERNS as PATTERN_LIST } from '../core/hatch'
+import { hatchBaseAngle, hatchFamily, hatchTileSize, HATCH_PATTERNS as PATTERN_LIST, type HatchFamily } from '../core/hatch'
 import { add, mul, normalize, sub, type Vec2 } from '../core/math/vec2'
 import { effectiveStyleFor, faceOf, textLinesOf } from '../core/text'
 import type {
@@ -674,7 +674,7 @@ const renderHatch = (
           height={tile}
           patternTransform={`rotate(${angle})`}
         >
-          {hatchPatternMarks(pattern, tile, palette.hatch)}
+          {hatchPatternMarks(hatchFamily(pattern), tile, palette.hatch)}
         </pattern>
       </defs>
       <polygon
@@ -689,20 +689,38 @@ const renderHatch = (
   )
 }
 
-/** The marks drawn inside one pattern tile, sized to the tile so scale changes the spacing. */
-const hatchPatternMarks = (pattern: HatchPattern, tile: number, color: string): ReactElement => {
+/**
+ * The marks drawn inside one pattern tile, sized to the tile so scale changes the spacing.
+ *
+ * Drawing goes by FAMILY, not by name: a dozen of AutoCAD's standard patterns are the same geometry
+ * under different names — ANSI31 and ANSI34 differ only in whether the run is dashed, ANSI37 and
+ * ANSI33 only in a phase offset that a repeating tile cannot show. `hatchFamily` holds the mapping.
+ */
+const hatchPatternMarks = (family: HatchFamily, tile: number, color: string): ReactElement => {
   const stroke = { stroke: color, strokeWidth: Math.max(0.4, tile * 0.08) }
-  switch (pattern) {
-    case 'ansi37':
+  /*
+   * The dash ratio is what makes ANSI32/34/35/36/38 read as a double line the way they do on a drawing.
+   * It is measured on the tile's own diagonal so it keeps its proportions at any scale.
+   */
+  const dashed = { ...stroke, strokeDasharray: `${tile * 0.36} ${tile * 0.16}` }
+  switch (family) {
+    case 'cross':
       return (
         <g>
           <line x1={0} y1={0} x2={tile} y2={tile} {...stroke} />
           <line x1={tile} y1={0} x2={0} y2={tile} {...stroke} />
         </g>
       )
+    case 'crossDashed':
+      return (
+        <g>
+          <line x1={0} y1={0} x2={tile} y2={tile} {...stroke} />
+          <line x1={tile} y1={0} x2={0} y2={tile} {...dashed} />
+        </g>
+      )
     case 'dots':
       return <circle cx={tile / 2} cy={tile / 2} r={Math.max(0.4, tile * 0.12)} fill={color} />
-    case 'net':
+    case 'grid':
       return (
         <g>
           <line x1={0} y1={tile / 2} x2={tile} y2={tile / 2} {...stroke} />
@@ -711,6 +729,23 @@ const hatchPatternMarks = (pattern: HatchPattern, tile: number, color: string): 
       )
     case 'line':
       return <line x1={0} y1={tile / 2} x2={tile} y2={tile / 2} {...stroke} />
+    case 'brick': {
+      // A running bond: bed joints across the tile, head joints staggered half a tile between courses.
+      const half = tile / 2
+      return (
+        <g>
+          <line x1={0} y1={0} x2={tile} y2={0} {...stroke} />
+          <line x1={0} y1={half} x2={tile} y2={half} {...stroke} />
+          <line x1={0} y1={0} x2={0} y2={half} {...stroke} />
+          <line x1={half} y1={half} x2={half} y2={tile} {...stroke} />
+        </g>
+      )
+    }
+    case 'dashed':
+      return <line x1={0} y1={0} x2={0} y2={tile} {...dashed} />
+    case 'solid':
+      // The filled case is drawn as a solid polygon before a tile is ever built.
+      return <g />
     default:
       // ANSI31: a single run of lines; the pattern's rotate transform supplies the 45° tilt.
       return <line x1={0} y1={0} x2={0} y2={tile} {...stroke} />

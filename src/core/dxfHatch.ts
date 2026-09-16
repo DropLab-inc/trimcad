@@ -19,13 +19,44 @@ import type { Vec2 } from './math/vec2'
  */
 
 /** The pattern of ours that stands in for a DXF pattern name. */
+/**
+ * The standard pattern names, so a file that names one comes back as that pattern instead of as a
+ * lookalike. A pattern we do not draw — a honeycomb, a client's own — falls through to the density its
+ * own definition implies, which is the honest answer for a name we cannot honour.
+ */
+const STANDARD_PATTERNS: Record<string, HatchPattern> = {
+  ANSI31: 'ansi31',
+  ANSI32: 'ansi32',
+  ANSI33: 'ansi33',
+  ANSI34: 'ansi34',
+  ANSI35: 'ansi35',
+  ANSI36: 'ansi36',
+  ANSI37: 'ansi37',
+  ANSI38: 'ansi38',
+  DOTS: 'dots',
+  SAND: 'sand',
+  'AR-SAND': 'sand',
+  NET: 'net',
+  GRID: 'grid',
+  CROSS: 'cross',
+  LINE: 'line',
+  BRICK: 'brick',
+  'AR-B816': 'brick',
+  'AR-B88': 'brick',
+  'AR-BRSTD': 'brick',
+  ISOLATION: 'line',
+  SOLID: 'solid',
+}
+
 export const hatchPatternFor = (name: string, solid: boolean, patternLines: number): HatchPattern => {
   if (solid) return 'solid'
-  const upper = name.toUpperCase()
+  const upper = name.toUpperCase().trim()
+  const standard = STANDARD_PATTERNS[upper]
+  if (standard) return standard
   if (/SOLID/.test(upper)) return 'solid'
-  if (/DOT|SAND|AR-/.test(upper)) return 'dots'
+  if (/DOT|SAND|AR-CONC/.test(upper)) return 'dots'
   if (/37|CROSS|NET|GRID|BRICK|EARTH/.test(upper)) return 'ansi37'
-  if (/31|32|33|34|35|36/.test(upper)) return 'ansi31'
+  if (/31|32|33|34|35|36|38/.test(upper)) return 'ansi31'
   // An unnamed or custom pattern — a honeycomb, a client's own — is rendered as the density its own
   // definition implies: several line families read as a weave, one as parallel hatching.
   if (patternLines >= 3) return 'net'
