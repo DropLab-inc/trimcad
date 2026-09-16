@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { isDwgFile, dwgToDxfText } from '../core/dwg'
-import { exportDocumentToDxf, importDocumentFromDxf, unsupportedForDxf } from '../core/dxf'
+import { exportDocumentToDxf, importDocumentFromDxf, unreadableInDxf, unsupportedForDxf } from '../core/dxf'
 import {
   DRAWING_EXTENSION,
   DRAWING_MIME,
@@ -81,9 +81,36 @@ export const useFileActions = (): FileActions =>
             ? parseDrawing(text)
             : importDocumentFromDxf(text, doc)
           loadDrawing(opened, withExtension(name, DRAWING_EXTENSION))
-          log('result', `Opened ${name} — ${opened.entities.length} object(s)`)
+          const blocks = opened.blocks?.length ? `, ${opened.blocks.length} block definition(s)` : ''
+          log('result', `Opened ${name} — ${opened.entities.length} object(s)${blocks}`)
+          /*
+           * Say what could not be read. A drawing that arrives without its hatches should be
+           * reported as such rather than quietly matching the file's name and not its contents.
+           */
+          const unreadable = unreadableInDxf(text)
+          if (unreadable.size > 0) {
+            const summary = [...unreadable.entries()]
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 6)
+              .map(([type, count]) => `${count} ${type}`)
+              .join(', ')
+            log('error', `Not read (kept in the file, not drawn here): ${summary}.`)
+          }
         } catch (error) {
-          log('error', error instanceof Error ? error.message : 'Could not open that file.')
+          /*
+           * A DWG that will not convert is a different problem from a DXF that will not parse, and
+           * the user needs to know which: one is the file's format version or content, the other is
+           * our reader. Saying only "could not open" hides which side failed.
+           */
+          const detail = error instanceof Error ? error.message : ''
+          if (isDwgFile(file.name)) {
+            log(
+              'error',
+              `Could not read ${file.name} as a DWG${detail ? ` — ${detail}` : ''}. It may be a DWG version or content the converter does not support; open it in AutoCAD and save as DXF to bring it in.`,
+            )
+          } else {
+            log('error', detail || 'Could not open that file.')
+          }
         }
       },
 

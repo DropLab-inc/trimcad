@@ -1,7 +1,7 @@
 import DxfParser from 'dxf-parser'
 import Drawing from 'dxf-writer'
 import type { Vec2 } from './math/vec2'
-import type { CadEntity, DrawingDocument, Layer, MTextAttachment, TextJustify } from './types'
+import type { BlockDefinition, CadEntity, DrawingDocument, Layer, MTextAttachment, TextJustify } from './types'
 import { makeDefaultDocument } from './document'
 import { ellipticalArcPoints, expandBulges, sampleBSpline } from './dxfCurves'
 import { DEFAULT_LAYER_COLOR, makeLayer, normalizeLayer } from './layers'
@@ -60,14 +60,60 @@ const fingerprintOfDxf = (dxf: string): string => {
   }
 }
 
-const entitiesFromDxf = (content: string, layerIdFor: (name: unknown) => string = () => ''): CadEntity[] => {
+const entitiesFromDxf = (
+  content: string,
+  layerIdFor: (name: unknown) => string = () => '',
+  blocks?: { definitions: BlockDefinition[]; idFor: (name: unknown) => string | null },
+): CadEntity[] => {
   const parsed = new DxfParser().parseSync(content) as any
   const entities: CadEntity[] = []
   for (const raw of (parsed?.entities ?? []) as any[]) {
-    const entity = readEntity(raw, layerIdFor(raw.layer))
+    const entity = readEntity(raw, layerIdFor(raw.layer), blocks?.idFor)
     if (entity) entities.push(entity)
   }
   return entities
+}
+
+/**
+ * The BLOCKS section, as the drawing's own block definitions.
+ *
+ * A block holds geometry in its OWN coordinate system, placed by an INSERT; the app models that
+ * exactly (`BlockDefinition` + `InsertEntity`), so a title block, a notes table or the anonymous
+ * block behind a dimension all arrive as what they are rather than as loose lines at the origin.
+ * A definition with nothing readable in it is skipped: an empty block would place nothing.
+ */
+const blocksFromDxf = (
+  content: string,
+  layerIdFor: (name: unknown) => string = () => '',
+): { definitions: BlockDefinition[]; idFor: (name: unknown) => string | null } => {
+  const parsed = new DxfParser().parseSync(content) as any
+  const definitions: BlockDefinition[] = []
+  const byName = new Map<string, string>()
+  const raw = (parsed?.blocks ?? {}) as Record<string, any>
+
+  // Two passes: the ids have to exist before a block that inserts ANOTHER block is read.
+  for (const name of Object.keys(raw)) byName.set(name.toUpperCase(), uid())
+  const idFor = (name: unknown): string | null =>
+    typeof name === 'string' ? byName.get(name.toUpperCase()) ?? null : null
+
+  for (const [name, block] of Object.entries(raw)) {
+    const members: CadEntity[] = []
+    for (const member of (block?.entities ?? []) as any[]) {
+      const entity = readEntity(member, layerIdFor(member.layer), idFor)
+      if (entity) members.push(entity)
+    }
+    if (members.length === 0) continue
+    // DXF block names are case-insensitive and often differ only in case from a reference.
+    const id = idFor(name)
+    if (!id) continue
+    definitions.push({
+      id,
+      name,
+      entities: members,
+      basePoint: { x: block?.position?.x ?? 0, y: block?.position?.y ?? 0 },
+    })
+  }
+  return { definitions, idFor }
 }
 
 /**
@@ -130,6 +176,63 @@ const readEmbedded = (content: string, dxfEntities: CadEntity[]): DrawingDocumen
     return null
   }
 }
+
+/**
+ * What the file contains that this app cannot draw, counted by type.
+ *
+ * A drawing that arrives missing its hatches or its leaders should SAY so: a silent drop reads as
+ * the tool being unable to open the file at all, and leaves the user comparing a sheet against
+ * something that is quietly not the same drawing. The scan is over the raw text, because the
+ * parser drops what it does not know before any of our code sees it.
+ */
+export const unreadableInDxf = (content: string): Map<string, number> => {
+  const counts = new Map<string, number>()
+  const lines = content.split(/\r\n|\r|\n/)
+  /*
+   * A DXF is a flat list of (code, value) PAIRS, so the scan has to step two lines at a time. Reading
+   * it one line at a time confuses a value of "0" with a group code of 0 and reports "-1" and "2" as
+   * entity types, which is how a young scanner produces a confident wrong answer.
+   */
+  let section: string | null = null
+  for (let index = 0; index + 1 < lines.length; index += 2) {
+    const code = lines[index].trim()
+    const value = lines[index + 1].trim()
+    if (code === '0' && value === 'SECTION') {
+      section = null
+      continue
+    }
+    // The section's name is the first code 2 after SECTION.
+    if (code === '2' && section === null) {
+      section = value
+      continue
+    }
+    if (code === '0' && value === 'ENDSEC') {
+      section = null
+      continue
+    }
+    if (section !== 'ENTITIES' || code !== '0') continue
+    if (READABLE_TYPES.has(value)) continue
+    counts.set(value, (counts.get(value) ?? 0) + 1)
+  }
+  return counts
+}
+
+/** The DXF entity types `readEntity` turns into objects. Everything else is reported, not dropped. */
+const READABLE_TYPES = new Set([
+  'LINE',
+  'CIRCLE',
+  'ARC',
+  'ELLIPSE',
+  'LWPOLYLINE',
+  'POLYLINE',
+  'SPLINE',
+  'TEXT',
+  'MTEXT',
+  'INSERT',
+  'DIMENSION',
+  'SEQEND',
+  'VERTEX',
+])
 
 /** Entity types the DXF writer cannot carry, counted by type for a warning before saving. */
 export const unsupportedForDxf = (document: DrawingDocument): Map<string, number> => {
@@ -228,7 +331,8 @@ export const importDocumentFromDxf = (content: string, base: DrawingDocument): D
   const layerIdFor = (name: unknown): string =>
     (typeof name === 'string' ? byName.get(name.toUpperCase()) : undefined) ?? fallbackLayerId
 
-  const entities = entitiesFromDxf(content, layerIdFor)
+  const blocks = blocksFromDxf(content, layerIdFor)
+  const entities = entitiesFromDxf(content, layerIdFor, blocks)
 
   // A file this app wrote carries the whole drawing, including everything DXF has no room for.
   const embedded = readEmbedded(content, entities)
@@ -240,7 +344,13 @@ export const importDocumentFromDxf = (content: string, base: DrawingDocument): D
     }
   }
 
-  return { ...base, layers, entities, groups: [] }
+  /*
+   * The file's blocks come with it, unless the drawing already has blocks by those names — a name
+   * collision would silently repoint existing inserts at imported geometry.
+   */
+  const taken = new Set((base.blocks ?? []).map((block) => block.name.toUpperCase()))
+  const imported = blocks.definitions.filter((block) => !taken.has(block.name.toUpperCase()))
+  return { ...base, layers, entities, blocks: [...(base.blocks ?? []), ...imported], groups: [] }
 }
 
 const readLayers = (parsed: any, base: DrawingDocument): Layer[] => {
@@ -254,7 +364,16 @@ const readLayers = (parsed: any, base: DrawingDocument): Layer[] => {
   return layers.length > 0 ? layers : makeDefaultDocument().layers
 }
 
-const readEntity = (raw: any, layerId: string): CadEntity | null => {
+/**
+ * `blockIdFor` resolves a DXF block name to the drawing's own block definition, or null when the
+ * file referenced one we have no geometry for. Blocks are how a real drawing carries its title
+ * block, its notes and its dimension geometry, so an INSERT that cannot resolve is a visible hole.
+ */
+const readEntity = (
+  raw: any,
+  layerId: string,
+  blockIdFor: (name: unknown) => string | null = () => null,
+): CadEntity | null => {
   switch (raw.type) {
     case 'LINE':
       if (!raw.vertices?.[0] || !raw.vertices?.[1]) return null
@@ -343,6 +462,44 @@ const readEntity = (raw: any, layerId: string): CadEntity | null => {
         type: 'spline',
         layerId,
         controlPoints: sampled.length >= 2 ? sampled : control,
+      }
+    }
+    case 'INSERT': {
+      const blockId = blockIdFor(raw.name)
+      if (!blockId || !raw.position) return null
+      // DXF carries one scale per axis; the app's insert has one, so the X scale is the scale.
+      const scale = raw.xScale ?? 1
+      if (!Number.isFinite(scale) || scale === 0) return null
+      return {
+        id: uid(),
+        type: 'insert',
+        layerId,
+        blockId,
+        position: { x: raw.position.x, y: raw.position.y },
+        // DXF rotation is degrees; the entity carries radians.
+        rotation: ((raw.rotation ?? 0) * Math.PI) / 180,
+        scale,
+      }
+    }
+    case 'DIMENSION': {
+      /*
+       * A dimension in a DXF file is a MEASUREMENT plus a reference to an anonymous block holding
+       * the lines, arrows and text that draw it. The app's own dimension entity cannot adopt one
+       * (it has no style table to read, and its geometry is generated from points), so the block is
+       * placed instead: the dimension LOOKS right on screen and plots right, and is edited by
+       * deleting and re-dimensioning rather than by dragging a grip. That is honest, and better
+       * than a dimension that silently disappears.
+       */
+      const blockId = blockIdFor(raw.block)
+      if (!blockId) return null
+      return {
+        id: uid(),
+        type: 'insert',
+        layerId,
+        blockId,
+        position: { x: raw.anchorPoint?.x ?? 0, y: raw.anchorPoint?.y ?? 0 },
+        rotation: 0,
+        scale: 1,
       }
     }
     case 'TEXT': {

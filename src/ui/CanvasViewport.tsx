@@ -20,7 +20,7 @@ import {
 } from '../core/printSession'
 import { formatPrompt, matchKeyword } from '../core/prompts'
 import { applyOrtho, applyPolarTracking, findBestSnap, trackingAppliesTo } from '../core/snap'
-import { rectFromPoints, selectEntitiesInRect, selectionModeFor } from '../core/selection'
+import { entityBounds, rectFromPoints, selectEntitiesInRect, selectionModeFor } from '../core/selection'
 import {
   fieldsForTool,
   hasTypedValue,
@@ -200,6 +200,7 @@ export function CanvasViewport() {
   const dimensionType = useCadStore((state) => state.dimensionType)
   const dimScale = useCadStore((state) => state.dimScale)
   const textHeightState = useCadStore((state) => state.textHeight)
+  const zoomExtentsToken = useCadStore((state) => state.zoomExtentsToken)
   const modifyTargetId = useCadStore((state) => state.modifyTargetId)
   const offsetDistance = useCadStore((state) => state.offsetDistance)
   const filletRadius = useCadStore((state) => state.filletRadius)
@@ -894,6 +895,47 @@ export function CanvasViewport() {
     const zoom = Math.min(box.width / (page.width * 1.15), box.height / (page.height * 1.15))
     setCamera({ zoom, x: (box.width - page.width * zoom) / 2, y: (box.height - page.height * zoom) / 2 })
   }, [activeLayoutId, setCamera])
+
+  /*
+   * ZOOM Extents, and what OPEN does to a freshly loaded drawing. The bounds come from the objects
+   * the space actually shows, so a frozen layer cannot drag the view off to nowhere, and the fit
+   * leaves a margin so the drawing is not flush against the window frame.
+   */
+  useEffect(() => {
+    if (zoomExtentsToken === 0) return
+    const box = svgRef.current?.getBoundingClientRect()
+    if (!box || box.width < 10 || box.height < 10) return
+    const state = useCadStore.getState()
+    const entities = visibleEntities
+    let minX = Number.POSITIVE_INFINITY
+    let minY = Number.POSITIVE_INFINITY
+    let maxX = Number.NEGATIVE_INFINITY
+    let maxY = Number.NEGATIVE_INFINITY
+    for (const entity of entities) {
+      const bounds = entityBounds(entity, state.doc.blocks, state.doc.textStyles)
+      if (!bounds) continue
+      minX = Math.min(minX, bounds.min.x)
+      minY = Math.min(minY, bounds.min.y)
+      maxX = Math.max(maxX, bounds.max.x)
+      maxY = Math.max(maxY, bounds.max.y)
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return
+    // A single point, a zero-length line or a horizontal run have no extent in one direction: give
+    // the fit something to work with rather than dividing by zero.
+    const spanX = Math.max(maxX - minX, 1e-6)
+    const spanY = Math.max(maxY - minY, 1e-6)
+    const margin = 1.1
+    const zoom = Math.min(
+      ZOOM_MAX,
+      Math.max(ZOOM_MIN, Math.min(box.width / (spanX * margin), box.height / (spanY * margin))),
+    )
+    setCamera({
+      zoom,
+      x: box.width / 2 - ((minX + maxX) / 2) * zoom,
+      y: box.height / 2 - ((minY + maxY) / 2) * zoom,
+    })
+    setStatusMessage(`Zoom extents — ${entities.length} object(s) in view`)
+  }, [zoomExtentsToken, visibleEntities, setCamera, setStatusMessage])
 
   // The store needs the crosshair position so a typed distance knows which way to go.
   useEffect(() => {

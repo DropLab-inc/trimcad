@@ -343,6 +343,12 @@ type CadState = {
   toleranceDraft: { position: Vec2; height: number } | null
   /** The ordinate's forced axis from its Xdatum/Ydatum options; null lets the leader decide. */
   ordinateAxis: 'x' | 'y' | null
+  /**
+   * Bumped whenever something asks for a zoom to the drawing's extents. The camera belongs to the
+   * canvas (only it knows how big the window is), so the request travels as a counter and the
+   * canvas answers it — the same split the paper-fit on a space change uses.
+   */
+  zoomExtentsToken: number
   /** The arc an arc-length dimension is measuring, captured when the arc was picked. */
   arclengthArc: { center: Vec2; start: Vec2; end: Vec2 } | null
   /**
@@ -428,6 +434,8 @@ type CadState = {
   setTool: (tool: ToolMode) => void
   setActiveLayerId: (layerId: string) => void
   setCamera: (camera: Partial<CameraState>) => void
+  /** Asks the canvas to fit the drawing to the window: ZOOM's Extents, and what OPEN does. */
+  requestZoomExtents: () => void
   /** Switches to a layout, or back to model space with `null`. */
   setActiveLayout: (layoutId: string | null) => void
   /** Adds a sheet with one viewport already scaled to fit the drawing, as AutoCAD opens a layout. */
@@ -632,6 +640,7 @@ export const useCadStore = create<CadState>((set, get) => ({
   leaderDraft: null,
   toleranceDraft: null,
   ordinateAxis: null,
+  zoomExtentsToken: 0,
   arclengthArc: null,
   hatchScale: 1,
   hatchAngle: 0,
@@ -841,6 +850,7 @@ export const useCadStore = create<CadState>((set, get) => ({
     }),
   setActiveLayerId: (activeLayerId) => set({ activeLayerId }),
   setCamera: (camera) => set((state) => ({ camera: { ...state.camera, ...camera } })),
+  requestZoomExtents: () => set((state) => ({ zoomExtentsToken: state.zoomExtentsToken + 1 })),
   setActiveLayout: (layoutId) => {
     const layout = layoutId ? get().doc.layouts.find((candidate) => candidate.id === layoutId) : null
     set({
@@ -1275,6 +1285,12 @@ export const useCadStore = create<CadState>((set, get) => ({
       fileName,
       statusMessage: `Opened ${fileName}`,
     })
+    /*
+     * Frame what was just opened. A real drawing sits at real coordinates — a site plan can be half
+     * a million units from the origin — so leaving the camera where it was shows an empty canvas and
+     * reads as a broken file.
+     */
+    get().requestZoomExtents()
   },
   setFileName: (fileName) => set({ fileName }),
   addLayer: () => {
@@ -3126,6 +3142,25 @@ const runCommandDef = (state: CadStoreState, command: CommandDef, argument = '')
       } else {
         state.log('error', useCadStore.getState().statusMessage)
       }
+      return
+    }
+    case 'ZOOM': {
+      /*
+       * AutoCAD's ZOOM, in the part that matters for a browser tool: Enter or E takes the extents,
+       * which is the one people actually type. The rest of its options are named as not built
+       * rather than silently accepted.
+       */
+      const option = (argument ?? '').trim().toUpperCase()
+      if (option === 'E' || option === 'EXTENTS' || option === 'A' || option === 'ALL' || option === '') {
+        // All and Extents are the same picture here: the app has no drawing limits for All to include.
+        state.requestZoomExtents()
+        state.log('result', `Zoom to ${option === 'A' || option === 'ALL' ? 'all' : 'extents'}`)
+        return
+      }
+      state.log(
+        'error',
+        `ZOOM ${option} is not built. Available: Extents (E, the default) and All (A) — both fit the drawing to the window.`,
+      )
       return
     }
     case 'HELP':
