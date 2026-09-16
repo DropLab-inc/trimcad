@@ -166,6 +166,7 @@ export function CanvasViewport() {
   const updateViewport = useCadStore((state) => state.updateViewport)
   const enteredViewportId = useCadStore((state) => state.enteredViewportId)
   const enterViewport = useCadStore((state) => state.enterViewport)
+  const editTextAt = useCadStore((state) => state.editTextAt)
   const zoomViewport = useCadStore((state) => state.zoomViewport)
   const panViewport = useCadStore((state) => state.panViewport)
   const setCamera = useCadStore((state) => state.setCamera)
@@ -978,7 +979,7 @@ export function CanvasViewport() {
         const start = screenToWorld(boxStart, camera)
         const end = screenToWorld(boxEnd, camera)
         const mode = selectionModeFor(start, end)
-        const ids = selectEntitiesInRect(pickableEntities, rectFromPoints(start, end), mode, doc.blocks)
+        const ids = selectEntitiesInRect(pickableEntities, rectFromPoints(start, end), mode, doc.blocks, doc.textStyles)
         applySelection(ids, modifier)
         setStatusMessage(`${mode === 'window' ? 'Window' : 'Crossing'} selected ${ids.length} object(s)`)
       }
@@ -1075,6 +1076,14 @@ export function CanvasViewport() {
       : undefined
 
   const handleDoubleClick = (event: MouseEvent<SVGSVGElement>) => {
+    /*
+     * A double-click on a note opens its words, which is AutoCAD's DDEDIT and the only way to change
+     * text that does not involve hunting for the command first. On a sheet this has to be tried before
+     * the frame handling below, or the click would enter the viewport instead.
+     */
+    const world = resolvePoint(localPoint(event)).point
+    if (editTextAt(world)) return
+
     if (!activeLayout) return
     const hit = viewportAt(screenToWorld(localPoint(event), camera))
     // Double-clicking a frame enters it; double-clicking the desk leaves, as does double-clicking
@@ -1154,6 +1163,7 @@ export function CanvasViewport() {
           dash: result.extending ? undefined : '5 4',
           width: 3,
           dimStyle: doc.dimStyle,
+          textStyles: doc.textStyles,
           palette,
         })}
       </g>
@@ -1208,11 +1218,28 @@ export function CanvasViewport() {
     return (
       <g>
         {hovered && (
-          <g>{renderEntity(hovered, { selected: false, color: palette.preview, dash: '6 4', width: 3, dimStyle: doc.dimStyle, palette })}</g>
+          <g>
+            {renderEntity(hovered, {
+              selected: false,
+              color: palette.preview,
+              dash: '6 4',
+              width: 3,
+              dimStyle: doc.dimStyle,
+              textStyles: doc.textStyles,
+              palette,
+            })}
+          </g>
         )}
         {chosen.map(({ pick, entity }) => (
           <g key={entity.id}>
-            {renderEntity(entity, { selected: false, color: palette.confirm, width: 3, dimStyle: doc.dimStyle, palette })}
+            {renderEntity(entity, {
+              selected: false,
+              color: palette.confirm,
+              width: 3,
+              dimStyle: doc.dimStyle,
+              textStyles: doc.textStyles,
+              palette,
+            })}
             <circle cx={pick.point.x} cy={pick.point.y} r={5 / camera.zoom} fill={palette.confirm} />
           </g>
         ))}
@@ -1222,7 +1249,8 @@ export function CanvasViewport() {
 
   const modifyPreview = useMemo(() => {
     if (!cursorWorld) return null
-    const ghost = { selected: false, color: palette.preview, dash: '6 4', dimStyle: doc.dimStyle, palette }
+    const ghost = { selected: false, color: palette.preview, dash: '6 4', dimStyle: doc.dimStyle,
+          textStyles: doc.textStyles, palette }
 
     if (activeTool === 'offset' && modifyTargetId) {
       const target = doc.entities.find((entity) => entity.id === modifyTargetId)
@@ -1597,7 +1625,8 @@ export function CanvasViewport() {
 
   /** What the drag in progress would leave behind, drawn over the unchanged original. */
   const dragPreview = useMemo(() => {
-    const ghost = { selected: false, color: palette.preview, dash: '6 4', dimStyle: doc.dimStyle, palette }
+    const ghost = { selected: false, color: palette.preview, dash: '6 4', dimStyle: doc.dimStyle,
+          textStyles: doc.textStyles, palette }
     if (gripDrag) {
       const target = selectedEntities.find((entity) => entity.id === gripDrag.entityId)
       if (!target) return null
@@ -1657,6 +1686,7 @@ export function CanvasViewport() {
         dash: linetype?.pattern.length ? linetype.pattern.join(' ') : undefined,
         width: hovered ? 2.5 : lwDisplay ? lineweightPixels(layer?.lineweight) : undefined,
         dimStyle: doc.dimStyle,
+        textStyles: doc.textStyles,
         palette,
         blocks: doc.blocks,
       })

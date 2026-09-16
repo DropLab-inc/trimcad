@@ -1,10 +1,27 @@
-import type { ArcMode, ArrayType, CircleMode, DimensionType, HatchPattern, PolygonFit, RectMode, ToolMode } from './types'
+import type {
+  ArcMode,
+  ArrayType,
+  CircleMode,
+  DimensionType,
+  HatchPattern,
+  MTextAttachment,
+  PolygonFit,
+  RectMode,
+  TextJustify,
+  ToolMode,
+} from './types'
 
 /** One of ARRAY's counts or angles, named so a typed number knows where to land. */
 export type ArrayOption = 'rows' | 'columns' | 'rowSpacing' | 'columnSpacing' | 'count' | 'fillAngle'
 
 /** Which size RECTANG is waiting to type once Dimensions or Rotation has been taken. */
 export type RectPending = 'length' | 'width' | 'rotation'
+
+/** Which step of TEXT is waiting for an answer. */
+export type TextPending = 'height' | 'rotation' | 'justify' | 'style' | 'text' | null
+
+/** Which step of MTEXT is waiting for an answer. */
+export type MTextPending = 'height' | 'rotation' | 'width' | 'justify' | 'style' | null
 
 /**
  * Prompts shown at the command line and under the crosshair.
@@ -92,6 +109,16 @@ export type PromptContext = {
   insertPending: 'scale' | 'rotation' | null
   /** BLOCK is waiting for the block's name. */
   blockNamePending: boolean
+  /** Which step of TEXT is running: its height, its rotation, or the words themselves. */
+  textPending: TextPending
+  textHeight: number
+  textRotation: number
+  /** The style TEXT will be created in, by name, as AutoCAD's prompt says it. */
+  textStyleName: string
+  /** Which step of MTEXT is running, and the column width once it has one. */
+  mtextPending: MTextPending
+  mtextWidth: number
+  mtextAttachment: MTextAttachment
 }
 
 const point = (text: string, keywords: Keyword[] = []): Prompt => ({ text, kind: 'point', keywords })
@@ -102,6 +129,9 @@ const textPrompt = (text: string, keywords: Keyword[] = []): Prompt => ({ text, 
 /** The option shared by BLOCK and INSERT that lists every defined block into the command line. */
 const LIST_BLOCKS: Keyword[] = [{ key: '?', label: 'List blocks' }]
 
+/** AutoCAD's `?` inside a text style prompt, which lists the styles in the drawing. */
+const LIST_STYLES: Keyword[] = [{ key: '?', label: 'List styles' }]
+
 /** What ARRAY asks for once one of its counts has been chosen for editing. */
 const ARRAY_OPTION_PROMPTS: Record<ArrayOption, string> = {
   rows: 'Enter the number of rows',
@@ -111,6 +141,46 @@ const ARRAY_OPTION_PROMPTS: Record<ArrayOption, string> = {
   count: 'Enter the number of items in the array',
   fillAngle: 'Specify the angle to fill, in degrees',
 }
+
+/** AutoCAD's single-line justification codes, in the order its own prompt lists them. */
+export const JUSTIFY_CODES: TextJustify[] = [
+  'Left',
+  'Center',
+  'Right',
+  'Middle',
+  'TL',
+  'TC',
+  'TR',
+  'ML',
+  'MC',
+  'MR',
+  'BL',
+  'BC',
+  'BR',
+]
+
+/** `Specify justification [Left/Center/...]` — spelled out, because the codes are the labels. */
+const JUSTIFY_KEYWORDS: Keyword[] = JUSTIFY_CODES.map((code) => ({ key: code, label: code }))
+
+/** AutoCAD's nine MTEXT attachment points, which are the same anchors as the justify codes. */
+export const ATTACHMENT_CODES: MTextAttachment[] = ['TL', 'TC', 'TR', 'ML', 'MC', 'MR', 'BL', 'BC', 'BR']
+
+const ATTACHMENT_KEYWORDS: Keyword[] = ATTACHMENT_CODES.map((code) => ({ key: code, label: code }))
+
+/** What TEXT and MTEXT offer before they have any words. */
+const TEXT_OPENING: Keyword[] = [
+  { key: 'J', label: 'Justify' },
+  { key: 'S', label: 'Style' },
+]
+
+/** AutoCAD's MTEXT option list, minus Line spacing and Columns, which this does not offer yet. */
+const MTEXT_OPENING: Keyword[] = [
+  { key: 'H', label: 'Height' },
+  { key: 'J', label: 'Justify' },
+  { key: 'R', label: 'Rotation' },
+  { key: 'S', label: 'Style' },
+  { key: 'W', label: 'Width' },
+]
 
 const CLOSE_UNDO: Keyword[] = [
   { key: 'C', label: 'Close' },
@@ -322,8 +392,46 @@ const promptsForTool = (ctx: PromptContext): Prompt[] => {
     }
     case 'spline':
       return [point('Specify first point'), point('Specify next point (Enter to finish)')]
-    case 'text':
-      return [point('Specify text insertion point')]
+    case 'text': {
+      // AutoCAD's DTEXT: a start point, then the height and rotation the words are drawn at, then the
+      // words themselves — which are typed at the command line rather than into a browser dialog.
+      if (ctx.textPending === 'height') {
+        return [{ ...point('Specify height'), kind: 'number', defaultValue: String(ctx.textHeight) }]
+      }
+      if (ctx.textPending === 'rotation') {
+        return [{ ...point('Specify rotation angle of text'), kind: 'number', defaultValue: String(ctx.textRotation) }]
+      }
+      if (ctx.textPending === 'justify') {
+        return [textPrompt('Specify justification', JUSTIFY_KEYWORDS)]
+      }
+      if (ctx.textPending === 'style') {
+        return [{ ...textPrompt('Enter style name', LIST_STYLES), defaultValue: ctx.textStyleName }]
+      }
+      if (ctx.textPending === 'text') {
+        return [textPrompt('Enter text')]
+      }
+      return [{ ...point('Specify start point of text'), keywords: TEXT_OPENING, kind: 'point' }]
+    }
+    case 'mtext': {
+      if (ctx.mtextPending === 'height') {
+        return [{ ...point('Specify height'), kind: 'number', defaultValue: String(ctx.textHeight) }]
+      }
+      if (ctx.mtextPending === 'rotation') {
+        return [{ ...point('Specify rotation angle of text'), kind: 'number', defaultValue: String(ctx.textRotation) }]
+      }
+      if (ctx.mtextPending === 'width') {
+        return [{ ...point('Specify width of the paragraph'), kind: 'number', defaultValue: String(ctx.mtextWidth) }]
+      }
+      // Justify chooses the attachment, so it reads as AutoCAD's MTEXT attachment prompt.
+      if (ctx.mtextPending === 'justify') {
+        return [textPrompt('Specify attachment point', ATTACHMENT_KEYWORDS)]
+      }
+      if (ctx.mtextPending === 'style') {
+        return [{ ...textPrompt('Enter style name', LIST_STYLES), defaultValue: ctx.textStyleName }]
+      }
+      if (ctx.step === 0) return [point('Specify first corner')]
+      return [{ ...point('Specify opposite corner'), keywords: MTEXT_OPENING, kind: 'point' }]
+    }
     case 'hatch': {
       if (ctx.hatchPending === 'scale') {
         return [{ ...point('Specify hatch scale'), kind: 'number', defaultValue: String(ctx.hatchScale) }]

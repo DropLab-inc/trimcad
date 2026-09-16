@@ -36,6 +36,67 @@ export type DimStyle = {
   suffix: string
 }
 
+/**
+ * A named text style, AutoCAD's STYLE: the font, the width factor that stretches the letters, the
+ * oblique angle that leans them, and a fixed height. A height of 0 is AutoCAD's "not fixed", where
+ * every TEXT asks for its own height — which is what `Standard` is, so the drawing's own text can be
+ * sized one object at a time while a style made for a title block can pin the size.
+ */
+export type TextStyle = {
+  id: string
+  name: string
+  /** A font from `TextFont` in `metrics`, the twelve the plot can also draw. */
+  font: string
+  /** Fixed character height, or 0 for "ask each time". */
+  height: number
+  widthFactor: number
+  /** Degrees off vertical, AutoCAD's oblique angle. */
+  obliqueAngle: number
+}
+
+/**
+ * AutoCAD's single-line justification codes, as they read in the prompt. `Align` and `Fit` are
+ * deliberately absent: both stretch the text between two points rather than placing it at one, which
+ * is a different construction rather than another anchor.
+ */
+export type TextJustify = 'Left' | 'Center' | 'Right' | 'Middle' | 'TL' | 'TC' | 'TR' | 'ML' | 'MC' | 'MR' | 'BL' | 'BC' | 'BR'
+
+/** AutoCAD's nine MTEXT attachment points, which anchor the whole block of paragraphs. */
+export type MTextAttachment = 'TL' | 'TC' | 'TR' | 'ML' | 'MC' | 'MR' | 'BL' | 'BC' | 'BR'
+
+/** What the text editor is open on: an object being changed, or a new MTEXT waiting for its words. */
+export type TextEditorState = {
+  entityId: string | null
+  kind: 'text' | 'mtext'
+  value: string
+  /** The words are the whole object, so a single line opens the same editor as a paragraph. */
+  title: string
+}
+
+/** What the text editor hands back when it is done: the words, and any field it offered. */
+export type TextEditResult = {
+  value: string
+  height?: number
+  rotation?: number
+  width?: number
+  attachment?: MTextAttachment
+  lineSpacing?: number
+  /** null means the drawing's Standard, which is what an unset styleId means on an object. */
+  styleId?: string | null
+}
+
+/** The text properties a palette row or a dialog can set on the selection. */
+export type TextPatch = Partial<{
+  value: string
+  height: number
+  rotation: number
+  styleId: string | undefined
+  justify: TextJustify
+  attachment: MTextAttachment
+  width: number
+  lineSpacing: number
+}>
+
 export type BaseEntity = {
   id: string
   type: string
@@ -101,6 +162,44 @@ export type TextEntity = BaseEntity & {
   position: Vec2
   value: string
   height: number
+  /** Degrees, turned about the insertion point, as AutoCAD's TEXT Rotation is. Absent means 0. */
+  rotation?: number
+  /** The text style's id. Absent means the drawing's `Standard`. */
+  styleId?: string
+  /** AutoCAD's justification. Absent means Left, the baseline start of the string. */
+  justify?: TextJustify
+  /** The object's own width factor, as DXF group 41 carries it; absent means the style's. */
+  widthFactor?: number
+  /** The object's own oblique angle in degrees, DXF group 51; absent means the style's. */
+  obliqueAngle?: number
+}
+
+/**
+ * MTEXT: AutoCAD's multiline text, which is a different object from TEXT rather than a longer one.
+ * A paragraph has a column WIDTH it wraps to, an attachment point on the whole block, and its own
+ * line spacing — none of which single-line text has.
+ */
+export type MTextEntity = BaseEntity & {
+  type: 'mtext'
+  /** The attachment point: which corner or edge of the text block sits here. */
+  position: Vec2
+  /** The column width the paragraphs wrap to, in drawing units. 0 wraps only at the hard breaks. */
+  width: number
+  /** Paragraphs separated by newlines. */
+  value: string
+  /** Character height, AutoCAD's MTEXT Height. */
+  height: number
+  rotation?: number
+  styleId?: string
+  attachment?: MTextAttachment
+  /**
+   * Multiple of AutoCAD's single line spacing, which is 5/3 of the character height. Absent means 1.
+   */
+  lineSpacing?: number
+  /** The object's own width factor, as DXF group 41 carries it; absent means the style's. */
+  widthFactor?: number
+  /** The object's own oblique angle in degrees, DXF group 51; absent means the style's. */
+  obliqueAngle?: number
 }
 
 export type DimensionType = 'linear' | 'aligned' | 'radial' | 'diameter' | 'angular'
@@ -139,6 +238,7 @@ export type CadEntity =
   | SplineEntity
   | HatchEntity
   | TextEntity
+  | MTextEntity
   | DimensionEntity
   | InsertEntity
 
@@ -194,6 +294,11 @@ export type DrawingDocument = {
   layers: Layer[]
   linetypes: Linetype[]
   dimStyle: DimStyle
+  /**
+   * Named text styles. Optional so a drawing written before they existed still loads; the
+   * `Standard` style is always available, and `textStylesOf` hands it back when this is absent.
+   */
+  textStyles?: TextStyle[]
   blocks: BlockDefinition[]
   entities: CadEntity[]
   groups: Group[]
@@ -251,6 +356,8 @@ export type ToolMode =
   | 'polygon'
   | 'spline'
   | 'text'
+  | 'mtext'
+  | 'textedit'
   | 'hatch'
   | 'boundary'
   | 'dimension'

@@ -37,6 +37,9 @@ export const COMMANDS: CommandDef[] = [
 
   // Annotate
   { name: 'TEXT', aliases: ['DT'], category: 'Annotate', summary: 'Single line of text', tool: 'text' },
+  { name: 'MTEXT', aliases: ['MT'], category: 'Annotate', summary: 'Paragraph that wraps to a column', tool: 'mtext' },
+  { name: 'TEXTEDIT', aliases: ['ED', 'DDEDIT'], category: 'Annotate', summary: 'Change the words of a note', tool: 'textedit' },
+  { name: 'STYLE', aliases: ['ST'], category: 'Annotate', summary: 'Text styles: font, height, width factor, oblique' },
   { name: 'DIM', aliases: ['D'], category: 'Annotate', summary: 'Dimension, current type', tool: 'dimension' },
   { name: 'DIMLINEAR', aliases: ['DLI'], category: 'Annotate', summary: 'Horizontal or vertical dimension' },
   { name: 'DIMALIGNED', aliases: ['DAL'], category: 'Annotate', summary: 'Dimension parallel to the edge' },

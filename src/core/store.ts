@@ -64,16 +64,21 @@ import {
 } from './modify'
 import { COMMANDS, resolveCommand, suggestCommand, type CommandDef } from './commandRegistry'
 import {
+  ATTACHMENT_CODES,
+  JUSTIFY_CODES,
   formatPrompt,
   matchKeyword,
   promptFor,
   type ArrayOption,
   type Keyword,
+  type MTextPending,
   type Prompt,
   type PromptContext,
   type RectPending,
+  type TextPending,
 } from './prompts'
 import { applySelectionModifier, expandSelectionToGroups, type SelectionModifier } from './selection'
+import { SINGLE_LINE_SPACING, STANDARD_STYLE, isTextEntity, styleFor, textStylesOf } from './text'
 import { polarArrayCopies, rectangularArrayCopies } from './array'
 import { distance as distanceBetween, sub, type Vec2 } from './math/vec2'
 import type {
@@ -90,10 +95,16 @@ import type {
   InsertEntity,
   Layer,
   Layout,
+  MTextAttachment,
   PaperOrientation,
   PaperSize,
   RectMode,
   SnapMode,
+  TextEditResult,
+  TextEditorState,
+  TextJustify,
+  TextPatch,
+  TextStyle,
   ToolMode,
   Viewport,
 } from './types'
@@ -309,6 +320,28 @@ type CadState = {
   insertRotation: number
   /** Which of INSERT's typed values is waiting: scale or rotation. */
   insertPending: 'scale' | 'rotation' | null
+  /** Which step of TEXT is waiting for an answer, and the justification it will be placed with. */
+  textPending: TextPending
+  textJustify: TextJustify
+  /** Which step of MTEXT is waiting, and the attachment point its block is anchored on. */
+  mtextPending: MTextPending
+  mtextAttachment: MTextAttachment
+  /** MTEXT's column width, and whether the Width option fixed it before any corner was picked. */
+  mtextWidth: number
+  mtextWidthGiven: boolean
+  /** The box a new MTEXT is being written into, once its corners are down. */
+  mtextDraft: { position: Vec2; width: number } | null
+  /**
+   * The size and rotation the next text is drawn at, and the style it takes. These outlive the
+   * command they were set in, the way AutoCAD's current text height does.
+   */
+  textHeight: number
+  textRotation: number
+  textStyleId: string | null
+  /** The text editor: open on a new annotation, or on one whose words are being changed. */
+  textEditor: TextEditorState | null
+  /** Whether the text styles dialog is up. */
+  textStylesOpen: boolean
   /** Scrollback shown above the command input. */
   history: HistoryLine[]
   /** The last command that ran, which Enter or Space at an empty prompt repeats. */
@@ -321,6 +354,21 @@ type CadState = {
   repeatLastCommand: () => void
   setCursorWorld: (point: Vec2 | null) => void
   toggleOrtho: () => void
+  setTextHeight: (height: number) => void
+  setTextRotation: (degrees: number) => void
+  setCurrentTextStyle: (id: string | null) => void
+  setTextStylesOpen: (open: boolean) => void
+  beginTextEditor: (editor: TextEditorState) => void
+  /** DDEDIT at a point: opens the editor on the note under it. False when there is no text there. */
+  editTextAt: (point: Vec2) => boolean
+  cancelTextEditor: () => void
+  /** Writes the editor's words into the object it is open on, or makes the object it was opened for. */
+  commitTextEditor: (edit: TextEditResult) => void
+  createTextStyle: (style: Omit<TextStyle, 'id'>) => void
+  updateTextStyle: (id: string, patch: Partial<Omit<TextStyle, 'id'>>) => void
+  deleteTextStyle: (id: string) => void
+  /** Sets text properties on everything selected, as the properties palette does. */
+  updateSelectedText: (patch: TextPatch) => void
   beginEdgeSelection: () => void
   finishEdgeSelection: () => void
   useAllEdges: () => void
@@ -480,6 +528,11 @@ const perCommandOptions = {
   insertScale: 1,
   insertRotation: 0,
   insertPending: null as 'scale' | 'rotation' | null,
+  textPending: null as TextPending,
+  textJustify: 'Left' as TextJustify,
+  mtextPending: null as MTextPending,
+  mtextWidthGiven: false,
+  mtextDraft: null as { position: Vec2; width: number } | null,
 }
 
 const autosaveDoc = (doc: DrawingDocument) => {
@@ -540,6 +593,18 @@ export const useCadStore = create<CadState>((set, get) => ({
   dimensionType: 'linear',
   dimScale: 1,
   hatchPattern: 'ansi31',
+  textHeight: 12,
+  textRotation: 0,
+  textStyleId: null,
+  textEditor: null,
+  textStylesOpen: false,
+  textPending: null,
+  textJustify: 'Left',
+  mtextPending: null,
+  mtextAttachment: 'TL',
+  mtextWidth: 0,
+  mtextWidthGiven: false,
+  mtextDraft: null,
   hatchScale: 1,
   hatchAngle: 0,
   hatchPending: null,
@@ -961,6 +1026,8 @@ export const useCadStore = create<CadState>((set, get) => ({
         acceptInsertDefault(state)
         return
       }
+      // TEXT and MTEXT take Enter for the height, rotation or justification they show.
+      if ((state.activeTool === 'text' || state.activeTool === 'mtext') && acceptTextDefault(state)) return
       if (state.draftPoints.length > 0 || state.pickingEdges) {
         if (state.pickingEdges) state.finishEdgeSelection()
         else state.finishDraft()
@@ -1268,6 +1335,113 @@ export const useCadStore = create<CadState>((set, get) => ({
     }
     get().updateDocument((doc) => ({ ...doc, entities: updater(doc.entities) }))
   },
+  setTextHeight: (height) => set({ textHeight: Math.abs(height) || 1 }),
+  setTextRotation: (textRotation) => set({ textRotation }),
+  setCurrentTextStyle: (textStyleId) => set({ textStyleId }),
+  setTextStylesOpen: (textStylesOpen) => set({ textStylesOpen }),
+  beginTextEditor: (textEditor) => set({ textEditor }),
+  editTextAt: (point) => {
+    const target = pickEntity(get(), point)
+    if (!target || !isTextEntity(target)) return false
+    get().beginTextEditor({
+      entityId: target.id,
+      kind: target.type === 'mtext' ? 'mtext' : 'text',
+      value: target.value,
+      title: target.type === 'mtext' ? 'MTEXT' : 'TEXT',
+    })
+    return true
+  },
+  cancelTextEditor: () => {
+    set({ textEditor: null, mtextDraft: null, draftPoints: [] })
+    get().endCommand()
+  },
+  commitTextEditor: (edit) => {
+    const editor = get().textEditor
+    if (!editor) return
+    set({ textEditor: null })
+
+    // The editor's own fields become the drawing's current settings, so the next note starts where
+    // this one left off — the same way an edited height does in AutoCAD.
+    if (edit.height !== undefined) set({ textHeight: Math.abs(edit.height) || 1 })
+    if (edit.rotation !== undefined) set({ textRotation: edit.rotation })
+    if (edit.styleId !== undefined) set({ textStyleId: edit.styleId })
+
+    if (editor.entityId) {
+      // An object already exists: its words change, and so does whatever else the editor offered.
+      get().updateSpaceEntities((entities) =>
+        entities.map((entity) =>
+          entity.id === editor.entityId
+            ? {
+                ...entity,
+                value: edit.value,
+                ...(edit.height !== undefined && entity.type !== 'mtext' ? { height: Math.abs(edit.height) } : {}),
+                ...(edit.rotation !== undefined ? { rotation: edit.rotation || undefined } : {}),
+                ...(edit.styleId !== undefined ? { styleId: edit.styleId ?? undefined } : {}),
+                ...(entity.type === 'mtext'
+                  ? {
+                      ...(edit.height !== undefined ? { height: Math.abs(edit.height) } : {}),
+                      ...(edit.width !== undefined ? { width: edit.width } : {}),
+                      ...(edit.attachment !== undefined ? { attachment: edit.attachment } : {}),
+                      ...(edit.lineSpacing !== undefined ? { lineSpacing: edit.lineSpacing } : {}),
+                    }
+                  : {}),
+              }
+            : entity,
+        ),
+      )
+      get().log('result', `${editor.kind === 'mtext' ? 'MTEXT' : 'Text'} updated`)
+      get().endCommand()
+      return
+    }
+
+    const draft = get().mtextDraft
+    if (!draft) return
+    get().addEntity({
+      id: uid(),
+      type: 'mtext',
+      layerId: get().activeLayerId,
+      position: draft.position,
+      width: edit.width ?? draft.width,
+      value: edit.value,
+      height: Math.abs(edit.height ?? openedTextHeight(get())) || 1,
+      rotation: (edit.rotation ?? get().textRotation) || undefined,
+      styleId: edit.styleId ?? get().textStyleId ?? undefined,
+      attachment: edit.attachment ?? get().mtextAttachment,
+      ...(edit.lineSpacing !== undefined ? { lineSpacing: edit.lineSpacing } : {}),
+    })
+    set({ mtextDraft: null, mtextWidth: edit.width ?? get().mtextWidth })
+    get().log(
+      'result',
+      `MTEXT placed${(edit.width ?? draft.width) > 0 ? `, wrapping to ${edit.width ?? draft.width}` : ''}`,
+    )
+    get().endCommand()
+  },
+  createTextStyle: (style) => {
+    const created: TextStyle = { ...style, id: uid() }
+    get().updateDocument((doc) => ({ ...doc, textStyles: [...textStylesOf(doc), created] }))
+    get().log('result', `Text style ${created.name}`)
+  },
+  updateTextStyle: (id, patch) => {
+    get().updateDocument((doc) => ({
+      ...doc,
+      textStyles: textStylesOf(doc).map((style) => (style.id === id ? { ...style, ...patch } : style)),
+    }))
+  },
+  deleteTextStyle: (id) => {
+    if (id === STANDARD_STYLE.id) {
+      get().log('error', 'Standard cannot be deleted. It is what every text object starts from.')
+      return
+    }
+    get().updateDocument((doc) => ({ ...doc, textStyles: textStylesOf(doc).filter((style) => style.id !== id) }))
+    if (get().textStyleId === id) set({ textStyleId: null })
+  },
+  updateSelectedText: (patch) => {
+    const wanted = new Set(get().selectedIds)
+    if (wanted.size === 0) return
+    get().updateSpaceEntities((entities) =>
+      entities.map((entity) => (wanted.has(entity.id) && isTextEntity(entity) ? { ...entity, ...patch } : entity)),
+    )
+  },
 
   insertBlockFromPalette: (blockId) => {
     const state = get()
@@ -1444,7 +1618,9 @@ type CadStoreState = ReturnType<typeof useCadStore.getState>
 const pickEntity = (state: CadStoreState, point: Vec2): CadEntity | undefined =>
   [...editableEntities({ ...state.doc, entities: spaceEntitiesOf(state) })]
     .reverse()
-    .find((entity) => isPointNearEntity(point, entity, getPreferences().pickBoxSize / state.camera.zoom, state.doc.blocks))
+    .find((entity) =>
+      isPointNearEntity(point, entity, getPreferences().pickBoxSize / state.camera.zoom, state.doc.blocks, state.doc.textStyles),
+    )
 
 /* ------------------------------------------------------- trim and extend */
 
@@ -1909,7 +2085,9 @@ const promptTakesItsOwnNumber = (state: CadStoreState): boolean =>
       state.arcPending ||
       state.rectPending ||
       state.hatchPending ||
-      state.insertPending,
+      state.insertPending ||
+      state.textPending ||
+      state.mtextPending,
   )
 
 /** The command step the current draft is on: typed values belong to one step and no other. */
@@ -2083,6 +2261,9 @@ const applyTypedNumber = (state: CadStoreState, value: number): boolean => {
     finishInsert(useCadStore.getState())
     return true
   }
+
+  // The height, rotation and column width of the two text commands.
+  if (applyTextNumber(state, value)) return true
 
   if (state.hatchPending && state.activeTool === 'hatch') {
     if (state.hatchPending === 'scale') {
@@ -2301,6 +2482,198 @@ const listBlocks = (state: CadStoreState, style: 'names' | 'placements'): string
     .join(', ')
 }
 
+/* ------------------------------------------------------------------- text */
+
+/** The style new text is created in: the one chosen, or the drawing's Standard. */
+const currentTextStyle = (state: CadStoreState): TextStyle =>
+  styleFor(state.doc, { styleId: state.textStyleId ?? undefined })
+
+/** The height text is drawn at, honouring a style that fixes one of its own. */
+const openedTextHeight = (state: CadStoreState): number => {
+  const style = currentTextStyle(state)
+  return style.height > 0 ? style.height : state.textHeight
+}
+
+/** Lists the drawing's text styles, as AutoCAD's `?` does inside a style prompt. */
+const listTextStyles = (state: CadStoreState): string =>
+  `Text styles: ${textStylesOf(state.doc)
+    .map((style) => `${style.name} (${style.font}, height ${style.height > 0 ? style.height : 'not fixed'})`)
+    .join(', ')}`
+
+/** Back to the prompt a text option was answered from, which is the point it started at. */
+const resumeTextOpening = (state: CadStoreState): void => {
+  useCadStore.setState({ textPending: null, mtextPending: null })
+  state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+}
+
+/** TEXT's start point: it then asks for the height, the rotation, and the words. */
+const beginTextAt = (state: CadStoreState, point: Vec2): void => {
+  state.addDraftPoint(point)
+  useCadStore.setState({ textPending: currentTextStyle(state).height > 0 ? 'rotation' : 'height' })
+  state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+}
+
+/**
+ * One line of TEXT — and DTEXT's repeated prompt for the next one.
+ *
+ * Each line is its own object, which is what single-line text IS; the next insertion point is one line
+ * spacing below the last, turned with the text, so a run of notes is typed without touching the mouse.
+ * Field values are not re-asked, so the second line comes straight after the first.
+ */
+const placeTextLine = (state: CadStoreState, raw: string): void => {
+  const at = state.draftPoints.at(-1) ?? { x: 0, y: 0 }
+  const height = openedTextHeight(state)
+  state.addEntity({
+    id: uid(),
+    type: 'text',
+    layerId: state.activeLayerId,
+    position: at,
+    value: raw,
+    height,
+    rotation: state.textRotation || undefined,
+    styleId: state.textStyleId ?? undefined,
+    justify: state.textJustify,
+  })
+
+  const angle = (state.textRotation * Math.PI) / 180
+  const drop = height * SINGLE_LINE_SPACING
+  useCadStore.setState({ draftPoints: [{ x: at.x - Math.sin(angle) * drop, y: at.y + Math.cos(angle) * drop }] })
+  state.log('result', `Text ${height} high`)
+  state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+}
+
+/** Fills in MTEXT's box and opens the editor, which is where AutoCAD asks for the words. */
+const openMTextBox = (state: CadStoreState, position: Vec2, width: number): void => {
+  useCadStore.setState({ mtextDraft: { position, width }, draftPoints: [], mtextPending: null })
+  state.beginTextEditor({ entityId: null, kind: 'mtext', value: '', title: 'MTEXT' })
+}
+
+/** A style name typed at either text command's Style option. */
+const applyTextStyleName = (state: CadStoreState, raw: string): boolean => {
+  const name = raw.trim()
+  const style = textStylesOf(state.doc).find((candidate) => candidate.name.toLowerCase() === name.toLowerCase())
+  if (!style) {
+    state.log('error', `No text style named "${name}".`)
+    return true
+  }
+  // Standard is the absence of a choice, so an object naming it stays readable if the list changes.
+  useCadStore.setState({ textStyleId: style.id === STANDARD_STYLE.id ? null : style.id })
+  state.log('result', `Text style ${style.name}`)
+  resumeTextOpening(state)
+  return true
+}
+
+/** One of AutoCAD's justification codes, which is what `[Left/Center/Right/...]` asks for. */
+const applyJustification = (state: CadStoreState, raw: string): boolean => {
+  const answer = raw.trim()
+  const code = JUSTIFY_CODES.find((candidate) => candidate.toLowerCase() === answer.toLowerCase())
+  if (!code) {
+    state.log('error', `Unknown justification "${answer}". Type one of ${JUSTIFY_CODES.join(', ')}.`)
+    return true
+  }
+  useCadStore.setState({ textJustify: code })
+  state.log('result', `Justification ${code}`)
+  resumeTextOpening(state)
+  return true
+}
+
+/** MTEXT's attachment point: the same codes minus the baseline-only ones. */
+const applyAttachment = (state: CadStoreState, raw: string): boolean => {
+  const answer = raw.trim()
+  const code = ATTACHMENT_CODES.find((candidate) => candidate.toLowerCase() === answer.toLowerCase())
+  if (!code) {
+    state.log('error', `Unknown attachment point "${answer}". Type one of ${ATTACHMENT_CODES.join(', ')}.`)
+    return true
+  }
+  useCadStore.setState({ mtextAttachment: code })
+  state.log('result', `Attachment ${code}`)
+  resumeTextOpening(state)
+  return true
+}
+
+/** The height, rotation and width the two text commands ask for as numbers. */
+const applyTextNumber = (state: CadStoreState, value: number): boolean => {
+  const positive = (label: string): boolean => {
+    if (value > 0) return true
+    state.log('error', `${label} must be greater than zero.`)
+    return false
+  }
+
+  if (state.activeTool === 'text' && state.textPending === 'height') {
+    if (!positive('The text height')) return true
+    useCadStore.setState({ textHeight: value, textPending: 'rotation' })
+    state.log('result', `Height ${value}`)
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return true
+  }
+
+  if (state.activeTool === 'text' && state.textPending === 'rotation') {
+    useCadStore.setState({ textRotation: value, textPending: 'text' })
+    state.log('result', `Rotation ${value}\u00b0`)
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return true
+  }
+
+  if (state.activeTool === 'mtext' && state.mtextPending === 'height') {
+    if (!positive('The text height')) return true
+    useCadStore.setState({ textHeight: value, mtextPending: null })
+    state.log('result', `Height ${value}`)
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return true
+  }
+
+  if (state.activeTool === 'mtext' && state.mtextPending === 'rotation') {
+    useCadStore.setState({ textRotation: value, mtextPending: null })
+    state.log('result', `Rotation ${value}\u00b0`)
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return true
+  }
+
+  if (state.activeTool === 'mtext' && state.mtextPending === 'width') {
+    if (!positive('The width')) return true
+    useCadStore.setState({ mtextWidth: value, mtextWidthGiven: true, mtextPending: null })
+    state.log('result', `Width ${value}`)
+    /*
+     * With the column fixed, the corner already picked is the whole box, so the words are asked for at
+     * once rather than after a second pick — which is what AutoCAD does when its Width option is used.
+     */
+    const corner = state.draftPoints.at(-1)
+    if (corner) openMTextBox(state, corner, value)
+    else state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return true
+  }
+
+  return false
+}
+
+/** Enter at a text prompt takes the value shown in its angle brackets. */
+const acceptTextDefault = (state: CadStoreState): boolean => {
+  if (state.activeTool === 'text') {
+    if (state.textPending === 'height') return applyTextNumber(state, openedTextHeight(state))
+    if (state.textPending === 'rotation') return applyTextNumber(state, state.textRotation)
+    if (state.textPending === 'justify' || state.textPending === 'style') {
+      resumeTextOpening(state)
+      return true
+    }
+    if (state.textPending === 'text') {
+      // An empty line is how DTEXT is finished.
+      state.log('result', 'Text finished')
+      state.endCommand()
+      return true
+    }
+  }
+  if (state.activeTool === 'mtext') {
+    if (state.mtextPending === 'height') return applyTextNumber(state, openedTextHeight(state))
+    if (state.mtextPending === 'rotation') return applyTextNumber(state, state.textRotation)
+    if (state.mtextPending === 'width') return applyTextNumber(state, state.mtextWidth || 100)
+    if (state.mtextPending === 'justify' || state.mtextPending === 'style') {
+      resumeTextOpening(state)
+      return true
+    }
+  }
+  return false
+}
+
 /* ---------------------------------------------------- blocks & inserts */
 
 /** Resolves a free-text answer at a `text` prompt: BLOCK and INSERT's name step. */
@@ -2309,6 +2682,21 @@ const applyTypedText = (state: CadStoreState, text: string): void => {
   if (!name) {
     state.log('error', 'The block name cannot be empty.')
     return
+  }
+
+  /*
+   * TEXT types its own words here — the whole line, spaces and all — which is why single-line text and
+   * MTEXT are the two commands whose answers are `text` prompts. MTEXT's paragraphs arrive from the
+   * editor instead, so all it answers this way are its style and attachment point.
+   */
+  if (state.activeTool === 'text') {
+    if (state.textPending === 'style') return void applyTextStyleName(state, text)
+    if (state.textPending === 'justify') return void applyJustification(state, text)
+    if (state.textPending === 'text') return placeTextLine(state, text)
+  }
+  if (state.activeTool === 'mtext') {
+    if (state.mtextPending === 'style') return void applyTextStyleName(state, text)
+    if (state.mtextPending === 'justify') return void applyAttachment(state, text)
   }
   if (state.activeTool === 'insert') {
     const block = state.doc.blocks.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase())
@@ -2421,6 +2809,17 @@ const runCommandDef = (state: CadStoreState, command: CommandDef, argument = '')
     state.setTool('block')
     useCadStore.setState({ blockNamePending: true, blockEntityIds: [...state.selectedIds] })
     state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return
+  }
+
+  // TEXT and MTEXT open with their own prompts, so the step they are on is cleared here rather than
+  // left over from a command that was escaped a moment ago.
+
+  if (command.name === 'STYLE') {
+    // AutoCAD puts text styles in a dialog and lets them be made at the command line; the dialog is
+    // where they can actually be edited, so that is what the command opens.
+    state.setTextStylesOpen(true)
+    state.log('result', listTextStyles(state))
     return
   }
 
@@ -2661,6 +3060,18 @@ export const promptContextFor = (state: CadStoreState, swapped = false): PromptC
   insertBlockId: state.insertBlockId,
   insertPending: state.insertPending,
   blockNamePending: state.blockNamePending,
+  textPending: state.textPending,
+  // The style's own height wins when it fixes one: AutoCAD's STYLE can pin a height, and then TEXT
+  // never asks for it.
+  textHeight: (() => {
+    const style = styleFor(state.doc, { styleId: state.textStyleId ?? undefined })
+    return style.height > 0 ? style.height : state.textHeight
+  })(),
+  textRotation: state.textRotation,
+  textStyleName: styleFor(state.doc, { styleId: state.textStyleId ?? undefined }).name,
+  mtextPending: state.mtextPending,
+  mtextWidth: state.mtextWidth,
+  mtextAttachment: state.mtextAttachment,
 })
 
 /**
@@ -2674,6 +3085,17 @@ export const currentPrompt = (state: CadStoreState, swapped = false): Prompt =>
 
 /** Applies an option the user picked from the bracketed list in the prompt. */
 const runKeyword = (state: CadStoreState, keyword: Keyword) => {
+  /*
+   * AutoCAD's justification and attachment lists are written as the codes themselves, so their labels
+   * are the whole interface: matching on them is what makes `TC` mean top-centre and not something
+   * else. MTEXT's list is the same codes minus the baseline-only ones, so one guard covers both.
+   */
+  if (JUSTIFY_CODES.includes(keyword.label as TextJustify)) {
+    if (state.activeTool === 'mtext') applyAttachment(state, keyword.label)
+    else applyJustification(state, keyword.label)
+    return
+  }
+
   switch (keyword.label) {
     case 'cuTting edges':
     case 'Boundary edges':
@@ -2778,6 +3200,36 @@ const runKeyword = (state: CadStoreState, keyword: Keyword) => {
           : 'Copies will keep the heading the original has.',
       )
       return
+    case 'Justify':
+      if (state.activeTool === 'mtext') {
+        useCadStore.setState({ mtextPending: 'justify' })
+        state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+        return
+      }
+      useCadStore.setState({ textPending: 'justify' })
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'Style':
+      useCadStore.setState(state.activeTool === 'mtext' ? { mtextPending: 'style' } : { textPending: 'style' })
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'Height':
+      useCadStore.setState({ mtextPending: 'height' })
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'Rotation':
+      useCadStore.setState({ mtextPending: 'rotation' })
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'Width':
+      useCadStore.setState({ mtextPending: 'width' })
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    case 'List styles': {
+      state.log('result', listTextStyles(state))
+      state.log('prompt', formatPrompt(currentPrompt(state)))
+      return
+    }
     case 'List blocks': {
       // Names only, as AutoCAD's -INSERT ? answers, so the command line stays a command line.
       state.log('result', listBlocks(state, 'names'))
@@ -3154,10 +3606,44 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
   }
 
   if (activeTool === 'text') {
-    const value = window.prompt('Text value', 'NOTE')
-    if (!value) return
-    addEntity({ id: uid(), type: 'text', layerId: currentLayerId, position: point, value, height: 12 })
-    state.endCommand()
+    beginTextAt(state, point)
+    return
+  }
+
+  if (activeTool === 'mtext') {
+    // The Width option fixes the column, so one corner is then the whole box, as AutoCAD's is.
+    if (state.mtextWidthGiven && state.draftPoints.length === 0) {
+      openMTextBox(state, point, state.mtextWidth)
+      return
+    }
+    if (state.draftPoints.length === 0) {
+      state.addDraftPoint(point)
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    }
+    const first = state.draftPoints[0]
+    // The block reads downwards from its top-left, so the box is normalised to that corner.
+    openMTextBox(
+      state,
+      { x: Math.min(first.x, point.x), y: Math.min(first.y, point.y) },
+      Math.abs(point.x - first.x),
+    )
+    return
+  }
+
+  if (activeTool === 'textedit') {
+    // DDEDIT: the pick chooses which object's words to change, and the editor does the rest.
+    const target = pickEntity(state, point)
+    if (!target || !isTextEntity(target)) {
+      state.setStatusMessage('No text at that point.')
+      return
+    }
+    state.beginTextEditor({
+      entityId: target.id,
+      kind: target.type === 'mtext' ? 'mtext' : 'text',
+      value: target.value,
+      title: target.type === 'mtext' ? 'MTEXT' : 'TEXT',
+    })
     return
   }
 

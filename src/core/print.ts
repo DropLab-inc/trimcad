@@ -1,8 +1,18 @@
-import { jsPDF } from 'jspdf'
+import { jsPDF, type Matrix } from 'jspdf'
 import { flattenEntity, pointsOfEntity } from './flatten'
+import { effectiveStyleFor, textLinesOf, textPoint } from './text'
 import { isLayerPlottable, layerOf, plottableEntities } from './layers'
 import type { Vec2 } from './math/vec2'
-import type { CadEntity, DrawingDocument, Layer, Layout, PaperOrientation, PaperSize } from './types'
+import type {
+  CadEntity,
+  DrawingDocument,
+  Layer,
+  Layout,
+  MTextEntity,
+  PaperOrientation,
+  PaperSize,
+  TextEntity,
+} from './types'
 
 /** Paper sizes and orientations are part of the document model, so layouts can name them too. */
 export type { PaperOrientation, PaperSize }
@@ -313,10 +323,8 @@ export const exportPdf = (
     // Lineweight is a plotted width in millimetres, so it does not change with the drawing scale.
     pdf.setLineWidth(lineweightOf(layer))
 
-    if (entity.type === 'text') {
-      const [x, y] = toPage(entity.position)
-      pdf.setFontSize(entity.height * layout.applied * (72 / 25.4))
-      pdf.text(entity.value, x, y)
+    if (entity.type === 'text' || entity.type === 'mtext') {
+      plotText(pdf, document, entity, toPage, 1 / layout.applied)
       continue
     }
 
@@ -348,6 +356,75 @@ export const exportPdf = (
  * same code — a line is a line wherever it lands, and the two can never disagree about lineweight,
  * colour or how a curve is flattened.
  */
+/**
+ * jsPDF's transformation matrix, as the six numbers a PDF `cm` operator carries.
+ *
+ * jsPDF only ever calls `toString()` on what it is handed here — that string becomes the operator — so
+ * the numbers are the whole of it. The cast is because its own type asks for a full Matrix instance,
+ * whose other seventeen fields this path never reads.
+ */
+const matrixOf = (a: number, b: number, c: number, d: number, e: number, f: number): Matrix =>
+  ({ toString: () => `${a} ${b} ${c} ${d} ${e} ${f}` }) as unknown as Matrix
+
+/**
+ * Draws one text object or paragraph, in the style the drawing gives it.
+ *
+ * Rotation, width factor and oblique angle are one matrix rather than three adjustments, because they
+ * all describe how the same run of glyphs is turned — and jsPDF places text inside the current
+ * matrix, so setting it once per line puts the glyphs and their spacing in the same frame. The angle
+ * is negated against the drawing's own: a drawing y runs down and a page y runs up, so a text that
+ * turns one way on the canvas has to be turned the other way to look the same on paper.
+ */
+const plotText = (
+  pdf: jsPDF,
+  document: DrawingDocument,
+  entity: TextEntity | MTextEntity,
+  toPage: (point: Vec2) => [number, number],
+  unitsPerMm: number,
+): void => {
+  const style = effectiveStyleFor(document, entity)
+  const { lines, placement } = textLinesOf(entity, style)
+  const [family, weight] = fontParts(style.font)
+  pdf.setFont(family, weight)
+  pdf.setFontSize((entity.height / unitsPerMm) * (72 / 25.4))
+
+  const turn = ((entity.rotation ?? 0) * Math.PI) / 180
+  const oblique = (style.obliqueAngle * Math.PI) / 180
+  const wide = style.widthFactor
+  const cos = Math.cos(turn)
+  const sin = Math.sin(turn)
+  const lean = Math.tan(oblique)
+  const pageHeight = pdf.internal.pageSize.getHeight()
+  // Page y runs down and the matrix' y runs up, so the flip jsPDF applies to a text position has to be
+  // cancelled: the glyph is placed at the origin of the matrix and the matrix carries the position.
+  const a = cos * wide
+  const b = -sin * wide
+  const c = cos * wide * lean + sin
+  const d = -sin * wide * lean + cos
+
+  lines.forEach((line, index) => {
+    if (line === '') return
+    const [px, py] = toPage(textPoint(entity, placement.starts[index]))
+    pdf.saveGraphicsState()
+    pdf.setCurrentTransformationMatrix(matrixOf(a, b, c, d, px, pageHeight - py))
+    pdf.text(line, 0, pageHeight)
+    pdf.restoreGraphicsState()
+  })
+}
+
+/** Splits a style's font name into the family and face jsPDF asks for. */
+const fontParts = (font: string): [string, string] => {
+  const family = font.split('-')[0]
+  const face = font.includes('bold') && font.includes('italic')
+    ? 'bolditalic'
+    : font.includes('bold')
+      ? 'bold'
+      : font.includes('italic')
+        ? 'italic'
+        : 'normal'
+  return [(['helvetica', 'times', 'courier'].includes(family) ? family : 'helvetica'), face]
+}
+
 const plotEntities = (
   pdf: jsPDF,
   document: DrawingDocument,
@@ -363,10 +440,8 @@ const plotEntities = (
     // Lineweight is a plotted width in millimetres, so it does not follow any scale.
     pdf.setLineWidth(lineweightOf(layer))
 
-    if (entity.type === 'text') {
-      const [x, y] = toPage(entity.position)
-      pdf.setFontSize((entity.height / unitsPerMm) * (72 / 25.4))
-      pdf.text(entity.value, x, y)
+    if (entity.type === 'text' || entity.type === 'mtext') {
+      plotText(pdf, document, entity, toPage, unitsPerMm)
       continue
     }
 

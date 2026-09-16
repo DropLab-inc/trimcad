@@ -8,7 +8,9 @@ import { FileMenu } from './ui/FileMenu'
 import { HelpMenu } from './ui/HelpMenu'
 import { Icon } from './ui/Icon'
 import { PreferencesMenu } from './ui/PreferencesMenu'
+import { MTextEditor } from './ui/MTextEditor'
 import { PrintDialog } from './ui/PrintDialog'
+import { TextStylesDialog } from './ui/TextStylesDialog'
 import { LayerPanel } from './ui/LayerPanel'
 import { BlocksPanel } from './ui/BlocksPanel'
 import { LayoutTabs } from './ui/LayoutTabs'
@@ -132,6 +134,8 @@ function App() {
       <CommandLine />
       <StatusBar />
       <PrintDialog />
+      <MTextEditor />
+      <TextStylesDialog />
     </div>
   )
 }

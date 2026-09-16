@@ -2,10 +2,89 @@ import type { ReactElement } from 'react'
 import { angularSweep, makeDimensionLabel, polar } from '../core/geometry'
 import { hatchBaseAngle, hatchTileSize, HATCH_PATTERNS as PATTERN_LIST } from '../core/hatch'
 import { add, mul, normalize, sub, type Vec2 } from '../core/math/vec2'
-import type { BlockDefinition, CadEntity, DimensionEntity, DimStyle, HatchEntity, HatchPattern } from '../core/types'
+import { effectiveStyleFor, textLinesOf } from '../core/text'
+import type {
+  BlockDefinition,
+  CadEntity,
+  DimensionEntity,
+  DimStyle,
+  HatchEntity,
+  HatchPattern,
+  MTextEntity,
+  TextEntity,
+  TextStyle,
+} from '../core/types'
 import type { CanvasPalette } from './theme'
 
 export const HATCH_PATTERNS: HatchPattern[] = PATTERN_LIST
+
+/**
+ * How a style's font name reads on the canvas.
+ *
+ * The three families are the ones the plot can also draw, so a drawing's typography survives being
+ * plotted: Helvetica/Arial, Times and Courier are metric-compatible pairs, and the canvas wraps a
+ * paragraph from the same widths jsPDF plots it with.
+ */
+const FONT_FAMILIES: Record<string, string> = {
+  helvetica: 'Helvetica, Arial, sans-serif',
+  times: '"Times New Roman", Times, serif',
+  courier: '"Courier New", Courier, monospace',
+}
+
+export const cssFont = (font: string): { fontFamily: string; fontWeight: string; fontStyle: string } => {
+  const bold = font.includes('bold')
+  const italic = font.includes('italic')
+  const family = font.replace(/-?(bold|italic|bolditalic)$/, '') || 'helvetica'
+  return {
+    fontFamily: FONT_FAMILIES[family] ?? FONT_FAMILIES.helvetica,
+    fontWeight: bold ? 'bold' : 'normal',
+    fontStyle: italic ? 'italic' : 'normal',
+  }
+}
+
+/**
+ * The transform a text object is drawn under, as one string.
+ *
+ * Width factor and oblique angle are style properties in AutoCAD, and both are a shape change rather
+ * than a placement, so they belong here with the rotation — the line positions stay in text units and
+ * one transform carries all three. `skewX` takes the angle negated because drawing y runs down: the
+ * top of the letters is what leans to the right for a positive oblique angle.
+ */
+const textTransform = (entity: { position: Vec2; rotation?: number }, style: TextStyle): string => {
+  const parts = [`translate(${entity.position.x} ${entity.position.y})`]
+  if (entity.rotation) parts.push(`rotate(${entity.rotation})`)
+  if (style.widthFactor !== 1) parts.push(`scale(${style.widthFactor} 1)`)
+  if (style.obliqueAngle) parts.push(`skewX(${-style.obliqueAngle})`)
+  return parts.join(' ')
+}
+
+/** Draws a single line of text or a paragraph, in the style the drawing gives it. */
+const renderText = (
+  entity: TextEntity | MTextEntity,
+  stroke: string,
+  textStyles: TextStyle[],
+): ReactElement => {
+  const style = effectiveStyleFor({ textStyles }, entity)
+  const { lines, placement } = textLinesOf(entity, style)
+
+  return (
+    <text
+      key={entity.id}
+      transform={textTransform(entity, style)}
+      fill={stroke}
+      fontSize={entity.height}
+      {...cssFont(style.font)}
+    >
+      {lines.map((line, index) => (
+        <tspan key={`${entity.id}-line-${index}`} x={placement.starts[index].x} y={placement.starts[index].y}>
+          {/* An empty paragraph still takes a line, and a space keeps its row in the layout. */}
+          {line === '' ? ' ' : line}
+        </tspan>
+      ))}
+    </text>
+  )
+}
+
 
 const arcPath = (center: Vec2, radius: number, startAngle: number, endAngle: number): string => {
   const start = polar(center, radius, startAngle)
@@ -269,9 +348,11 @@ export const renderEntity = (
     palette: CanvasPalette
     /** Definitions to expand an insert against; absent means inserts draw nothing. */
     blocks?: BlockDefinition[]
+    /** The drawing's text styles; absent means everything draws in Standard. */
+    textStyles?: TextStyle[]
   },
 ): ReactElement | null => {
-  const { selected, color, dash, dimStyle, width, palette, blocks = [] } = options
+  const { selected, color, dash, dimStyle, width, palette, blocks = [], textStyles = [] } = options
   const stroke = selected ? palette.selection : color
   const common = {
     stroke,
@@ -311,11 +392,8 @@ export const renderEntity = (
     case 'hatch':
       return renderHatch(entity, selected, palette)
     case 'text':
-      return (
-        <text key={entity.id} x={entity.position.x} y={entity.position.y} fill={stroke} fontSize={entity.height}>
-          {entity.value}
-        </text>
-      )
+    case 'mtext':
+      return renderText(entity, stroke, textStyles)
     case 'dimension':
       return renderDimension(entity, dimStyle, selected ? palette.selection : palette.dimension, entity.id)
     case 'insert': {

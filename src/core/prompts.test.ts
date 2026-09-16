@@ -40,6 +40,13 @@ const context = (overrides: Partial<PromptContext> = {}): PromptContext => ({
   insertBlockId: null,
   insertPending: null,
   blockNamePending: false,
+  textPending: null,
+  textHeight: 12,
+  textRotation: 0,
+  textStyleName: 'Standard',
+  mtextPending: null,
+  mtextWidth: 0,
+  mtextAttachment: 'TL',
   ...overrides,
 })
 

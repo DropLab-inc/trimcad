@@ -11,6 +11,7 @@ import {
   type Vec2,
 } from './math/vec2'
 import { ellipseOutline } from './intersect'
+import { effectiveStyleFor, textBox } from './text'
 import type {
   ArcEntity,
   BlockDefinition,
@@ -21,6 +22,7 @@ import type {
   InsertEntity,
   PolylineEntity,
   SplineEntity,
+  TextStyle,
 } from './types'
 
 const EPS = 1e-6
@@ -47,7 +49,14 @@ export const pointSegmentDistance = (p: Vec2, a: Vec2, b: Vec2): number => {
   return distance(p, closest)
 }
 
-export const isPointNearEntity = (point: Vec2, entity: CadEntity, tol: number, blocks?: BlockDefinition[]): boolean => {
+export const isPointNearEntity = (
+  point: Vec2,
+  entity: CadEntity,
+  tol: number,
+  blocks?: BlockDefinition[],
+  /** The drawing's text styles, so a note is picked by the box it really occupies. */
+  textStyles?: TextStyle[],
+): boolean => {
   switch (entity.type) {
     case 'line':
       return pointSegmentDistance(point, entity.start, entity.end) <= tol
@@ -71,7 +80,15 @@ export const isPointNearEntity = (point: Vec2, entity: CadEntity, tol: number, b
       return false
     }
     case 'text':
+    case 'mtext': {
+      /*
+       * A note is clicked anywhere on the words, as AutoCAD picks text, rather than only within a
+       * small circle of its insertion point — which for a justified paragraph is a corner of empty
+       * space. The insertion point itself always counts, so an empty string stays reachable.
+       */
+      if (isPointInPolygon(point, textBox(entity, effectiveStyleFor({ textStyles }, entity)))) return true
       return distance(point, entity.position) <= tol * 2
+    }
     case 'dimension':
       return pointSegmentDistance(point, entity.p1, entity.p2) <= tol
     case 'insert': {
@@ -174,6 +191,7 @@ export const moveEntity = (entity: CadEntity, delta: Vec2): CadEntity => {
     case 'hatch':
       return { ...entity, boundary: entity.boundary.map(shift) }
     case 'text':
+    case 'mtext':
       return { ...entity, position: shift(entity.position) }
     case 'dimension':
       // The placement travels too, or the dimension line stays where the old text was.
@@ -211,7 +229,12 @@ export const rotateEntity = (entity: CadEntity, origin: Vec2, angleRad: number):
         angle: (entity.angle ?? 0) + (angleRad * 180) / Math.PI,
       }
     case 'text':
-      return { ...entity, position: rot(entity.position) }
+    case 'mtext':
+      return {
+        ...entity,
+        position: rot(entity.position),
+        rotation: (entity.rotation ?? 0) + (angleRad * 180) / Math.PI,
+      }
     case 'dimension':
       return { ...entity, p1: rot(entity.p1), p2: rot(entity.p2), p3: entity.p3 ? rot(entity.p3) : undefined }
     case 'insert':
@@ -238,6 +261,13 @@ export const scaleEntity = (entity: CadEntity, origin: Vec2, factor: number): Ca
       return { ...entity, boundary: entity.boundary.map(scl) }
     case 'text':
       return { ...entity, position: scl(entity.position), height: Math.abs(entity.height * factor) }
+    case 'mtext':
+      return {
+        ...entity,
+        position: scl(entity.position),
+        height: Math.abs(entity.height * factor),
+        width: Math.abs(entity.width * factor),
+      }
     case 'dimension':
       return { ...entity, p1: scl(entity.p1), p2: scl(entity.p2), p3: entity.p3 ? scl(entity.p3) : undefined }
     case 'insert':
@@ -263,7 +293,10 @@ export const mirrorEntity = (entity: CadEntity, a: Vec2, b: Vec2): CadEntity => 
     case 'hatch':
       return { ...entity, boundary: entity.boundary.map(m) }
     case 'text':
-      return { ...entity, position: m(entity.position) }
+    case 'mtext':
+      // The text moves and turns nothing: mirrored glyphs are unreadable, and the setting that keeps
+      // them readable in AutoCAD (MIRRTEXT) is off in every drawing office that has ever issued one.
+      return { ...entity, position: m(entity.position), rotation: -(entity.rotation ?? 0) }
     case 'dimension':
       return { ...entity, p1: m(entity.p1), p2: m(entity.p2), p3: entity.p3 ? m(entity.p3) : undefined }
     case 'insert':
@@ -398,6 +431,7 @@ export const getEntityAnchorPoints = (entity: CadEntity): Vec2[] => {
     case 'hatch':
       return entity.boundary
     case 'text':
+    case 'mtext':
       return [entity.position]
     case 'dimension':
       return [entity.p1, entity.p2, ...(entity.p3 ? [entity.p3] : [])]

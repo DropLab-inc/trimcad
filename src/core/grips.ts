@@ -88,6 +88,7 @@ export const entityGrips = (entity: CadEntity): Grip[] => {
     case 'hatch':
       return vertices(entity.boundary)
     case 'text':
+    case 'mtext':
       return [{ point: entity.position, kind: 'move', index: 0 }]
     case 'dimension':
       return [

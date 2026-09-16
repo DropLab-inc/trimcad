@@ -663,6 +663,45 @@ export function Toolbar() {
           </button>
           <button
             type="button"
+            className={`ribbon-btn ${activeTool === 'mtext' ? 'active' : ''}`}
+            onClick={() => setTool('mtext')}
+            title={tooltip({
+              label: 'Multiline text',
+              command: 'MTEXT',
+              hint: 'Two corners set the column the paragraphs wrap to; the editor opens for the words',
+            })}
+          >
+            <Icon name="mtext" />
+            <span>Multiline</span>
+          </button>
+          <button
+            type="button"
+            className={`ribbon-btn ${activeTool === 'textedit' ? 'active' : ''}`}
+            onClick={() => setTool('textedit')}
+            title={tooltip({
+              label: 'Edit text',
+              command: 'TEXTEDIT',
+              hint: 'Click a note to change its words — a double-click on the drawing does the same',
+            })}
+          >
+            <Icon name="text-edit" />
+            <span>Edit text</span>
+          </button>
+          <button
+            type="button"
+            className="ribbon-btn"
+            onClick={() => executeCommand('STYLE')}
+            title={tooltip({
+              label: 'Text style',
+              command: 'STYLE',
+              hint: 'The fonts, heights and widths a drawing sets its typography in',
+            })}
+          >
+            <Icon name="text-style" />
+            <span>Style</span>
+          </button>
+          <button
+            type="button"
             className={`ribbon-btn ${activeTool === 'hatch' ? 'active' : ''}`}
             onClick={() => setTool('hatch')}
             title={tooltip({ label: 'Hatch', command: 'HATCH' })}

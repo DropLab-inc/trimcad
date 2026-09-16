@@ -1,7 +1,8 @@
 import { isPointInPolygon, polar } from './geometry'
 import type { Vec2 } from './math/vec2'
 import { entityCircle, entitySegments, segmentCircleIntersections, segmentIntersection } from './snap'
-import type { BlockDefinition, CadEntity, DrawingDocument, InsertEntity } from './types'
+import { effectiveStyleFor, textBox } from './text'
+import type { BlockDefinition, CadEntity, DrawingDocument, InsertEntity, TextStyle } from './types'
 
 export type SelectionRect = { min: Vec2; max: Vec2 }
 
@@ -73,7 +74,12 @@ const insertMemberBounds = (insert: InsertEntity, blocks: BlockDefinition[], dep
   return boundsOfPoints(corners.map(toParent))
 }
 
-export const entityBounds = (entity: CadEntity, blocks?: BlockDefinition[]): Bounds | null => {
+export const entityBounds = (
+  entity: CadEntity,
+  blocks?: BlockDefinition[],
+  /** The drawing's text styles: a note's extent depends on the font it is set in. */
+  textStyles?: TextStyle[],
+): Bounds | null => {
   switch (entity.type) {
     case 'line':
       return boundsOfPoints([entity.start, entity.end])
@@ -106,10 +112,10 @@ export const entityBounds = (entity: CadEntity, blocks?: BlockDefinition[]): Bou
     case 'hatch':
       return boundsOfPoints(entity.boundary)
     case 'text':
-      return boundsOfPoints([
-        entity.position,
-        { x: entity.position.x + entity.value.length * entity.height * 0.6, y: entity.position.y - entity.height },
-      ])
+    case 'mtext':
+      // The block the words really occupy, measured from the glyph widths the plot uses, rather than
+      // a guess from the character count — which a wrapped or justified note gets wrong.
+      return boundsOfPoints(textBox(entity, effectiveStyleFor({ textStyles }, entity)))
     case 'dimension':
       return boundsOfPoints(
         [entity.p1, entity.p2, entity.p3, entity.placement].filter((point): point is Vec2 => Boolean(point)),
@@ -141,16 +147,26 @@ const rectEdges = (rect: SelectionRect): Array<{ a: Vec2; b: Vec2 }> => {
   return corners.map((corner, index) => ({ a: corner, b: corners[(index + 1) % corners.length] }))
 }
 
-export const entityFullyInside = (entity: CadEntity, rect: SelectionRect, blocks?: BlockDefinition[]): boolean => {
-  const bounds = entityBounds(entity, blocks)
+export const entityFullyInside = (
+  entity: CadEntity,
+  rect: SelectionRect,
+  blocks?: BlockDefinition[],
+  textStyles?: TextStyle[],
+): boolean => {
+  const bounds = entityBounds(entity, blocks, textStyles)
   if (!bounds) return false
   return (
     bounds.min.x >= rect.min.x && bounds.max.x <= rect.max.x && bounds.min.y >= rect.min.y && bounds.max.y <= rect.max.y
   )
 }
 
-export const entityTouchesRect = (entity: CadEntity, rect: SelectionRect, blocks?: BlockDefinition[]): boolean => {
-  if (entityFullyInside(entity, rect, blocks)) return true
+export const entityTouchesRect = (
+  entity: CadEntity,
+  rect: SelectionRect,
+  blocks?: BlockDefinition[],
+  textStyles?: TextStyle[],
+): boolean => {
+  if (entityFullyInside(entity, rect, blocks, textStyles)) return true
 
   const edges = rectEdges(rect)
   const segments = entitySegments(entity)
@@ -169,8 +185,8 @@ export const entityTouchesRect = (entity: CadEntity, rect: SelectionRect, blocks
     }
   }
 
-  if (entity.type === 'ellipse' || entity.type === 'text' || entity.type === 'insert' || entity.type === 'dimension') {
-    const bounds = entityBounds(entity, blocks)
+  if (entity.type === 'ellipse' || entity.type === 'text' || entity.type === 'mtext' || entity.type === 'insert' || entity.type === 'dimension') {
+    const bounds = entityBounds(entity, blocks, textStyles)
     if (!bounds) return false
     return (
       bounds.min.x <= rect.max.x && bounds.max.x >= rect.min.x && bounds.min.y <= rect.max.y && bounds.max.y >= rect.min.y
@@ -199,10 +215,13 @@ export const selectEntitiesInRect = (
   rect: SelectionRect,
   mode: SelectionMode,
   blocks?: BlockDefinition[],
+  textStyles?: TextStyle[],
 ): string[] =>
   entities
     .filter((entity) =>
-      mode === 'window' ? entityFullyInside(entity, rect, blocks) : entityTouchesRect(entity, rect, blocks),
+      mode === 'window'
+        ? entityFullyInside(entity, rect, blocks, textStyles)
+        : entityTouchesRect(entity, rect, blocks, textStyles),
     )
     .map((entity) => entity.id)
 

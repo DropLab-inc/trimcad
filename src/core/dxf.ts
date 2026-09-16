@@ -1,7 +1,7 @@
 import DxfParser from 'dxf-parser'
 import Drawing from 'dxf-writer'
 import type { Vec2 } from './math/vec2'
-import type { CadEntity, DrawingDocument, Layer } from './types'
+import type { CadEntity, DrawingDocument, Layer, MTextAttachment, TextJustify } from './types'
 import { makeDefaultDocument } from './document'
 import { ellipticalArcPoints, expandBulges, sampleBSpline } from './dxfCurves'
 import { DEFAULT_LAYER_COLOR, makeLayer, normalizeLayer } from './layers'
@@ -196,7 +196,18 @@ const addEntity = (drawing: any, entity: CadEntity) => {
       drawing.drawSpline(entity.controlPoints.map((point) => [point.x, point.y]))
       return
     case 'text':
-      drawing.drawText(entity.position.x, entity.position.y, entity.height, 0, entity.value)
+      /*
+       * An MTEXT goes out as one TEXT record holding its paragraphs joined by spaces: dxf-writer has no
+       * MTEXT, and leaving the object out would lose the note entirely for anything but this app. The
+       * paragraph itself is kept in the document embedded in the file, so it comes back whole.
+       */
+      drawing.drawText(
+        entity.position.x,
+        entity.position.y,
+        entity.height,
+        entity.rotation ?? 0,
+        entity.value.replace(/\n+/g, ' '),
+      )
       return
     default:
       return
@@ -334,19 +345,81 @@ const readEntity = (raw: any, layerId: string): CadEntity | null => {
         controlPoints: sampled.length >= 2 ? sampled : control,
       }
     }
-    case 'TEXT':
-    case 'MTEXT':
+    case 'TEXT': {
+      // Group 41 is the object's own width factor and 72/73 its justification: both belong to the
+      // object in DXF, so both are read here rather than pushed onto a style.
+      const justify = singleLineJustify(raw.halign, raw.valign)
       return {
         id: uid(),
         type: 'text',
         layerId,
-        position: { x: raw.startPoint?.x ?? raw.position?.x ?? 0, y: raw.startPoint?.y ?? raw.position?.y ?? 0 },
+        position: { x: raw.startPoint?.x ?? 0, y: raw.startPoint?.y ?? 0 },
         value: String(raw.text ?? ''),
-        height: raw.textHeight ?? raw.height ?? 12,
+        height: raw.textHeight ?? 12,
+        rotation: raw.rotation || undefined,
+        ...(raw.xScale && raw.xScale !== 1 ? { widthFactor: raw.xScale } : {}),
+        ...(justify ? { justify } : {}),
+      }
+    }
+    case 'MTEXT':
+      /*
+       * A real multiline entity, not a TEXT with the codes still in it. MTEXT's paragraphs are `\P`
+       * inside its text and its formatting is written as `\f…;`, `\H…;` and braces around the runs
+       * they apply to, so the codes are stripped and the breaks become newlines.
+       */
+      return {
+        id: uid(),
+        type: 'mtext',
+        layerId,
+        position: { x: raw.position?.x ?? 0, y: raw.position?.y ?? 0 },
+        width: raw.width ?? 0,
+        value: mtextPlainText(String(raw.text ?? '')),
+        height: raw.height ?? 12,
+        rotation: raw.rotation || undefined,
+        attachment: MTEXT_ATTACHMENTS[raw.attachmentPoint ?? 1] ?? 'TL',
       }
     default:
       return null
   }
+}
+
+/**
+ * The words of an MTEXT with its formatting codes taken out: paragraph breaks become newlines and the
+ * inline codes that set a font, height, width or colour are dropped. Trimming a note to its words is
+ * lossy on purpose — a style is what carries typography here, and a code that survives into the text
+ * would be drawn literally.
+ */
+const mtextPlainText = (value: string): string =>
+  value
+    .replace(/\\P/gi, '\n')
+    .replace(/\\([A-Za-z][^;\\\\{}]*;)/g, '')
+    .replace(/[{}]/g, '')
+    .replace(/\\~/g, ' ')
+
+/** AutoCAD's MTEXT attachment codes, which count from the top left down and across. */
+const MTEXT_ATTACHMENTS: Record<number, MTextAttachment> = {
+  1: 'TL',
+  2: 'TC',
+  3: 'TR',
+  4: 'ML',
+  5: 'MC',
+  6: 'MR',
+  7: 'BL',
+  8: 'BC',
+  9: 'BR',
+}
+
+/** DXF's two alignment numbers as one of AutoCAD's single-line justification codes. */
+const singleLineJustify = (halign: unknown, valign: unknown): TextJustify | undefined => {
+  const horizontal = Number(halign ?? 0)
+  const vertical = Number(valign ?? 0)
+  if (!Number.isFinite(horizontal) || !Number.isFinite(vertical)) return undefined
+  const across = ['Left', 'Center', 'Right'][horizontal] ?? 'Left'
+  const down = ['baseline', 'bottom', 'middle', 'top'][vertical] ?? 'baseline'
+  if (across === 'Left' && down === 'baseline') return 'Left'
+  if (down === 'baseline') return across as TextJustify
+  const prefix = down === 'top' ? 'T' : down === 'middle' ? 'M' : 'B'
+  return `${prefix}${across === 'center' ? 'C' : across === 'right' ? 'R' : 'L'}` as TextJustify
 }
 
 /** AutoCAD's first nine index colours, which is what the layer palette offers. */

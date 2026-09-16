@@ -48,6 +48,9 @@ export type IconName =
   | 'dim-diameter'
   | 'dim-angular'
   | 'text'
+  | 'mtext'
+  | 'text-edit'
+  | 'text-style'
   | 'hatch'
   | 'insert'
   | 'block'
@@ -406,6 +409,26 @@ const GLYPHS: Record<IconName, ReactElement> = {
     <g>
       <path d="M4 6 L4 4 L20 4 L20 6" />
       <path d="M12 4 L12 20 M8.5 20 L15.5 20" />
+    </g>
+  ),
+  mtext: (
+    <g>
+      <path d="M3 5 L21 5" />
+      <path d="M3 10 L21 10 M3 15 L15 15 M3 20 L11 20" />
+      <path className="accent" d="M18 14 L18 21 M15.5 18.5 L18 21 L20.5 18.5" />
+    </g>
+  ),
+  'text-edit': (
+    <g>
+      <path d="M3 5 L15 5 M9 5 L9 19 M6 19 L12 19" />
+      <path className="accent" d="M16.5 13 L21 17.5 L17.5 21 L13 16.5 Z" />
+    </g>
+  ),
+  'text-style': (
+    <g>
+      <path d="M4 6 L4 4 L16 4 L16 6" />
+      <path d="M10 4 L10 19 M6.5 19 L13.5 19" />
+      <path className="accent" d="M17 9 L21 9 M19 9 L19 15" />
     </g>
   ),
   hatch: (

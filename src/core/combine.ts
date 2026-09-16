@@ -291,7 +291,9 @@ const shapeKey = (entity: CadEntity, tolerance: number): string => {
     case 'hatch':
       return `hatch ${entity.pattern} ${n(entity.scale)} ${run(entity.boundary)}`
     case 'text':
-      return `text ${p(entity.position)} ${n(entity.height)} ${entity.value}`
+      return `text ${p(entity.position)} ${n(entity.height)} ${n(entity.rotation ?? 0)} ${entity.justify ?? 'Left'} ${entity.value}`
+    case 'mtext':
+      return `mtext ${p(entity.position)} ${n(entity.height)} ${n(entity.width)} ${n(entity.rotation ?? 0)} ${entity.attachment ?? 'TL'} ${entity.value}`
     case 'dimension':
       return `dim ${entity.dimType} ${p(entity.p1)} ${p(entity.p2)} ${entity.p3 ? p(entity.p3) : '-'} ${entity.placement ? p(entity.placement) : '-'}`
     case 'insert':

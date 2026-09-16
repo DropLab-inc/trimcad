@@ -14,8 +14,19 @@ const PAPER_SIZES: { value: PaperSize; label: string }[] = [
   { value: 'tabloid', label: 'Tabloid' },
 ]
 import { useCadStore } from '../core/store'
+import { STANDARD_STYLE, textStylesOf } from '../core/text'
+import { ATTACHMENT_CODES, JUSTIFY_CODES } from '../core/prompts'
 import { dimensionScale } from './renderers'
-import type { DimensionEntity, HatchEntity, HatchPattern, Layout } from '../core/types'
+import type {
+  DimensionEntity,
+  HatchEntity,
+  HatchPattern,
+  Layout,
+  MTextAttachment,
+  MTextEntity,
+  TextEntity,
+  TextJustify,
+} from '../core/types'
 
 const round1 = (value: number) => Math.round(value * 10) / 10
 
@@ -27,6 +38,7 @@ export function PropertiesPanel() {
   const moveSelectionToLayer = useCadStore((state) => state.moveSelectionToLayer)
   const resizeDimensions = useCadStore((state) => state.resizeDimensions)
   const updateHatches = useCadStore((state) => state.updateHatches)
+  const updateSelectedText = useCadStore((state) => state.updateSelectedText)
   const activeLayoutId = useCadStore((state) => state.activeLayoutId)
   const updateLayout = useCadStore((state) => state.updateLayout)
   const activeViewportId = useCadStore((state) => state.activeViewportId)
@@ -34,6 +46,12 @@ export function PropertiesPanel() {
   const selected = doc.entities.filter((entity) => selectedIds.includes(entity.id))
   const dimensions = selected.filter((entity): entity is DimensionEntity => entity.type === 'dimension')
   const hatches = selected.filter((entity): entity is HatchEntity => entity.type === 'hatch')
+  /** Text and MTEXT share most of their rows, so they share one block; the rest are per-kind. */
+  const notes = selected.filter(
+    (entity): entity is TextEntity | MTextEntity => entity.type === 'text' || entity.type === 'mtext',
+  )
+  const singleLine = notes.filter((entity): entity is TextEntity => entity.type === 'text')
+  const paragraphs = notes.filter((entity): entity is MTextEntity => entity.type === 'mtext')
   const layout = activeLayoutId
     ? doc.layouts.find((candidate) => candidate.id === activeLayoutId) ?? null
     : null
@@ -340,6 +358,99 @@ export function PropertiesPanel() {
                 )
               }
             />
+          </label>
+        </>
+      )}
+      {notes.length > 0 && (
+        <>
+          <label title="The words themselves. Changing this rewrites every selected note.">
+            Text
+            <input
+              type="text"
+              aria-label="Text value"
+              value={notes[0].value}
+              onChange={(event) => updateSelectedText({ value: event.target.value })}
+            />
+          </label>
+          <label title="Character height, in drawing units">
+            Height
+            <input
+              type="number"
+              min={0.01}
+              step={1}
+              aria-label="Text height"
+              value={notes[0].height}
+              onChange={(event) => updateSelectedText({ height: Math.abs(Number(event.target.value)) || 1 })}
+            />
+          </label>
+          <label title="Rotation about the insertion point, in degrees">
+            Rotation
+            <input
+              type="number"
+              step={15}
+              aria-label="Text rotation"
+              value={notes[0].rotation ?? 0}
+              onChange={(event) => updateSelectedText({ rotation: Number(event.target.value) || undefined })}
+            />
+          </label>
+          {singleLine.length > 0 && (
+            <label title="AutoCAD's justification: where the insertion point sits on the text">
+              Justification
+              <select
+                aria-label="Text justification"
+                value={singleLine[0].justify ?? 'Left'}
+                onChange={(event) => updateSelectedText({ justify: event.target.value as TextJustify })}
+              >
+                {JUSTIFY_CODES.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {paragraphs.length > 0 && (
+            <>
+              <label title="Which corner or edge of the paragraph its insertion point anchors">
+                Attachment
+                <select
+                  aria-label="Text attachment"
+                  value={paragraphs[0].attachment ?? 'TL'}
+                  onChange={(event) => updateSelectedText({ attachment: event.target.value as MTextAttachment })}
+                >
+                  {ATTACHMENT_CODES.map((code) => (
+                    <option key={code} value={code}>
+                      {code}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label title="The column the paragraphs wrap to. 0 wraps only at the paragraph breaks.">
+                Column width
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  aria-label="Column width"
+                  value={paragraphs[0].width}
+                  onChange={(event) => updateSelectedText({ width: Math.max(0, Number(event.target.value)) })}
+                />
+              </label>
+            </>
+          )}
+          <label title="The named style this text is set in, which is where its font comes from">
+            Style
+            <select
+              aria-label="Text style"
+              value={notes[0].styleId ?? ''}
+              onChange={(event) => updateSelectedText({ styleId: event.target.value || undefined })}
+            >
+              {textStylesOf(doc).map((style) => (
+                <option key={style.id} value={style.id === STANDARD_STYLE.id ? '' : style.id}>
+                  {style.name}
+                </option>
+              ))}
+            </select>
           </label>
         </>
       )}

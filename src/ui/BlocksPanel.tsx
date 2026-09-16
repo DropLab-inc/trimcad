@@ -30,7 +30,7 @@ function BlockPreview({ blockId }: { blockId: string }) {
   if (!block) return <span className="block-preview" />
 
   const boxes = block.entities
-    .map((entity) => entityBounds(entity, doc.blocks))
+    .map((entity) => entityBounds(entity, doc.blocks, doc.textStyles))
     .filter((box): box is Bounds => box !== null)
   if (boxes.length === 0) {
     return <span className="block-preview" aria-hidden="true" />
@@ -59,6 +59,7 @@ function BlockPreview({ blockId }: { blockId: string }) {
             selected: false,
             color: palette.fallbackEntity,
             dimStyle: doc.dimStyle,
+            textStyles: doc.textStyles,
             palette,
           }),
         )}
