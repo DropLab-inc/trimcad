@@ -81,7 +81,8 @@ describe('saving a drawing as DXF', () => {
       // The same shape, described from its long axis: nine across, four deep, turned a quarter turn.
       expect(ellipse.rx).toBeCloseTo(9, 6)
       expect(ellipse.ry).toBeCloseTo(4, 6)
-      expect(ellipse.rotation).toBeCloseTo(Math.PI / 2, 6)
+      // A reflection reverses a turn: the same ellipse, described the other way round.
+      expect(ellipse.rotation).toBeCloseTo(-Math.PI / 2, 6)
     }
   })
 

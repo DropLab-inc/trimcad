@@ -35,7 +35,7 @@ describe('reading hatches, which the DXF parser drops', () => {
     if (hatch?.type !== 'hatch') throw new Error('not a hatch')
     expect(hatch.pattern).toBe('solid')
     expect(hatch.boundary).toHaveLength(4)
-    expect(hatch.boundary[2]).toEqual({ x: 10, y: 5 })
+    expect(hatch.boundary[2]).toEqual({ x: 10, y: -5 })
     // Group 62 is an AutoCAD colour index; 3 is green.
     expect(hatch.color).toMatch(/^#[0-9a-f]{6}$/i)
   })

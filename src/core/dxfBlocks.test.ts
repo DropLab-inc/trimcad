@@ -42,7 +42,8 @@ describe('importing a drawing built out of blocks', () => {
     const insert = doc.entities.find((entity) => entity.type === 'insert')
     expect(insert).toBeDefined()
     if (insert?.type !== 'insert') throw new Error('unreachable')
-    expect(insert.position).toEqual({ x: 300, y: 10 })
+    // The file puts it at y +10 in AutoCAD's axis, which is 10 up the page here.
+    expect(insert.position).toEqual({ x: 300, y: -10 })
     // Referencing the definition, not a copy of its geometry.
     expect(doc.blocks.some((block) => block.id === insert.blockId)).toBe(true)
   })

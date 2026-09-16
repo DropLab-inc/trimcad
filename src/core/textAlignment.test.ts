@@ -33,7 +33,8 @@ describe('where a justified text is anchored', () => {
     const text = doc.entities[0]
     expect(text.type).toBe('text')
     if (text.type !== 'text') throw new Error('not text')
-    expect(text.position).toEqual({ x: 100.61, y: 51.14 })
+    // The file's y is AutoCAD's, and it is +51.14 up the page, so it is -51.14 here.
+    expect(text.position).toEqual({ x: 100.61, y: -51.14 })
     // DXF halign 1 is centre and valign 2 is middle, which is the MC anchor.
     expect(text.justify).toBe('MC')
   })
@@ -42,7 +43,7 @@ describe('where a justified text is anchored', () => {
     const doc = importDocumentFromDxf(wrap(plain('SCALE 1:1')), makeDefaultDocument())
     const text = doc.entities[0]
     if (text.type !== 'text') throw new Error('not text')
-    expect(text.position).toEqual({ x: 10, y: 20 })
+    expect(text.position).toEqual({ x: 10, y: -20 })
     expect(text.justify).toBe('Left')
   })
 
@@ -54,6 +55,6 @@ describe('where a justified text is anchored', () => {
     const doc = importDocumentFromDxf(wrap(records), makeDefaultDocument())
     const text = doc.entities[0]
     if (text.type !== 'text') throw new Error('not text')
-    expect(text.position).toEqual({ x: 7, y: 8 })
+    expect(text.position).toEqual({ x: 7, y: -8 })
   })
 })

@@ -6,6 +6,7 @@ import { makeDefaultDocument } from './document'
 import { ellipticalArcPoints, expandBulges, sampleBSpline } from './dxfCurves'
 import { DEFAULT_LAYER_COLOR, makeLayer, normalizeLayer } from './layers'
 import { uid } from './geometry'
+import { reflectBlocksY, reflectEntitiesY } from './dxfCoordinates'
 import { decodeControlCodes } from './text'
 import { hatchesFromDxf } from './dxfHatch'
 
@@ -31,7 +32,12 @@ export const exportDocumentToDxf = (document: DrawingDocument): string => {
     drawing.addLayer(layer.name, toAci(layer.color), linetypeNameFor(document, layer))
   }
 
-  for (const entity of document.entities) {
+  /*
+   * The records are written in AutoCAD's axis, so the geometry is reflected on the way out; the embedded
+   * document below is written as it is held, because that is this app's own format and reads back
+   * without a conversion. Same function both ways, so the two sides cannot drift apart.
+   */
+  for (const entity of reflectEntitiesY(document.entities)) {
     const layer = document.layers.find((candidate) => candidate.id === entity.layerId)
     drawing.setActiveLayer(layer?.name ?? document.layers[0]?.name ?? '0')
     addEntity(drawing, entity)
@@ -422,7 +428,17 @@ export const importDocumentFromDxf = (
    */
   const taken = new Set((base.blocks ?? []).map((block) => block.name.toUpperCase()))
   const imported = blocks.definitions.filter((block) => !taken.has(block.name.toUpperCase()))
-  return { ...base, layers, entities, blocks: [...(base.blocks ?? []), ...imported], groups: [] }
+  /*
+   * The file's coordinates are AutoCAD's — y up — and this app's model space is y down, so everything the
+   * file brought is reflected once, here. The drawing's own blocks are NOT: those are this app's already.
+   */
+  return {
+    ...base,
+    layers,
+    entities: reflectEntitiesY(entities),
+    blocks: [...(base.blocks ?? []), ...reflectBlocksY(imported)],
+    groups: [],
+  }
 }
 
 const readLayers = (parsed: any, base: DrawingDocument): Layer[] => {
