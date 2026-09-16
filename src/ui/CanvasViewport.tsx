@@ -20,7 +20,15 @@ import {
 } from '../core/printSession'
 import { formatPrompt, matchKeyword } from '../core/prompts'
 import { applyOrtho, applyPolarTracking, findBestSnap, trackingAppliesTo } from '../core/snap'
-import { entityBounds, rectFromPoints, selectEntitiesInRect, selectionModeFor } from '../core/selection'
+import {
+  boundsIndex,
+  entitiesInBounds,
+  entitiesNearPoint,
+  entityBounds,
+  rectFromPoints,
+  selectEntitiesInRect,
+  selectionModeFor,
+} from '../core/selection'
 import {
   fieldsForTool,
   hasTypedValue,
@@ -34,7 +42,7 @@ import { canFillet, chamferCorner, filletCorner, hasStraightSegments, offsetEnti
 import { canBeTangent, circleOnDiameter, circleThroughPoints, cornerRadius, polygonOnEdge, rectFromCenter, rectFromCorners, arcFromCenterStartEnd, arcFromStartCenterEnd, arcThroughPoints } from '../core/construct'
 import { polarArrayCopies, rectangularArrayCopies } from '../core/array'
 import { dragGrip, entityGrips, findGripAt, type Grip } from '../core/grips'
-import type { CadEntity, DimensionEntity, Layout, PolylineEntity, SnapMode, Viewport } from '../core/types'
+import type { BlockDefinition, CadEntity, DimensionEntity, Layout, PolylineEntity, SnapMode, Viewport } from '../core/types'
 import type { Vec2 } from '../core/math/vec2'
 import { COMMAND_INPUT_ID, focusCommandInput } from './commandFocus'
 import { NARROW_QUERY, useMediaQuery } from './useMediaQuery'
@@ -54,6 +62,42 @@ type Camera = { x: number; y: number; zoom: number }
  * reaches infinity or zero and the view cannot be got back — but at a million to one either way
  * nobody reaches them by accident.
  */
+/**
+ * How many objects the canvas will hand to the DOM at once. Chosen to sit comfortably inside what a
+ * browser renders without stalling — a few tens of thousands of SVG nodes is already a lot — so a
+ * drawing with more in view draws a capped view and says so.
+ */
+export const MAX_RENDERED_ENTITIES = 20000
+
+/** What one object costs the DOM: a block insert costs what it expands to. */
+const renderCost = (entity: CadEntity, blocks: BlockDefinition[], depth = 0): number => {
+  if (entity.type !== 'insert' || depth > 8) return 1
+  const block = blocks.find((candidate) => candidate.id === entity.blockId)
+  if (!block) return 1
+  return block.entities.reduce((total, member) => total + renderCost(member, blocks, depth + 1), 0)
+}
+
+/**
+ * The objects the canvas will draw, under a budget measured in DOM nodes rather than in objects.
+ *
+ * Counting objects is not enough: one insert of a title block expands into hundreds of nodes, so a
+ * sheet of blocks passed an object cap and still handed the DOM a hundred thousand elements. The
+ * budget is spent on what each object actually costs.
+ */
+export const withinRenderBudget = (entities: CadEntity[], blocks: BlockDefinition[]): CadEntity[] => {
+  const kept: CadEntity[] = []
+  let spent = 0
+  for (const entity of entities) {
+    const cost = renderCost(entity, blocks)
+    // One object heavier than the whole budget still draws itself: a canvas showing one thing beats
+    // a canvas showing nothing.
+    if (spent > 0 && spent + cost > MAX_RENDERED_ENTITIES) break
+    spent += cost
+    kept.push(entity)
+  }
+  return kept
+}
+
 export const ZOOM_MIN = 1e-6
 export const ZOOM_MAX = 1e6
 
@@ -306,6 +350,11 @@ export function CanvasViewport() {
   const visibleEntities = useMemo(
     () => (activeLayout ? visibleOnLayers(spaceDoc) : modelVisible),
     [activeLayout, spaceDoc, modelVisible],
+  )
+
+  const drawnBounds = useMemo(
+    () => boundsIndex(visibleEntities, doc.blocks, doc.textStyles),
+    [visibleEntities, doc.blocks, doc.textStyles],
   )
 
   /** What a click may actually pick: locked layers stay on screen but refuse selection. */
@@ -582,10 +631,15 @@ export function CanvasViewport() {
     if (osnapEnabled && !picksAnEdge && options?.osnap !== false) {
       // A shape being reshaped is left out of the candidates, or a dragged corner would keep
       // catching on the very object it belongs to instead of on what it is being lined up with.
-      const candidates = options?.ignoreId
-        ? visibleEntities.filter((entity) => entity.id !== options.ignoreId)
-        : visibleEntities
-      const snap = findBestSnap(raw, candidates, snapModes, preferences.apertureSize / camera.zoom, basePoint)
+      const aperture = preferences.apertureSize / camera.zoom
+      /*
+       * Only what the aperture could reach is a candidate. Object snap used to consider every object
+       * in the drawing on every pointer move — on a consultant's sheet that is tens of thousands of
+       * objects per mouse event, and the canvas stops answering. The bounds index narrows it to the
+       * handful actually under the cursor.
+       */
+      const candidates = entitiesNearPoint(visibleEntities, drawnBounds, raw, aperture, options?.ignoreId)
+      const snap = findBestSnap(raw, candidates, snapModes, aperture, basePoint)
       if (snap) {
         return { point: snap.point, snap: snap.mode, tracking: null }
       }
@@ -1137,6 +1191,65 @@ export function CanvasViewport() {
   }
 
   const { width, height } = size
+
+  /*
+   * Only what the view can show is handed to the DOM.
+   *
+   * A consultant's sheet is blocks and dimensions, and every insert expands to its members, so a
+   * real drawing reaches the renderer as far more objects than the file holds. Rendering all of
+   * them — as this did — is what a large file crashed the tab on. Bounds are indexed once per
+   * document (not per frame, or a pan would re-measure everything) and the filter is a rectangle
+   * test, so the cost of a big drawing is paid in memory rather than in DOM nodes.
+   */
+  const modelEntities = (entities: CadEntity[] = modelVisible) =>
+    entities.map((entity) => {
+      const layer = doc.layers.find((candidate) => candidate.id === entity.layerId)
+      const linetypeId = entity.linetypeId ?? layer?.linetypeId
+      const linetype = doc.linetypes.find((candidate) => candidate.id === linetypeId)
+      const selected = selectedIds.includes(entity.id)
+      const hovered = !selected && entity.id === hoverId
+      return renderEntity(entity, {
+        selected,
+        color: readableOnCanvas(entity.color ?? layer?.color ?? palette.fallbackEntity, palette),
+        dash: linetype?.pattern.length ? linetype.pattern.join(' ') : undefined,
+        width: hovered ? 2.5 : lwDisplay ? lineweightPixels(layer?.lineweight) : undefined,
+        dimStyle: doc.dimStyle,
+        textStyles: doc.textStyles,
+        palette,
+        blocks: doc.blocks,
+      })
+    })
+
+  const viewBounds = useMemo(() => {
+    const topLeft = screenToWorld({ x: 0, y: 0 }, camera)
+    const bottomRight = screenToWorld({ x: width, y: height }, camera)
+    return {
+      min: { x: Math.min(topLeft.x, bottomRight.x), y: Math.min(topLeft.y, bottomRight.y) },
+      max: { x: Math.max(topLeft.x, bottomRight.x), y: Math.max(topLeft.y, bottomRight.y) },
+    }
+  }, [camera, width, height])
+
+  const onScreen = useMemo(() => {
+    // A margin of a tenth of the view keeps an object that is just off the edge ready to appear.
+    const margin = Math.max(viewBounds.max.x - viewBounds.min.x, viewBounds.max.y - viewBounds.min.y) * 0.1
+    return entitiesInBounds(visibleEntities, drawnBounds, viewBounds, margin)
+  }, [visibleEntities, drawnBounds, viewBounds])
+
+  /*
+   * The last resort: a drawing small enough to fit on screen as a whole, but far too big to hand to
+   * the DOM. Zooming out to the extents of a survey or a panel drawing puts every object in view at
+   * once, and culling cannot help there — there is nothing left to cull. So the list is capped and
+   * the status line says so, rather than the tab dying: a drawing that draws most of itself with a
+   * notice is usable, and one that kills the page is not.
+   */
+  const drawn = useMemo(() => withinRenderBudget(onScreen, doc.blocks), [onScreen, doc.blocks])
+  const simplified = drawn.length < onScreen.length
+  useEffect(() => {
+    if (!simplified) return
+    setStatusMessage(
+      `Large drawing: drawing ${drawn.length.toLocaleString()} of ${onScreen.length.toLocaleString()} objects in view — zoom in to draw the rest.`,
+    )
+  }, [simplified, drawn.length, onScreen.length, setStatusMessage])
 
   const grid = useMemo(() => {
     if (!preferences.showGrid) return []
@@ -1739,24 +1852,47 @@ export function CanvasViewport() {
    * repeats the very same nodes inside each viewport's transform, so what a sheet shows can
    * never drift from what the model actually holds.
    */
-  const modelEntities = (entities: CadEntity[] = modelVisible) =>
-    entities.map((entity) => {
-      const layer = doc.layers.find((candidate) => candidate.id === entity.layerId)
-      const linetypeId = entity.linetypeId ?? layer?.linetypeId
-      const linetype = doc.linetypes.find((candidate) => candidate.id === linetypeId)
-      const selected = selectedIds.includes(entity.id)
-      const hovered = !selected && entity.id === hoverId
-      return renderEntity(entity, {
-        selected,
-        color: readableOnCanvas(entity.color ?? layer?.color ?? palette.fallbackEntity, palette),
-        dash: linetype?.pattern.length ? linetype.pattern.join(' ') : undefined,
-        width: hovered ? 2.5 : lwDisplay ? lineweightPixels(layer?.lineweight) : undefined,
-        dimStyle: doc.dimStyle,
-        textStyles: doc.textStyles,
-        palette,
-        blocks: doc.blocks,
-      })
-    })
+  /**
+   * Inside a sheet's frame, the model is culled to what that frame can see: the frame is a window
+   * onto the drawing, and its scale says how much of the drawing is behind it. Drawing the whole
+   * model inside every frame is how one title-block sheet ends up rendering a city.
+   */
+  const modelBounds = useMemo(
+    () => boundsIndex(modelVisible, doc.blocks, doc.textStyles),
+    [modelVisible, doc.blocks, doc.textStyles],
+  )
+
+  const viewportModelElements = useMemo(() => {
+    if (!activeLayout) return []
+    const shown: CadEntity[] = []
+    for (const viewport of activeLayout.viewports) {
+      const halfWidth = viewport.widthMm / 2 / viewport.unitsPerMm
+      const halfHeight = viewport.heightMm / 2 / viewport.unitsPerMm
+      const view = {
+        min: { x: viewport.modelCenter.x - halfWidth, y: viewport.modelCenter.y - halfHeight },
+        max: { x: viewport.modelCenter.x + halfWidth, y: viewport.modelCenter.y + halfHeight },
+      }
+      const inside = entitiesInBounds(modelVisible, modelBounds, view, 0)
+      shown.push(...inside)
+      if (shown.length > MAX_RENDERED_ENTITIES) break
+    }
+    return modelEntities(withinRenderBudget(shown, doc.blocks))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLayout, modelVisible, modelBounds, doc.blocks, doc, selectedIds, hoverId, palette, lwDisplay])
+
+
+  /**
+   * The drawing, as elements, rebuilt only when the drawing or its appearance changes.
+   *
+   * The pointer moves a state value on every mouse event, so this component re-renders constantly;
+   * without this buffer a pan or a crosshair sweep over a large drawing would re-create every one of
+   * its nodes each frame. Identical element references let React skip the subtree entirely.
+   */
+  const drawnElements = useMemo(
+    () => modelEntities(drawn),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [drawn, doc, selectedIds, hoverId, palette, lwDisplay, activeLayoutId],
+  )
 
   /**
    * The active sheet. Paper space is measured in millimetres from the paper's bottom-left corner,
@@ -1816,7 +1952,7 @@ export function CanvasViewport() {
                 clipPath={`url(#${clipId})`}
                 transform={`translate(${viewport.center.x}, ${viewport.center.y}) scale(${1 / viewport.unitsPerMm}) translate(${-viewport.modelCenter.x}, ${-viewport.modelCenter.y})`}
               >
-                {modelEntities()}
+                {viewportModelElements}
               </g>
               <rect
                 x={left}
@@ -1839,7 +1975,7 @@ export function CanvasViewport() {
          * of the frames' edges rather than under them. They are measured in paper millimetres, so
          * they land on the page exactly as they were drawn — the sheet's unit is the page.
          */}
-        <g>{modelEntities(visibleEntities)}</g>
+        <g>{drawnElements}</g>
       </g>
     )
   }
@@ -1892,7 +2028,7 @@ export function CanvasViewport() {
               <line x1={-1e5} y1={0} x2={1e5} y2={0} stroke={palette.axisX} strokeWidth={1} vectorEffect="non-scaling-stroke" />
               <line x1={0} y1={-1e5} x2={0} y2={1e5} stroke={palette.axisY} strokeWidth={1} vectorEffect="non-scaling-stroke" />
 
-              {modelEntities()}
+              {drawnElements}
 
               {grips}
               {dragPreview}

@@ -810,3 +810,65 @@ describe('dragging grips and selected objects', () => {
     expect(after.type === 'line' && after.end).toEqual({ x: 400, y: 100 })
   })
 })
+
+describe('what a view draws', () => {
+  const lineAt = (id: string, x: number, y: number): CadEntity => ({
+    id,
+    type: 'line',
+    layerId: useCadStore.getState().doc.layers[0].id,
+    start: { x, y },
+    end: { x: x + 10, y: y + 10 },
+  })
+
+  it('leaves out objects far outside the view, so a large drawing costs what is visible', () => {
+    seed([lineAt('near', 0, 0), lineAt('far', 500_000, 500_000)])
+    const { container } = render(<CanvasViewport />)
+    const lines = [...container.querySelectorAll('svg line')].map((node) => node.getAttribute('x1'))
+    expect(lines).toContain('0')
+    expect(lines).not.toContain('500000')
+  })
+
+  it('draws the model inside a sheet viewport, culled to what the frame shows', () => {
+    seed([lineAt('seen', 0, 0), lineAt('elsewhere', 400_000, 400_000)])
+    const state = useCadStore.getState()
+    // A sheet whose single frame is centred on the model's origin at one unit per millimetre.
+    act(() => {
+      state.updateDocument((doc) => ({
+        ...doc,
+        layouts: [
+          {
+            id: 'sheet-1',
+            name: 'Layout 1',
+            paper: 'a4' as const,
+            orientation: 'landscape' as const,
+            marginMm: 12,
+            entities: [],
+            viewports: [
+              {
+                id: 'vp-1',
+                center: { x: 148, y: 105 },
+                widthMm: 200,
+                heightMm: 140,
+                modelCenter: { x: 0, y: 0 },
+                unitsPerMm: 1,
+                locked: false,
+              },
+            ],
+          },
+        ],
+      }))
+    })
+    act(() => {
+      useCadStore.getState().setActiveLayout('sheet-1')
+    })
+
+    const { container } = render(<CanvasViewport />)
+    // The frame's transform sits on its group, so its contents stay in model coordinates.
+    const frame = container.querySelector('svg g[clip-path]')!
+    const inFrame = [...frame.getElementsByTagName('line')].map((node) => node.getAttribute('x1'))
+    expect(inFrame).toEqual(['0'])
+    // The model object far outside the frame is not drawn inside it.
+    const everywhere = [...container.querySelectorAll('svg line')].map((node) => node.getAttribute('x1'))
+    expect(everywhere).not.toContain('400000')
+  })
+})

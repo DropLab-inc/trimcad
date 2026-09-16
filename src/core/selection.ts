@@ -155,6 +155,70 @@ export const entityBounds = (
   }
 }
 
+/**
+ * Bounds for a whole drawing, computed once per document change.
+ *
+ * The canvas uses this to draw only what is on screen. Without it a large drawing — a sheet of
+ * blocks and dimensions where every insert expands to its members — hands the DOM one node per
+ * object and the tab dies. Computing bounds per frame instead of once per document would trade a
+ * crash for a stutter: for tens of thousands of objects the layout maths dominates.
+ */
+export type BoundsIndex = Map<string, Bounds>
+
+export const boundsIndex = (
+  entities: CadEntity[],
+  blocks?: BlockDefinition[],
+  textStyles?: TextStyle[],
+): BoundsIndex => {
+  const index: BoundsIndex = new Map()
+  for (const entity of entities) {
+    const bounds = entityBounds(entity, blocks, textStyles)
+    if (bounds) index.set(entity.id, bounds)
+  }
+  return index
+}
+
+/**
+ * The objects a view can show, by bounds. An object with no bounds is kept: it is cheaper to draw
+ * something unexpected than to hide geometry because a bounds computation did not answer.
+ */
+/**
+ * The objects close enough to a point to matter — what object snap should look at, and a selection
+ * window's own prefilter. Anything further than `radius` from the point cannot be snapped to, and is
+ * left out so a large drawing costs the same per pointer move as a small one.
+ */
+export const entitiesNearPoint = (
+  entities: CadEntity[],
+  index: BoundsIndex,
+  point: Vec2,
+  radius: number,
+  ignoreId?: string,
+): CadEntity[] => {
+  const view: Bounds = {
+    min: { x: point.x - radius, y: point.y - radius },
+    max: { x: point.x + radius, y: point.y + radius },
+  }
+  const near = entitiesInBounds(entities, index, view)
+  return ignoreId ? near.filter((entity) => entity.id !== ignoreId) : near
+}
+
+export const entitiesInBounds = (
+  entities: CadEntity[],
+  index: BoundsIndex,
+  view: Bounds,
+  margin = 0,
+): CadEntity[] => {
+  const min = { x: view.min.x - margin, y: view.min.y - margin }
+  const max = { x: view.max.x + margin, y: view.max.y + margin }
+  return entities.filter((entity) => {
+    const bounds = index.get(entity.id)
+    if (!bounds) return true
+    return (
+      bounds.min.x <= max.x && bounds.max.x >= min.x && bounds.min.y <= max.y && bounds.max.y >= min.y
+    )
+  })
+}
+
 const pointInRect = (point: Vec2, rect: SelectionRect): boolean =>
   point.x >= rect.min.x && point.x <= rect.max.x && point.y >= rect.min.y && point.y <= rect.max.y
 

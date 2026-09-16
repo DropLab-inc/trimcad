@@ -64,8 +64,14 @@ const entitiesFromDxf = (
   content: string,
   layerIdFor: (name: unknown) => string = () => '',
   blocks?: { definitions: BlockDefinition[]; idFor: (name: unknown) => string | null },
+  parsedInput?: any,
 ): CadEntity[] => {
-  const parsed = new DxfParser().parseSync(content) as any
+  /*
+   * The parsed file is passed in when the caller has it: parsing a large drawing twice — once for
+   * the BLOCKS section and once for the entities — costs seconds on a real sheet, and the parse is
+   * the expensive half of opening a file.
+   */
+  const parsed = parsedInput ?? (new DxfParser().parseSync(content) as any)
   const entities: CadEntity[] = []
   for (const raw of (parsed?.entities ?? []) as any[]) {
     const entity = readEntity(raw, layerIdFor(raw.layer), blocks?.idFor)
@@ -85,8 +91,9 @@ const entitiesFromDxf = (
 const blocksFromDxf = (
   content: string,
   layerIdFor: (name: unknown) => string = () => '',
-): { definitions: BlockDefinition[]; idFor: (name: unknown) => string | null } => {
-  const parsed = new DxfParser().parseSync(content) as any
+  parsedInput?: any,
+): { definitions: BlockDefinition[]; idFor: (name: unknown) => string | null; parsed: any } => {
+  const parsed = parsedInput ?? (new DxfParser().parseSync(content) as any)
   const definitions: BlockDefinition[] = []
   const byName = new Map<string, string>()
   const raw = (parsed?.blocks ?? {}) as Record<string, any>
@@ -113,7 +120,7 @@ const blocksFromDxf = (
       basePoint: { x: block?.position?.x ?? 0, y: block?.position?.y ?? 0 },
     })
   }
-  return { definitions, idFor }
+  return { definitions, idFor, parsed }
 }
 
 /**
@@ -322,8 +329,7 @@ const addEntity = (drawing: any, entity: CadEntity) => {
  * layer it names. `base` supplies the linetypes and dimension style, which DXF does not carry.
  */
 export const importDocumentFromDxf = (content: string, base: DrawingDocument): DrawingDocument => {
-  const parser = new DxfParser()
-  const parsed = parser.parseSync(content) as any
+  const parsed = new DxfParser().parseSync(content) as any
 
   const layers = readLayers(parsed, base)
   const byName = new Map(layers.map((layer) => [layer.name.toUpperCase(), layer.id]))
@@ -331,8 +337,8 @@ export const importDocumentFromDxf = (content: string, base: DrawingDocument): D
   const layerIdFor = (name: unknown): string =>
     (typeof name === 'string' ? byName.get(name.toUpperCase()) : undefined) ?? fallbackLayerId
 
-  const blocks = blocksFromDxf(content, layerIdFor)
-  const entities = entitiesFromDxf(content, layerIdFor, blocks)
+  const blocks = blocksFromDxf(content, layerIdFor, parsed)
+  const entities = entitiesFromDxf(content, layerIdFor, blocks, blocks.parsed)
 
   // A file this app wrote carries the whole drawing, including everything DXF has no room for.
   const embedded = readEmbedded(content, entities)

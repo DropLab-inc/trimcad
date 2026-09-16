@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createCircle, createLine, createRect } from './commands'
 import {
   applySelectionModifier,
+  boundsIndex,
+  entitiesInBounds,
   entityBounds,
   entityFullyInside,
   entityTouchesRect,
@@ -204,5 +206,74 @@ describe('hatch selection', () => {
   it('is fully inside a window that encloses it', () => {
     const around = rectFromPoints({ x: -10, y: -10 }, { x: 110, y: 110 })
     expect(entityFullyInside(hatch, around)).toBe(true)
+  })
+})
+
+describe('drawing only what a view can show', () => {
+  /** A block with two members, placed at each of the given points. */
+  const blockWith = (id: string) => ({
+    id,
+    name: `BLOCK-${id}`,
+    basePoint: { x: 0, y: 0 },
+    entities: [
+      { id: `${id}-a`, type: 'line' as const, layerId: 'l', start: { x: 0, y: 0 }, end: { x: 2, y: 0 } },
+      { id: `${id}-b`, type: 'line' as const, layerId: 'l', start: { x: 0, y: 0 }, end: { x: 0, y: 2 } },
+    ],
+  })
+
+  const insertAt = (id: string, blockId: string, x: number, y: number) => ({
+    id,
+    type: 'insert' as const,
+    layerId: 'l',
+    blockId,
+    position: { x, y },
+    rotation: 0,
+    scale: 1,
+  })
+
+  it('keeps what is in the view and drops what is not', () => {
+    const block = blockWith('b1')
+    const entities = [
+      insertAt('near', 'b1', 10, 10),
+      insertAt('far', 'b1', 100_000, 100_000),
+      { id: 'line-near', type: 'line' as const, layerId: 'l', start: { x: 0, y: 0 }, end: { x: 5, y: 5 } },
+      { id: 'line-far', type: 'line' as const, layerId: 'l', start: { x: 90_000, y: 90_000 }, end: { x: 90_010, y: 90_000 } },
+    ]
+    const index = boundsIndex(entities, [block])
+    const kept = entitiesInBounds(entities, index, { min: { x: 0, y: 0 }, max: { x: 50, y: 50 } })
+    expect(kept.map((entity) => entity.id)).toEqual(['near', 'line-near'])
+  })
+
+  it('bounds an insert by the geometry it places, not by its point', () => {
+    // The insert's own point is inside the view; its members extend well outside it.
+    const block = {
+      id: 'big',
+      name: 'BIG',
+      basePoint: { x: 0, y: 0 },
+      entities: [
+        { id: 'far-member', type: 'line' as const, layerId: 'l', start: { x: 0, y: 0 }, end: { x: 5000, y: 0 } },
+      ],
+    }
+    const entities = [insertAt('ins', 'big', 5, 5)]
+    const index = boundsIndex(entities, [block])
+    const bounds = index.get('ins')
+    expect(bounds!.max.x).toBeGreaterThan(4000)
+    // A view around the insert point still sees it: the object overlaps, so it must be drawn.
+    expect(entitiesInBounds(entities, index, { min: { x: 0, y: 0 }, max: { x: 10, y: 10 } })).toHaveLength(1)
+  })
+
+  it('keeps an object the index has nothing to say about', () => {
+    // Better to draw something unexpected than to hide geometry behind a failed measurement.
+    const orphan = { id: 'orphan', type: 'line' as const, layerId: 'l', start: { x: 0, y: 0 }, end: { x: 1, y: 1 } }
+    const empty: ReturnType<typeof boundsIndex> = new Map()
+    expect(entitiesInBounds([orphan], empty, { min: { x: 1e6, y: 1e6 }, max: { x: 2e6, y: 2e6 } })).toHaveLength(1)
+  })
+
+  it('bounds an insert with no block to measure by its own position', () => {
+    // An insert whose definition is missing still has to be somewhere sensible on screen.
+    const orphan = { id: 'orphan', type: 'insert' as const, layerId: 'l', blockId: 'missing', position: { x: 0, y: 0 }, rotation: 0, scale: 1 }
+    const index = boundsIndex([orphan], [])
+    expect(index.has('orphan')).toBe(true)
+    expect(entitiesInBounds([orphan], index, { min: { x: -5, y: -5 }, max: { x: 5, y: 5 } })).toHaveLength(1)
   })
 })

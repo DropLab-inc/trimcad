@@ -77,9 +77,14 @@ export const useFileActions = (): FileActions =>
             text = await file.text()
           }
           // Drawings saved before DXF became the working format are still JSON.
+          /*
+           * A drawing opens into a drawing of its own. The file being opened supplies the layers,
+           * blocks and styles — not the drawing that happens to be open at the time, or opening this
+           * week's sheet would inherit last week's block definitions and carry them back out.
+           */
           const opened = name.toLowerCase().endsWith('.dlc')
             ? parseDrawing(text)
-            : importDocumentFromDxf(text, doc)
+            : importDocumentFromDxf(text, { ...doc, blocks: [] })
           loadDrawing(opened, withExtension(name, DRAWING_EXTENSION))
           const blocks = opened.blocks?.length ? `, ${opened.blocks.length} block definition(s)` : ''
           log('result', `Opened ${name} — ${opened.entities.length} object(s)${blocks}`)

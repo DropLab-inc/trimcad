@@ -80,3 +80,49 @@ describe('importing a drawing built out of blocks', () => {
     expect(names[0].id).toBe('existing-title')
   })
 })
+
+describe('the render budget', () => {
+  const member = (i: number) => ({ id: `m${i}`, type: 'line' as const, layerId: 'l', start: { x: 0, y: 0 }, end: { x: i, y: 0 } })
+  const insertOf = (id: string, members: number) => ({
+    entity: { id, type: 'insert' as const, layerId: 'l', blockId: `b-${id}`, position: { x: 0, y: 0 }, rotation: 0, scale: 1 },
+    block: { id: `b-${id}`, name: `B-${id}`, basePoint: { x: 0, y: 0 }, entities: Array.from({ length: members }, (_, i) => member(i)) },
+  })
+
+  it('charges an insert what it expands to, not one node', async () => {
+    const { withinRenderBudget, MAX_RENDERED_ENTITIES } = await import('../ui/CanvasViewport')
+    // A block of 19,500 members leaves room for only a couple of hundred plain lines after it.
+    const { entity, block } = insertOf('i1', 19_500)
+    const lines = Array.from({ length: 5000 }, (_, i) => ({ id: `l${i}`, type: 'line' as const, layerId: 'l', start: { x: 0, y: 0 }, end: { x: 1, y: 1 } }))
+    const kept = withinRenderBudget([entity, ...lines], [block])
+    expect(kept[0].id).toBe('i1')
+    // 19,500 spent on the insert, so only a few hundred of the 5,000 lines fit inside the budget.
+    expect(kept.length).toBeGreaterThan(1)
+    expect(kept.length).toBeLessThan(600)
+    expect(19_500 + kept.length - 1).toBeLessThanOrEqual(MAX_RENDERED_ENTITIES)
+  })
+
+  it('draws an object even when it alone is over budget', async () => {
+    const { withinRenderBudget, MAX_RENDERED_ENTITIES } = await import('../ui/CanvasViewport')
+    const { entity, block } = insertOf('huge', MAX_RENDERED_ENTITIES * 3)
+    const kept = withinRenderBudget([entity], [block])
+    // A canvas showing one thing beats a canvas showing nothing.
+    expect(kept).toHaveLength(1)
+  })
+})
+
+describe('what an opened file leaves behind', () => {
+  const tiny = (records: string[]) => [...records, '0', 'ENDSEC', '0', 'EOF', ''].join('\n')
+
+  it('does not keep the previous drawing\'s block definitions', async () => {
+    const { importDocumentFromDxf } = await import('./dxf')
+    const { makeDefaultDocument } = await import('./document')
+    const first = tiny(['0', 'SECTION', '2', 'BLOCKS', '0', 'BLOCK', '8', '0', '2', 'OLDBLOCK', '70', '0', '10', '0.0', '20', '0.0', '0', 'LINE', '8', '0', '10', '0.0', '20', '0.0', '11', '5.0', '21', '5.0', '0', 'ENDBLK'])
+    const opened = importDocumentFromDxf(first, makeDefaultDocument())
+    expect(opened.blocks.map((block) => block.name)).toEqual(['OLDBLOCK'])
+
+    // Open a second file on top of the first, the way the Open command does.
+    const second = tiny(['0', 'SECTION', '2', 'BLOCKS', '0', 'BLOCK', '8', '0', '2', 'NEWBLOCK', '70', '0', '10', '0.0', '20', '0.0', '0', 'CIRCLE', '8', '0', '10', '0.0', '20', '0.0', '40', '2.0', '0', 'ENDBLK'])
+    const next = importDocumentFromDxf(second, { ...opened, blocks: [] })
+    expect(next.blocks.map((block) => block.name)).toEqual(['NEWBLOCK'])
+  })
+})
