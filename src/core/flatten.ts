@@ -1,7 +1,7 @@
 import { pointSegmentDistance, polar } from './geometry'
 import { ellipseOutline } from './intersect'
 import type { Vec2 } from './math/vec2'
-import type { CadEntity } from './types'
+import type { BlockDefinition, CadEntity, InsertEntity } from './types'
 
 const CIRCLE_SEGMENTS = 96
 
@@ -58,6 +58,53 @@ export const flattenEntity = (entity: CadEntity): Polyline[] => {
       return []
   }
 }
+
+/**
+ * The point runs a block places, in the space the insert sits in.
+ *
+ * A block is geometry the drawing holds and the plotter has to draw: an export that flattens only
+ * the top-level objects leaves every insert out, which on a drawing of blocks is most of the sheet.
+ * The walk follows the chain of blocks being expanded, so a block that inserts itself ends instead of
+ * expanding for ever, and the budget stops a nesting that is merely enormous.
+ */
+export const flattenInsert = (
+  insert: InsertEntity,
+  blocks: BlockDefinition[],
+  chain: ReadonlySet<string> = new Set(),
+  budget = { left: MAX_FLATTEN_MEMBERS },
+): Polyline[] => {
+  if (chain.has(insert.blockId) || budget.left <= 0) return []
+  const block = blocks.find((candidate) => candidate.id === insert.blockId)
+  if (!block || block.entities.length === 0) return []
+  const nextChain = new Set(chain)
+  nextChain.add(insert.blockId)
+
+  // World point = position + R(rotation) * scale * (member - base), the same rule the canvas draws.
+  const base = block.basePoint ?? { x: 0, y: 0 }
+  const cos = Math.cos(insert.rotation)
+  const sin = Math.sin(insert.rotation)
+  const toParent = (point: Vec2): Vec2 => {
+    const dx = (point.x - base.x) * insert.scale
+    const dy = (point.y - base.y) * insert.scale
+    return { x: insert.position.x + dx * cos - dy * sin, y: insert.position.y + dx * sin + dy * cos }
+  }
+
+  const runs: Polyline[] = []
+  for (const member of block.entities) {
+    if (budget.left <= 0) break
+    budget.left -= 1
+    const memberRuns =
+      member.type === 'insert' ? flattenInsert(member, blocks, nextChain, budget) : flattenEntity(member)
+    for (const run of memberRuns) {
+      if (run.points.length < 2) continue
+      runs.push({ points: run.points.map(toParent), closed: run.closed })
+    }
+  }
+  return runs
+}
+
+/** The most members one insert may contribute to a plot or a flattened drawing. */
+export const MAX_FLATTEN_MEMBERS = 20000
 
 /** Every point an object occupies, for working out how big a drawing is. */
 export const pointsOfEntity = (entity: CadEntity): Vec2[] => {

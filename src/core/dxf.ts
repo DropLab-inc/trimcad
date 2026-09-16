@@ -65,6 +65,7 @@ const entitiesFromDxf = (
   layerIdFor: (name: unknown) => string = () => '',
   blocks?: { definitions: BlockDefinition[]; idFor: (name: unknown) => string | null },
   parsedInput?: any,
+  counted: ImportCounts = { impossible: 0 },
 ): CadEntity[] => {
   /*
    * The parsed file is passed in when the caller has it: parsing a large drawing twice — once for
@@ -75,6 +76,7 @@ const entitiesFromDxf = (
   const entities: CadEntity[] = []
   for (const raw of (parsed?.entities ?? []) as any[]) {
     const entity = readEntity(raw, layerIdFor(raw.layer), blocks?.idFor)
+    if (!entity) counted.impossible += 1
     if (entity) entities.push(entity)
   }
   return entities
@@ -328,7 +330,49 @@ const addEntity = (drawing: any, entity: CadEntity) => {
  * Reads a DXF into a whole drawing: layers first, with their colours, then every entity onto the
  * layer it names. `base` supplies the linetypes and dimension style, which DXF does not carry.
  */
-export const importDocumentFromDxf = (content: string, base: DrawingDocument): DrawingDocument => {
+/**
+ * The furthest any real drawing reaches. Millimetres make a survey 1e9 and a machine datum 1e11, so
+ * this leaves a thousandfold margin over anything legitimate while excluding the coordinate no
+ * drawing has: a customer file carried polylines at 1e59, an artifact of whatever converted it.
+ */
+export const MAX_DRAWING_COORDINATE = 1e12
+
+/**
+ * Whether an object carries a number no drawing could hold — infinite, not a number, or beyond any
+ * coordinate a real file means.
+ *
+ * Such a value is not a feature at a very great distance; it is damage. Its bounds swamp everything
+ * else, so the camera fits to it, and at that magnitude adding a grid spacing to a coordinate no
+ * longer changes it: the canvas then loops for ever drawing grid lines that never advance and the tab
+ * dies. The object is dropped and counted instead, which is what AutoCAD does with a value it cannot
+ * place — the alternative is an app that cannot open the file at all.
+ */
+const holdsImpossibleNumbers = (value: unknown, depth = 0): boolean => {
+  if (depth > 6) return false
+  if (typeof value === 'number') return !Number.isFinite(value) || Math.abs(value) > MAX_DRAWING_COORDINATE
+  if (Array.isArray(value)) return value.some((item) => holdsImpossibleNumbers(item, depth + 1))
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).some((item) => holdsImpossibleNumbers(item, depth + 1))
+  }
+  return false
+}
+
+/** The objects an import refuses for their coordinates, counted so the drop can be reported. */
+export const impossibleCoordinates = (content: string): number => {
+  const parsed = new DxfParser().parseSync(content) as any
+  const entities: any[] = [...(parsed?.entities ?? [])]
+  for (const block of parsed?.blocks ?? []) entities.push(...(block?.entities ?? []))
+  return entities.filter((entity: any) => holdsImpossibleNumbers(entity)).length
+}
+
+/** What an import left out, so the command line can say so rather than the drawing going quiet. */
+export type ImportCounts = { impossible: number }
+
+export const importDocumentFromDxf = (
+  content: string,
+  base: DrawingDocument,
+  report?: (counts: ImportCounts) => void,
+): DrawingDocument => {
   const parsed = new DxfParser().parseSync(content) as any
 
   const layers = readLayers(parsed, base)
@@ -338,7 +382,9 @@ export const importDocumentFromDxf = (content: string, base: DrawingDocument): D
     (typeof name === 'string' ? byName.get(name.toUpperCase()) : undefined) ?? fallbackLayerId
 
   const blocks = blocksFromDxf(content, layerIdFor, parsed)
-  const entities = entitiesFromDxf(content, layerIdFor, blocks, blocks.parsed)
+  const counted: ImportCounts = { impossible: 0 }
+  const entities = entitiesFromDxf(content, layerIdFor, blocks, blocks.parsed, counted)
+  report?.(counted)
 
   // A file this app wrote carries the whole drawing, including everything DXF has no room for.
   const embedded = readEmbedded(content, entities)
@@ -380,6 +426,11 @@ const readEntity = (
   layerId: string,
   blockIdFor: (name: unknown) => string | null = () => null,
 ): CadEntity | null => {
+  /*
+   * One door, so one test: an object carrying a coordinate no drawing holds is refused here rather
+   * than reaching the canvas, where its bounds would take the camera with them.
+   */
+  if (holdsImpossibleNumbers(raw)) return null
   switch (raw.type) {
     case 'LINE':
       if (!raw.vertices?.[0] || !raw.vertices?.[1]) return null

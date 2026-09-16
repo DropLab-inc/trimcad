@@ -20,11 +20,11 @@ import {
 } from '../core/printSession'
 import { formatPrompt, matchKeyword } from '../core/prompts'
 import { applyOrtho, applyPolarTracking, findBestSnap, trackingAppliesTo } from '../core/snap'
+import { framingBounds } from '../core/framing'
 import {
   boundsIndex,
   entitiesInBounds,
   entitiesNearPoint,
-  entityBounds,
   rectFromPoints,
   selectEntitiesInRect,
   selectionModeFor,
@@ -69,12 +69,39 @@ type Camera = { x: number; y: number; zoom: number }
  */
 export const MAX_RENDERED_ENTITIES = 20000
 
-/** What one object costs the DOM: a block insert costs what it expands to. */
-const renderCost = (entity: CadEntity, blocks: BlockDefinition[], depth = 0): number => {
-  if (entity.type !== 'insert' || depth > 8) return 1
+/** The most grid lines one axis may draw. A view that wants more is a view that cannot be drawn. */
+export const MAX_GRID_LINES = 400
+
+/** The furthest a camera centre may sit from the origin and still be able to draw anything. */
+export const MAX_CAMERA_COORDINATE = 1e12
+
+/**
+ * What one object costs the DOM: a block insert costs what it expands to.
+ *
+ * The walk follows the chain of blocks being expanded, not merely a depth, so a block that inserts
+ * itself — or two that insert each other, which a converted file can carry — stops at the second
+ * sight of the same block instead of branching over the whole nesting. It also stops counting once
+ * the total passes the budget, because the answer is only ever compared against that: without both,
+ * measuring the cost of one pathological block is itself the hang.
+ */
+const renderCost = (
+  entity: CadEntity,
+  blocks: BlockDefinition[],
+  chain: ReadonlySet<string> = new Set(),
+  budget = MAX_RENDERED_ENTITIES,
+): number => {
+  if (entity.type !== 'insert') return 1
+  if (chain.has(entity.blockId)) return 1
   const block = blocks.find((candidate) => candidate.id === entity.blockId)
   if (!block) return 1
-  return block.entities.reduce((total, member) => total + renderCost(member, blocks, depth + 1), 0)
+  const nextChain = new Set(chain)
+  nextChain.add(entity.blockId)
+  let total = 0
+  for (const member of block.entities) {
+    total += renderCost(member, blocks, nextChain, budget - total)
+    if (total >= budget) return budget
+  }
+  return total
 }
 
 /**
@@ -961,19 +988,22 @@ export function CanvasViewport() {
     if (!box || box.width < 10 || box.height < 10) return
     const state = useCadStore.getState()
     const entities = visibleEntities
-    let minX = Number.POSITIVE_INFINITY
-    let minY = Number.POSITIVE_INFINITY
-    let maxX = Number.NEGATIVE_INFINITY
-    let maxY = Number.NEGATIVE_INFINITY
-    for (const entity of entities) {
-      const bounds = entityBounds(entity, state.doc.blocks, state.doc.textStyles)
-      if (!bounds) continue
-      minX = Math.min(minX, bounds.min.x)
-      minY = Math.min(minY, bounds.min.y)
-      maxX = Math.max(maxX, bounds.max.x)
-      maxY = Math.max(maxY, bounds.max.y)
-    }
-    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return
+    /*
+     * Framed on the drawing rather than on its extremes: a real file carried eight degenerate arcs
+     * 13,000 units from the geometry they belonged with, which framed 664 units of drawing into a
+     * view 13,575 wide. One stray must not decide the view.
+     */
+    const framed = framingBounds(entities, state.doc.blocks, state.doc.textStyles)
+    if (!framed.bounds) return
+    const {
+      min: { x: minX, y: minY },
+      max: { x: maxX, y: maxY },
+    } = framed.bounds
+    const centreX = (minX + maxX) / 2
+    const centreY = (minY + maxY) / 2
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(centreX) || !Number.isFinite(centreY)) return
+    // Beyond this, `point * zoom` is no longer a number that moves, and the canvas cannot draw.
+    if (Math.abs(centreX) > MAX_CAMERA_COORDINATE || Math.abs(centreY) > MAX_CAMERA_COORDINATE) return
     // A single point, a zero-length line or a horizontal run have no extent in one direction: give
     // the fit something to work with rather than dividing by zero.
     const spanX = Math.max(maxX - minX, 1e-6)
@@ -985,10 +1015,11 @@ export function CanvasViewport() {
     )
     setCamera({
       zoom,
-      x: box.width / 2 - ((minX + maxX) / 2) * zoom,
-      y: box.height / 2 - ((minY + maxY) / 2) * zoom,
+      x: box.width / 2 - centreX * zoom,
+      y: box.height / 2 - centreY * zoom,
     })
-    setStatusMessage(`Zoom extents — ${entities.length} object(s) in view`)
+    const strays = framed.leftOut > 0 ? `, ${framed.leftOut} outside the drawing` : ''
+    setStatusMessage(`Zoom extents — ${entities.length} object(s) in view${strays}`)
   }, [zoomExtentsToken, visibleEntities, setCamera, setStatusMessage])
 
   // The store needs the crosshair position so a typed distance knows which way to go.
@@ -1270,6 +1301,26 @@ export function CanvasViewport() {
     const endX = Math.ceil(bottomRight.x / spacing) * spacing
     const startY = Math.floor(topLeft.y / spacing) * spacing
     const endY = Math.ceil(bottomRight.y / spacing) * spacing
+
+    /*
+     * A grid line loop is a loop over numbers, and numbers stop advancing: past about 2^53 adding a
+     * spacing to a coordinate returns that same coordinate, so `x <= endX` stays true for ever and
+     * the tab dies inside the render. A drawing at 1e59 put the camera at 1e53 and did exactly that.
+     * The counts are therefore computed first and refused if they are not a sane number of lines —
+     * the canvas draws no grid rather than no page.
+     */
+    const columns = (endX - startX) / spacing
+    const rows = (endY - startY) / spacing
+    if (
+      !Number.isFinite(columns) ||
+      !Number.isFinite(rows) ||
+      !Number.isFinite(spacing) ||
+      spacing <= 0 ||
+      columns > MAX_GRID_LINES ||
+      rows > MAX_GRID_LINES
+    ) {
+      return []
+    }
     const major = spacing * 5
 
     for (let x = startX; x <= endX; x += spacing) {

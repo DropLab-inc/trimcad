@@ -1,5 +1,5 @@
 import { jsPDF, type Matrix } from 'jspdf'
-import { flattenEntity, pointsOfEntity } from './flatten'
+import { flattenEntity, flattenInsert, pointsOfEntity } from './flatten'
 import { effectiveStyleFor, faceOf, textLinesOf, textPoint, textStylesOf } from './text'
 import { FONT_FACES, type TextFont } from './textMetrics'
 import { isLayerPlottable, layerOf, plottableEntities } from './layers'
@@ -342,7 +342,12 @@ export const exportPdf = async (
       continue
     }
 
-    for (const run of flattenEntity(entity)) {
+    /*
+     * An insert is drawn as the block it places. Flattened as an entity it yields nothing, which
+     * would plot a drawing of blocks as a blank page.
+     */
+    const runs = entity.type === 'insert' ? flattenInsert(entity, document.blocks ?? []) : flattenEntity(entity)
+    for (const run of runs) {
       if (run.points.length < 2) continue
       const page = run.points.map(toPage)
       const [startX, startY] = page[0]
@@ -568,7 +573,12 @@ const plotEntities = (
       continue
     }
 
-    for (const run of flattenEntity(entity)) {
+    /*
+     * An insert is drawn as the block it places. Flattened as an entity it yields nothing, which
+     * would plot a drawing of blocks as a blank page.
+     */
+    const runs = entity.type === 'insert' ? flattenInsert(entity, document.blocks ?? []) : flattenEntity(entity)
+    for (const run of runs) {
       if (run.points.length < 2) continue
       const pts = run.points.map(toPage)
       const [startX, startY] = pts[0]

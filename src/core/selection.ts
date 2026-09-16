@@ -45,10 +45,19 @@ const MAX_BOUNDS_NESTING = 8
  * Returns bounds in the space the insert's position lives in, so a nested insert hands back bounds
  * its parent can transform straight through.
  */
-const insertMemberBounds = (insert: InsertEntity, blocks: BlockDefinition[], depth = 0): Bounds | null => {
+const insertMemberBounds = (
+  insert: InsertEntity,
+  blocks: BlockDefinition[],
+  depth = 0,
+  chain: ReadonlySet<string> = new Set(),
+): Bounds | null => {
   if (depth > MAX_BOUNDS_NESTING) return null
+  // A block that inserts itself would otherwise be measured for ever; the chain ends that branch.
+  if (chain.has(insert.blockId)) return null
   const block = blocks.find((candidate) => candidate.id === insert.blockId)
   if (!block || block.entities.length === 0) return null
+  const nextChain = new Set(chain)
+  nextChain.add(insert.blockId)
 
   const base = block.basePoint ?? { x: 0, y: 0 }
   const cos = Math.cos(insert.rotation)
@@ -71,7 +80,7 @@ const insertMemberBounds = (insert: InsertEntity, blocks: BlockDefinition[], dep
   }
 
   for (const member of block.entities) {
-    if (member.type === 'insert') push(insertMemberBounds(member, blocks, depth + 1))
+    if (member.type === 'insert') push(insertMemberBounds(member, blocks, depth + 1, nextChain))
     else push(entityBounds(member, blocks))
   }
   if (corners.length === 0) return null

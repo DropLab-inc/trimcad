@@ -504,31 +504,54 @@ const gdtSymbol = (code: string): string => {
 /** How deep a block may nest before rendering gives up; a definition cycle cannot loop forever. */
 const MAX_BLOCK_NESTING = 8
 
+/**
+ * The most members one insert may expand to. A drawing's own blocks are thousands of objects at most;
+ * beyond this the geometry is not being drawn, it is being counted, and what the budget removes is
+ * reported by the canvas rather than silently vanishing.
+ */
+const MAX_BLOCK_MEMBERS = 8000
+
 /** The SVG transform an insert applies: place, turn, size, then shift off the block's base point. */
 const insertTransform = (position: Vec2, rotation: number, scale: number, basePoint: Vec2): string =>
   `translate(${position.x}, ${position.y}) rotate(${(rotation * 180) / Math.PI}) scale(${scale}) translate(${-basePoint.x}, ${-basePoint.y})`
 
-/** A block's members, recursing through nested inserts with a depth guard against cycles. */
+/** A block's members, following the chain of blocks being expanded so a cycle cannot branch. */
 const renderBlockMembers = (
   block: BlockDefinition,
   blocks: BlockDefinition[],
   depth: number,
   options: Parameters<typeof renderEntity>[1],
+  chain: ReadonlySet<string> = new Set(),
+  budget = { left: MAX_BLOCK_MEMBERS },
 ): (ReactElement | null)[] => {
   if (depth > MAX_BLOCK_NESTING) return []
-  return block.entities.map((member) => {
+  /*
+   * Following the chain, not just a depth: a block that inserts itself expands to its branching
+   * factor raised to the nesting limit — 9^8 is 43 million elements from one insert — and the tab
+   * dies building them. Reaching the same block twice means the drawing is cyclic, so that branch
+   * ends here. The budget is the second guard, for a nesting that is deep but legitimate.
+   */
+  if (chain.has(block.id)) return []
+  const nextChain = new Set(chain)
+  nextChain.add(block.id)
+  const members: (ReactElement | null)[] = []
+  for (const member of block.entities) {
+    if (budget.left <= 0) break
+    budget.left -= 1
     if (member.type === 'insert') {
       const nested = blocks.find((candidate) => candidate.id === member.blockId)
-      if (!nested) return null
+      if (!nested) continue
       const base = nested.basePoint ?? { x: 0, y: 0 }
-      return (
+      members.push(
         <g key={member.id} transform={insertTransform(member.position, member.rotation, member.scale, base)}>
-          {renderBlockMembers(nested, blocks, depth + 1, options)}
-        </g>
+          {renderBlockMembers(nested, blocks, depth + 1, options, nextChain, budget)}
+        </g>,
       )
+      continue
     }
-    return renderEntity(member, options)
-  })
+    members.push(renderEntity(member, options))
+  }
+  return members
 }
 
 export const renderEntity = (

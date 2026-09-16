@@ -82,9 +82,12 @@ export const useFileActions = (): FileActions =>
            * blocks and styles — not the drawing that happens to be open at the time, or opening this
            * week's sheet would inherit last week's block definitions and carry them back out.
            */
+          let impossible = 0
           const opened = name.toLowerCase().endsWith('.dlc')
             ? parseDrawing(text)
-            : importDocumentFromDxf(text, { ...doc, blocks: [] })
+            : importDocumentFromDxf(text, { ...doc, blocks: [] }, (counts) => {
+                impossible = counts.impossible
+              })
           loadDrawing(opened, withExtension(name, DRAWING_EXTENSION))
           const blocks = opened.blocks?.length ? `, ${opened.blocks.length} block definition(s)` : ''
           log('result', `Opened ${name} — ${opened.entities.length} object(s)${blocks}`)
@@ -92,6 +95,16 @@ export const useFileActions = (): FileActions =>
            * Say what could not be read. A drawing that arrives without its hatches should be
            * reported as such rather than quietly matching the file's name and not its contents.
            */
+          /*
+           * An object at a coordinate no drawing holds is damage, not a distant feature, and it is
+           * left out — so it is named here. Left unsaid, it reads as the file not having opened.
+           */
+          if (impossible > 0) {
+            log(
+              'result',
+              `${impossible} object(s) left out: they sit at coordinates no drawing can hold (a corrupted or converted record).`,
+            )
+          }
           const unreadable = unreadableInDxf(text)
           if (unreadable.size > 0) {
             const summary = [...unreadable.entries()]
