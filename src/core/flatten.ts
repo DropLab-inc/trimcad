@@ -1,4 +1,5 @@
 import { pointSegmentDistance, polar } from './geometry'
+import { ellipseOutline } from './intersect'
 import type { Vec2 } from './math/vec2'
 import type { CadEntity } from './types'
 
@@ -9,17 +10,6 @@ export type Polyline = { points: Vec2[]; closed: boolean }
 
 const sampleArc = (center: Vec2, radius: number, startAngle: number, sweep: number, count: number): Vec2[] =>
   Array.from({ length: count + 1 }, (_, index) => polar(center, radius, startAngle + (sweep * index) / count))
-
-const ellipsePoints = (center: Vec2, rx: number, ry: number, rotation: number): Vec2[] =>
-  Array.from({ length: CIRCLE_SEGMENTS }, (_, index) => {
-    const angle = (index / CIRCLE_SEGMENTS) * Math.PI * 2
-    const x = Math.cos(angle) * rx
-    const y = Math.sin(angle) * ry
-    return {
-      x: center.x + x * Math.cos(rotation) - y * Math.sin(rotation),
-      y: center.y + x * Math.sin(rotation) + y * Math.cos(rotation),
-    }
-  })
 
 /**
  * Reduces any object to plain point runs, which is what a plotter, a PDF or a hatch boundary all
@@ -42,7 +32,7 @@ export const flattenEntity = (entity: CadEntity): Polyline[] => {
       return [{ points: sampleArc(entity.center, entity.radius, entity.startAngle, sweep, count), closed: false }]
     }
     case 'ellipse':
-      return [{ points: ellipsePoints(entity.center, entity.rx, entity.ry, entity.rotation), closed: true }]
+      return [{ points: ellipseOutline(entity), closed: true }]
     case 'hatch':
       return [{ points: entity.boundary, closed: true }]
     case 'dimension':

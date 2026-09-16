@@ -1,18 +1,23 @@
 import { normalizeAngle, pointSegmentDistance, uid } from './geometry'
 import {
   EPS,
+  ELLIPSE_SEGMENTS,
   TOUCH,
   circleIntersections,
   cross,
+  ellipseOutline,
+  ellipseParameterOf,
+  ellipsePointAt,
   infiniteIntersection,
   lineCircleRoots,
+  lineEllipseParameters,
   offsetSegmentLine,
   perpendicular,
   type Segment,
 } from './intersect'
 import { add, distance, dot, mul, normalize, sub, type Vec2 } from './math/vec2'
 import { entityCircle, entitySegments } from './snap'
-import type { ArcEntity, CadEntity, PolylineEntity } from './types'
+import type { ArcEntity, CadEntity, EllipseEntity, PolylineEntity } from './types'
 
 type CircleLike = { center: Vec2; radius: number; startAngle?: number; endAngle?: number }
 
@@ -171,6 +176,9 @@ const crossingParameters = (origin: Vec2, direction: Vec2, others: CadEntity[]):
     }
     const circle = entityCircle(other)
     if (circle) parameters.push(...circleParameters(origin, direction, circle))
+    // An ellipse answers with its exact crossings: a line against one is a solvable case, and
+    // sampling it here would leave a line trimmed back to an oval stopping on a chord of it.
+    if (other.type === 'ellipse') parameters.push(...lineEllipseParameters(origin, direction, other))
   }
   return parameters
 }
@@ -197,8 +205,52 @@ const crossingAngles = (circle: CircleLike, others: CadEntity[]): number[] => {
         if (withinArc(otherCircle, point)) record(point)
       }
     }
+    if (other.type === 'ellipse') {
+      // A circle meets an ellipse on a quartic, which has no solution worth writing out here, so the
+      // oval is walked as its chords. Every other crossing in the app treats an ellipse this way.
+      for (const point of crossingPointsOnOutline(other, circle)) record(point)
+    }
   }
   return angles
+}
+
+/** Where a circle crosses an ellipse's outline, read off the chords the outline is walked as. */
+const crossingPointsOnOutline = (ellipse: EllipseEntity, circle: CircleLike): Vec2[] => {
+  const outline = ellipseOutline(ellipse)
+  const points: Vec2[] = []
+  for (let index = 0; index < outline.length; index += 1) {
+    const from = outline[index]
+    const to = outline[(index + 1) % outline.length]
+    const direction = sub(to, from)
+    for (const t of circleParameters(from, direction, circle)) {
+      if (t < -TOUCH || t > 1 + TOUCH) continue
+      points.push(add(from, mul(direction, t)))
+    }
+  }
+  return points
+}
+
+/**
+ * Where the given objects cross an ellipse, as parameter angles around it.
+ *
+ * Each object is met with the outline's own chords, so one routine answers for every cutter: a line
+ * crosses an oval exactly, a circle or another oval through the chords. Crossings that land on a
+ * sampled vertex are reported twice, by both chords meeting there, and are folded into one.
+ */
+const ellipseCutAngles = (ellipse: EllipseEntity, others: CadEntity[]): number[] => {
+  const outline = ellipseOutline(ellipse)
+  const angles: number[] = []
+  for (let index = 0; index < outline.length; index += 1) {
+    const from = outline[index]
+    const to = outline[(index + 1) % outline.length]
+    const direction = sub(to, from)
+    for (const t of crossingParameters(from, direction, others)) {
+      if (t < -TOUCH || t > 1 + TOUCH) continue
+      angles.push(normalizeAngle(ellipseParameterOf(ellipse, add(from, mul(direction, t)))))
+    }
+  }
+  const sorted = angles.sort((a, b) => a - b)
+  return sorted.filter((angle, index) => index === 0 || angle - sorted[index - 1] > 1e-9)
 }
 
 /* -------------------------------------------------------------------- trim */
@@ -335,6 +387,54 @@ export const trimResult = (entity: CadEntity, cutters: CadEntity[], pickPoint: V
       remaining.push(arcPiece(remaining.length === 0 ? entity.id : uid(), bounds[i], bounds[i + 1]))
     }
     return { removed, remaining }
+  }
+
+  if (entity.type === 'ellipse') {
+    /*
+     * An oval has no ends, so — like a circle — it only has something to trim once a cutter crosses
+     * it. The removed span is one piece of the outline; what is left is the rest of it, traced as a
+     * polyline, because `EllipseEntity` holds no start and end parameter for a partial one. That is
+     * what the app already does with a partial ellipse read out of a DXF file, and it is the one
+     * place trimming costs an oval its identity as an oval.
+     */
+    const angles = ellipseCutAngles(entity, others)
+    if (angles.length === 0) return null
+
+    const total = Math.PI * 2
+    const base = angles[0]
+    const cuts = angles
+      .map((angle) => normalizeAngle(angle - base))
+      .filter((offset) => offset > TOUCH && offset < total - TOUCH)
+      .sort((a, b) => a - b)
+    if (cuts.length === 0) return null
+
+    const bounds = [0, ...cuts, total]
+    const pick = normalizeAngle(ellipseParameterOf(entity, pickPoint) - base)
+    const span = bracket(bounds, pick)
+    if (!span) return null
+
+    const piece = (id: string, from: number, to: number): PolylineEntity => {
+      const sweep = to - from
+      const count = Math.max(8, Math.round((ELLIPSE_SEGMENTS * sweep) / total))
+      return {
+        id,
+        type: 'polyline',
+        layerId: entity.layerId,
+        color: entity.color,
+        linetypeId: entity.linetypeId,
+        lineweight: entity.lineweight,
+        closed: false,
+        points: Array.from({ length: count + 1 }, (_, index) =>
+          ellipsePointAt(entity, base + from + (sweep * index) / count),
+        ),
+      }
+    }
+
+    return {
+      removed: piece(previewId(entity.id, 'trim'), span[0], span[1]),
+      // Whatever is picked goes, so a full outline leaves exactly one piece behind.
+      remaining: [piece(entity.id, span[1], span[0] + total)],
+    }
   }
 
   if (entity.type === 'polyline') {
@@ -1086,6 +1186,9 @@ export const fenceHits = (entities: CadEntity[], from: Vec2, to: Vec2): FenceHit
     const circle = entityCircle(entity)
     if (circle) {
       for (const t of circleParameters(from, direction, circle)) record(entity, t)
+    }
+    if (entity.type === 'ellipse') {
+      for (const t of lineEllipseParameters(from, direction, entity)) record(entity, t)
     }
   }
 

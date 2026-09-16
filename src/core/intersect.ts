@@ -19,6 +19,93 @@ export const cross = (a: Vec2, b: Vec2): number => a.x * b.y - a.y * b.x
 
 export const perpendicular = (v: Vec2): Vec2 => ({ x: -v.y, y: v.x })
 
+/* ------------------------------------------------------------------- ellipses */
+
+/**
+ * Ellipses are the one primitive with no closed-form crossing against anything but a line, and the
+ * one whose whole outline has to be sampled wherever a curve must become straight pieces. Both live
+ * here so a trim, a fence, a hatch boundary and a snap candidate all read the same shape.
+ */
+
+/** How finely an ellipse's outline is sampled wherever a curve has to become straight pieces. */
+export const ELLIPSE_SEGMENTS = 96
+
+/** An ellipse's shape, without the entity's id, layer and colour. */
+export type EllipseLike = { center: Vec2; rx: number; ry: number; rotation: number }
+
+/** The cosine and sine of an angle, so a rotation is not computed twice for the same frame. */
+const rotationOf = (angle: number): { cos: number; sin: number } => ({ cos: Math.cos(angle), sin: Math.sin(angle) })
+
+/** A point expressed in the ellipse's own frame, where the outline is a unit circle. */
+const intoEllipseFrame = (point: Vec2, ellipse: EllipseLike): Vec2 => {
+  const { cos, sin } = rotationOf(-ellipse.rotation)
+  const dx = point.x - ellipse.center.x
+  const dy = point.y - ellipse.center.y
+  return { x: dx * cos - dy * sin, y: dx * sin + dy * cos }
+}
+
+const outOfEllipseFrame = (local: Vec2, ellipse: EllipseLike): Vec2 => {
+  const { cos, sin } = rotationOf(ellipse.rotation)
+  return {
+    x: ellipse.center.x + local.x * cos - local.y * sin,
+    y: ellipse.center.y + local.x * sin + local.y * cos,
+  }
+}
+
+/** The point at a parameter angle around an ellipse: 0 is the end of the radius along `rx`. */
+export const ellipsePointAt = (ellipse: EllipseLike, angle: number): Vec2 =>
+  outOfEllipseFrame({ x: Math.cos(angle) * ellipse.rx, y: Math.sin(angle) * ellipse.ry }, ellipse)
+
+/**
+ * An ellipse's own parameter angle for a point, which is how a pick is placed on the outline.
+ * A point off the curve still answers — read outwards from the centre through where it lies — so a
+ * click beside the outline picks the piece it is beside rather than nothing at all.
+ */
+export const ellipseParameterOf = (ellipse: EllipseLike, point: Vec2): number => {
+  const local = intoEllipseFrame(point, ellipse)
+  return Math.atan2(local.y / ellipse.ry, local.x / ellipse.rx)
+}
+
+/** Points around the whole outline in parameter order, the last a step short of the first. */
+export const ellipseOutline = (ellipse: EllipseLike, count = ELLIPSE_SEGMENTS): Vec2[] =>
+  Array.from({ length: count }, (_, index) => ellipsePointAt(ellipse, (index / count) * Math.PI * 2))
+
+/**
+ * Where the infinite line through `origin` along `direction` crosses an ellipse, as distances along
+ * that direction.
+ *
+ * Exact, rather than sampled: an ellipse is an affine image of the unit circle, and scaling and
+ * turning a line's points leaves the parameter along it unchanged, so the crossings can be solved
+ * against the unit circle and used as they come out. That is what keeps a line trimmed back to an
+ * oval landing on the outline rather than on a chord of it.
+ */
+export const lineEllipseParameters = (
+  origin: Vec2,
+  direction: Vec2,
+  ellipse: EllipseLike,
+): number[] => {
+  if (ellipse.rx < EPS || ellipse.ry < EPS) return []
+  const { cos, sin } = rotationOf(-ellipse.rotation)
+  const local = intoEllipseFrame(origin, ellipse)
+  const unitOrigin = { x: local.x / ellipse.rx, y: local.y / ellipse.ry }
+  const mapped = {
+    x: (direction.x * cos - direction.y * sin) / ellipse.rx,
+    y: (direction.x * sin + direction.y * cos) / ellipse.ry,
+  }
+  // `lineCircleRoots` solves for a UNIT direction, and the frame change scales the direction, so the
+  // roots it hands back are measured in the mapped lengths and are divided by the mapping's own
+  // scale. Skipping that lands the crossing at the wrong fraction along the line — which is what a
+  // line trimmed back to an oval stopping well clear of it looks like.
+  const scale = Math.hypot(mapped.x, mapped.y)
+  if (scale < EPS) return []
+  return lineCircleRoots(
+    unitOrigin,
+    { x: mapped.x / scale, y: mapped.y / scale },
+    { x: 0, y: 0 },
+    1,
+  ).map((t) => t / scale)
+}
+
 /** The line a segment becomes when moved sideways by a signed distance. */
 export const offsetSegmentLine = (a: Vec2, b: Vec2, signedDistance: number): Segment => {
   const direction = normalize(sub(b, a))

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createCircle, createLine, createRect } from './commands'
 import { mirrorEntity } from './geometry'
 import { extendEntity, extendResult, fenceHits, offsetEntity, trimEntity, trimResult } from './modify'
-import type { ArcEntity, CadEntity, PolylineEntity } from './types'
+import type { ArcEntity, CadEntity, EllipseEntity, PolylineEntity } from './types'
 
 const arc = (overrides: Partial<ArcEntity> = {}): ArcEntity => ({
   id: 'arc',
@@ -155,6 +155,114 @@ describe('trim', () => {
   it('ignores the object itself as a cutter', () => {
     const target = createLine('L', { x: 0, y: 0 }, { x: 100, y: 0 })
     expect(trimEntity(target, [target], { x: 50, y: 0 })).toBeNull()
+  })
+})
+
+/**
+ * An oval is the one primitive the crossings had no answer for, in either role: as the object being
+ * trimmed and as the edge doing the cutting. The two roles are checked separately because they read
+ * different machinery — the exact line/ellipse solve, and the outline walked as chords.
+ */
+describe('trimming against an oval', () => {
+  const oval = (overrides: Partial<EllipseEntity> = {}): EllipseEntity => ({
+    id: 'oval',
+    type: 'ellipse',
+    layerId: 'L',
+    center: { x: 0, y: 0 },
+    rx: 20,
+    ry: 10,
+    rotation: 0,
+    ...overrides,
+  })
+
+  /** The vertical line x = 10, which crosses this oval at y = ±√75. */
+  const across = () => createLine('L', { x: 10, y: -50 }, { x: 10, y: 50 })
+
+  it('cuts a line back to the outline of the oval it runs through', () => {
+    const pieces = trimEntity(across(), [oval()], { x: 10, y: 0 })!
+    expect(pieces).toHaveLength(2)
+
+    const ends = pieces.flatMap((piece) => (piece.type === 'line' ? [piece.end, piece.start] : []))
+    const inner = ends
+      .map((point) => Math.abs(point.y))
+      .filter((y) => y < 50)
+      .sort((a, b) => a - b)
+    // ±√75 to nine decimals: the crossing is solved, not read off a chord of the outline, which
+    // would be out by about a hundredth.
+    expect(inner).toHaveLength(2)
+    expect(inner[0]).toBeCloseTo(Math.sqrt(75), 9)
+    expect(inner[1]).toBeCloseTo(Math.sqrt(75), 9)
+  })
+
+  it('lengthens a line out to the oval it stops short of', () => {
+    const target = createLine('L', { x: 0, y: 0 }, { x: 5, y: 0 })
+
+    const result = extendEntity(target, [oval()], { x: 5, y: 0 })!
+
+    expect(result.type === 'line' && result.end.x).toBeCloseTo(20, 9)
+  })
+
+  it('cuts the oval where a line crosses it, leaving the rest of the outline', () => {
+    const cut = trimResult(oval(), [across()], { x: 19, y: 0 })!
+    expect(cut.removed.type).toBe('polyline')
+    const removed = cut.removed as PolylineEntity
+
+    // The right-hand end of the oval goes: from one crossing, round the far vertex, to the other.
+    expect(removed.points[0].x).toBeCloseTo(10, 9)
+    expect(removed.points[0].y).toBeCloseTo(-Math.sqrt(75), 9)
+    expect(removed.points.at(-1)!.y).toBeCloseTo(Math.sqrt(75), 9)
+    expect(Math.max(...removed.points.map((point) => point.x))).toBeCloseTo(20, 6)
+
+    // What survives is the far side of the outline, in one piece, as an oval has no ends to split it.
+    expect(cut.remaining).toHaveLength(1)
+    const left = cut.remaining[0] as PolylineEntity
+    expect(Math.min(...left.points.map((point) => point.x))).toBeCloseTo(-20, 6)
+  })
+
+  it('cuts the oval where a circle crosses it', () => {
+    // A circle meets an oval on a quartic, so this one is read off the chords — within a chord's
+    // worth of the outline rather than on it.
+    const cutter = { ...createCircle('L', { x: 25, y: 0 }, 12), id: 'circle' }
+
+    const cut = trimResult(oval(), [cutter], { x: -19, y: 0 })!
+
+    const ends = (cut.removed as PolylineEntity).points
+    const near = Math.max(...ends.map((point) => point.x))
+    expect(near).toBeGreaterThan(10)
+    expect(near).toBeLessThan(20)
+    for (const point of [ends[0], ends.at(-1)!]) {
+      const invariant = (point.x / 20) ** 2 + (point.y / 10) ** 2
+      expect(Math.abs(invariant - 1)).toBeLessThan(0.01)
+    }
+  })
+
+  it('turns the crossings with the oval, not just with the axes', () => {
+    const tilted = oval({ rotation: Math.PI / 2 })
+    const target = createLine('L', { x: -50, y: 10 }, { x: 50, y: 10 })
+
+    const pieces = trimEntity(target, [tilted], { x: 0, y: 10 })!
+
+    expect(pieces).toHaveLength(2)
+    // Tilted a quarter turn, the 20 radius now runs up the y axis, so it is crossed at x = ±√75.
+    const inner = pieces
+      .flatMap((piece) => (piece.type === 'line' ? [piece.start, piece.end] : []))
+      .map((point) => Math.abs(point.x))
+      .filter((x) => x < 50)
+      .sort((a, b) => a - b)
+    expect(inner[0]).toBeCloseTo(Math.sqrt(75), 9)
+  })
+
+  it('leaves an oval nothing crosses alone', () => {
+    const elsewhere = createLine('L', { x: 100, y: -10 }, { x: 100, y: 10 })
+    expect(trimResult(oval(), [elsewhere], { x: 19, y: 0 })).toBeNull()
+  })
+
+  it('counts an oval among the objects a fence crosses', () => {
+    const hits = fenceHits([oval()], { x: -50, y: 0 }, { x: 50, y: 0 })
+
+    expect(hits).toHaveLength(2)
+    expect(hits[0].point.x).toBeCloseTo(-20, 9)
+    expect(hits[1].point.x).toBeCloseTo(20, 9)
   })
 })
 

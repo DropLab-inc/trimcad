@@ -10,6 +10,7 @@ import {
   sub,
   type Vec2,
 } from './math/vec2'
+import { ellipseOutline } from './intersect'
 import type {
   ArcEntity,
   BlockDefinition,
@@ -357,16 +358,7 @@ export const findHatchBoundary = (entities: CadEntity[], pickPoint: Vec2): Vec2[
       offer(circleToPolygon(entity.center, entity.radius))
     }
     if (entity.type === 'ellipse') {
-      offer(
-        Array.from({ length: 64 }, (_, index) => {
-          const angle = (index / 64) * Math.PI * 2
-          const local = { x: Math.cos(angle) * entity.rx, y: Math.sin(angle) * entity.ry }
-          return {
-            x: entity.center.x + local.x * Math.cos(entity.rotation) - local.y * Math.sin(entity.rotation),
-            y: entity.center.y + local.x * Math.sin(entity.rotation) + local.y * Math.cos(entity.rotation),
-          }
-        }),
-      )
+      offer(ellipseOutline(entity, 64))
     }
   }
 
