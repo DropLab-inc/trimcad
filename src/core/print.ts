@@ -1,5 +1,6 @@
 import { jsPDF, type Matrix } from 'jspdf'
 import { flattenEntity, flattenInsert, pointsOfEntity } from './flatten'
+import { framingBounds } from './framing'
 import { effectiveStyleFor, faceOf, textLinesOf, textPoint, textStylesOf } from './text'
 import { FONT_FACES, type TextFont } from './textMetrics'
 import { isLayerPlottable, layerOf, plottableEntities } from './layers'
@@ -161,10 +162,22 @@ export const boundsOfPoints = (points: Vec2[]): PrintBounds => {
 
 /** The smallest rectangle that holds every plottable object. */
 export const extentsBounds = (document: DrawingDocument): PrintBounds => {
-  const points = document.entities
-    .filter((entity) => isLayerPlottable(layerOf(document, entity)))
-    .flatMap(pointsOfEntity)
-  return boundsOfPoints(points)
+  const plottable = document.entities.filter((entity) => isLayerPlottable(layerOf(document, entity)))
+  /*
+   * The page is framed on the drawing rather than on its extremes, the same way the canvas is. A plot
+   * of the extents otherwise prints whatever a stray object placed 13,000 units away makes of the
+   * page: the drawing as a speck in the corner. It also measures inserts through their blocks, which
+   * counting points alone cannot do — a sheet of details is mostly blocks, and a plot area computed
+   * without them is the plot area of the handful of loose lines.
+   */
+  const framed = framingBounds(plottable, document.blocks ?? [], document.textStyles ?? [])
+  if (!framed.bounds) return boundsOfPoints([])
+  return {
+    minX: framed.bounds.min.x,
+    minY: framed.bounds.min.y,
+    maxX: framed.bounds.max.x,
+    maxY: framed.bounds.max.y,
+  }
 }
 
 /** What the camera can currently see, in drawing units. */

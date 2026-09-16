@@ -99,6 +99,28 @@ const advanceOf = (font: TextFont, character: string): number => {
   return FALLBACK_ADVANCE
 }
 
+/**
+ * AutoCAD's in-text control codes, turned into the characters they stand for.
+ *
+ * They are how a real drawing writes a tolerance or a diameter: the customer's own notes read
+ * "1.未注公差：%%P0.2;" for ±0.2. Left alone, the code is drawn literally — the note says %%P0.2, which
+ * is not a drawing note but a decoder we have not run.
+ */
+export const decodeControlCodes = (value: string): string =>
+  value
+    // %%p is plus/minus, %%c diameter, %%d degrees, %%% a literal per cent sign.
+    .replace(/%%[pP](?![0-9a-zA-Z])/g, '±')
+    .replace(/%%[pP]/g, '±')
+    .replace(/%%[cC]/g, '⌀')
+    .replace(/%%[dD]/g, '°')
+    .replace(/%%%/g, '%%')
+    // %%nnn is the character with that code, which is how a symbol outside the keyboard gets written.
+    .replace(/%%(\d{3})/g, (_, code: string) => String.fromCharCode(Number(code)))
+    // \U+XXXX is MTEXT's own unicode escape, e.g. \U+2205 for a diameter sign.
+    .replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+    // A backslash escapes the next brace or backslash rather than meaning anything itself.
+    .replace(/\\([{}\\])/g, '$1')
+
 /** The width of a string in drawing units, at a given character height. */
 export const measureText = (value: string, height: number, style: TextStyle): number => {
   const font = (TEXT_FONTS.includes(style.font as TextFont) ? style.font : 'helvetica') as TextFont

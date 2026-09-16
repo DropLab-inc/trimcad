@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CAP_HEIGHT,
   SINGLE_LINE_SPACING,
+  decodeControlCodes,
   STANDARD_STYLE,
   lineHeightOf,
   measureText,
@@ -183,5 +184,29 @@ describe('the box a text object occupies', () => {
     const width = Math.max(...corners.map((point) => point.x)) - Math.min(...corners.map((point) => point.x))
     expect(height).toBeCloseTo(226, 6)
     expect(width).toBeCloseTo(100 * CAP_HEIGHT, 6)
+  })
+})
+
+describe('AutoCAD in-text control codes', () => {
+  it('turns the codes a real drawing writes into the characters they stand for', () => {
+    // The customer's own note: "1.未注公差：%%P0.2;" means a tolerance of ±0.2.
+    expect(decodeControlCodes('1.未注公差：%%P0.2;')).toBe('1.未注公差：±0.2;')
+    expect(decodeControlCodes('%%c12')).toBe('⌀12')
+    expect(decodeControlCodes('45%%d')).toBe('45°')
+    // %%% is an escaped per cent sign, not a code.
+    expect(decodeControlCodes('100%%% done')).toBe('100%% done')
+    // %%nnn is a character code.
+    expect(decodeControlCodes('%%065')).toBe('A')
+  })
+
+  it('reads MTEXT unicode escapes and escaped braces', () => {
+    // U+2205 is the empty set, which is what that escape actually names.
+    expect(decodeControlCodes('\\U+2205')).toBe('∅')
+    expect(decodeControlCodes('a\\{b\\}c')).toBe('a{b}c')
+  })
+
+  it('leaves ordinary text alone', () => {
+    expect(decodeControlCodes('SCALE 1:1 UNIT MM')).toBe('SCALE 1:1 UNIT MM')
+    expect(decodeControlCodes('R1.1897')).toBe('R1.1897')
   })
 })

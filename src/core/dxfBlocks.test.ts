@@ -58,11 +58,13 @@ describe('importing a drawing built out of blocks', () => {
 
   it('reports what it could not read instead of dropping it silently', () => {
     const unreadable = unreadableInDxf(SHEET)
-    expect(unreadable.get('HATCH')).toBe(1)
+    // Hatches are READ now (dxf-parser drops the record, so they are scanned from the text), so the
+    // only thing this sheet still loses is its leader.
+    expect(unreadable.has('HATCH')).toBe(false)
     expect(unreadable.get('LEADER')).toBe(1)
     // Nothing it DID read is reported, and no group code is mistaken for a type.
     expect(unreadable.has('LINE')).toBe(false)
-    expect(unreadable.size).toBe(2)
+    expect(unreadable.size).toBe(1)
     expect(unreadable.has('INSERT')).toBe(false)
     expect(unreadable.has('DIMENSION')).toBe(false)
   })
@@ -124,5 +126,31 @@ describe('what an opened file leaves behind', () => {
     const second = tiny(['0', 'SECTION', '2', 'BLOCKS', '0', 'BLOCK', '8', '0', '2', 'NEWBLOCK', '70', '0', '10', '0.0', '20', '0.0', '0', 'CIRCLE', '8', '0', '10', '0.0', '20', '0.0', '40', '2.0', '0', 'ENDBLK'])
     const next = importDocumentFromDxf(second, { ...opened, blocks: [] })
     expect(next.blocks.map((block) => block.name)).toEqual(['NEWBLOCK'])
+  })
+})
+
+describe('layout blocks', () => {
+  it('are not imported as placeable definitions', async () => {
+    const { importDocumentFromDxf } = await import('./dxf')
+    const { makeDefaultDocument } = await import('./document')
+    // A converter can write the model's own geometry into *Model_Space; a placeable copy of the whole
+    // drawing must not appear in the palette.
+    const text = [
+      '0', 'SECTION', '2', 'BLOCKS',
+      '0', 'BLOCK', '8', '0', '2', '*Model_Space', '70', '0', '10', '0.0', '20', '0.0',
+      '0', 'LINE', '8', '0', '10', '0.0', '20', '0.0', '11', '9.0', '21', '9.0',
+      '0', 'ENDBLK',
+      '0', 'BLOCK', '8', '0', '2', '*Paper_Space0', '70', '0', '10', '0.0', '20', '0.0',
+      '0', 'CIRCLE', '8', '0', '10', '0.0', '20', '0.0', '40', '3.0',
+      '0', 'ENDBLK',
+      '0', 'BLOCK', '8', '0', '2', 'REAL', '70', '0', '10', '0.0', '20', '0.0',
+      '0', 'LINE', '8', '0', '10', '0.0', '20', '0.0', '11', '1.0', '21', '1.0',
+      '0', 'ENDBLK',
+      '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES',
+      '0', 'INSERT', '8', '0', '2', 'REAL', '10', '0.0', '20', '0.0', '41', '1.0', '50', '0.0',
+      '0', 'ENDSEC', '0', 'EOF', '',
+    ].join('\n')
+    const doc = importDocumentFromDxf(text, makeDefaultDocument())
+    expect(doc.blocks.map((block) => block.name)).toEqual(['REAL'])
   })
 })

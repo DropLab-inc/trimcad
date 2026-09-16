@@ -6,6 +6,8 @@ import { makeDefaultDocument } from './document'
 import { ellipticalArcPoints, expandBulges, sampleBSpline } from './dxfCurves'
 import { DEFAULT_LAYER_COLOR, makeLayer, normalizeLayer } from './layers'
 import { uid } from './geometry'
+import { decodeControlCodes } from './text'
+import { hatchesFromDxf } from './dxfHatch'
 
 /** Marks the comment line carrying the full drawing. DXF readers ignore group code 999. */
 const EMBED_TAG = 'TRIMCAD-DOCUMENT:'
@@ -106,6 +108,12 @@ const blocksFromDxf = (
     typeof name === 'string' ? byName.get(name.toUpperCase()) ?? null : null
 
   for (const [name, block] of Object.entries(raw)) {
+    /*
+     * A layout block is not a definition anyone can place. `*Model_Space` and `*Paper_Space` describe
+     * the layout itself, and a converter may write the drawing's entities INTO one of them — importing
+     * that as a block would carry a second copy of the drawing, placeable from the palette.
+     */
+    if (/^\*(Model|Paper)_Space/i.test(name)) continue
     const members: CadEntity[] = []
     for (const member of (block?.entities ?? []) as any[]) {
       const entity = readEntity(member, layerIdFor(member.layer), idFor)
@@ -239,6 +247,7 @@ const READABLE_TYPES = new Set([
   'MTEXT',
   'INSERT',
   'DIMENSION',
+  'HATCH',
   'SEQEND',
   'VERTEX',
 ])
@@ -381,9 +390,20 @@ export const importDocumentFromDxf = (
   const layerIdFor = (name: unknown): string =>
     (typeof name === 'string' ? byName.get(name.toUpperCase()) : undefined) ?? fallbackLayerId
 
-  const blocks = blocksFromDxf(content, layerIdFor, parsed)
   const counted: ImportCounts = { impossible: 0 }
-  const entities = entitiesFromDxf(content, layerIdFor, blocks, blocks.parsed, counted)
+  const blocks = blocksFromDxf(content, layerIdFor, parsed)
+  /*
+   * Hatches are read from the raw text rather than from the parse, because dxf-parser has no handler
+   * for the record and drops it. A block's hatches are members of that block, so they have to be
+   * merged into the definition rather than added to the drawing.
+   */
+  const hatches = hatchesFromDxf(content, layerIdFor, fromAci)
+  for (const definition of blocks.definitions) {
+    const extra = hatches.byBlock.get(definition.name)
+    if (extra && extra.length > 0) definition.entities = [...definition.entities, ...extra]
+  }
+  const parsedEntities = entitiesFromDxf(content, layerIdFor, blocks, blocks.parsed, counted)
+  const entities = [...parsedEntities, ...hatches.top]
   report?.(counted)
 
   // A file this app wrote carries the whole drawing, including everything DXF has no room for.
@@ -568,7 +588,7 @@ const readEntity = (
         type: 'text',
         layerId,
         position: { x: raw.startPoint?.x ?? 0, y: raw.startPoint?.y ?? 0 },
-        value: String(raw.text ?? ''),
+        value: decodeControlCodes(String(raw.text ?? '')),
         height: raw.textHeight ?? 12,
         rotation: raw.rotation || undefined,
         ...(raw.xScale && raw.xScale !== 1 ? { widthFactor: raw.xScale } : {}),
@@ -604,7 +624,7 @@ const readEntity = (
  * would be drawn literally.
  */
 const mtextPlainText = (value: string): string =>
-  value
+  decodeControlCodes(value)
     .replace(/\\P/gi, '\n')
     .replace(/\\([A-Za-z][^;\\\\{}]*;)/g, '')
     .replace(/[{}]/g, '')
