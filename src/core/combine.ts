@@ -296,6 +296,10 @@ const shapeKey = (entity: CadEntity, tolerance: number): string => {
       return `mtext ${p(entity.position)} ${n(entity.height)} ${n(entity.width)} ${n(entity.rotation ?? 0)} ${entity.attachment ?? 'TL'} ${entity.value}`
     case 'dimension':
       return `dim ${entity.dimType} ${p(entity.p1)} ${p(entity.p2)} ${entity.p3 ? p(entity.p3) : '-'} ${entity.placement ? p(entity.placement) : '-'}`
+    case 'leader':
+      return `leader ${p(entity.arrow)} ${p(entity.landingEnd)} ${entity.value}`
+    case 'tolerance':
+      return `tol ${p(entity.position)} ${entity.symbol} ${entity.value} ${entity.datums.join(' ')}`
     case 'insert':
       return `insert ${entity.blockId} ${p(entity.position)} ${n(entity.rotation)} ${n(entity.scale)}`
   }

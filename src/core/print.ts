@@ -9,10 +9,12 @@ import type {
   DrawingDocument,
   Layer,
   Layout,
+  LeaderEntity,
   MTextEntity,
   PaperOrientation,
   PaperSize,
   TextEntity,
+  ToleranceEntity,
 } from './types'
 
 /** Paper sizes and orientations are part of the document model, so layouts can name them too. */
@@ -331,6 +333,14 @@ export const exportPdf = async (
       plotText(pdf, document, entity, toPage, 1 / layout.applied, fonts)
       continue
     }
+    if (entity.type === 'leader') {
+      plotLeader(pdf, entity, toPage, 1 / layout.applied)
+      continue
+    }
+    if (entity.type === 'tolerance') {
+      plotTolerance(pdf, entity, toPage, 1 / layout.applied)
+      continue
+    }
 
     for (const run of flattenEntity(entity)) {
       if (run.points.length < 2) continue
@@ -379,6 +389,66 @@ const matrixOf = (a: number, b: number, c: number, d: number, e: number, f: numb
  * is negated against the drawing's own: a drawing y runs down and a page y runs up, so a text that
  * turns one way on the canvas has to be turned the other way to look the same on paper.
  */
+/**
+ * A leader plots as its two segments plus its words — the same shape the canvas draws, sized by the
+ * space's own units per millimetre like every other annotation.
+ */
+const plotLeader = (
+  pdf: jsPDF,
+  entity: LeaderEntity,
+  toPage: (point: Vec2) => [number, number],
+  unitsPerMm: number,
+): void => {
+  const height = entity.height / unitsPerMm
+  const hook = { x: entity.landingEnd.x, y: entity.landingEnd.y + 3.5 * (entity.height / 2.5) }
+  const [ax, ay] = toPage(entity.arrow)
+  const [lx, ly] = toPage(entity.landingEnd)
+  const [hx, hy] = toPage(hook)
+  pdf.setLineWidth(0)
+  pdf.lines([[lx - ax, ly - ay], [hx - lx, hy - ly]], ax, ay)
+  pdf.setFontSize(height)
+  const wordsWide = pdf.getTextWidth(entity.value)
+  const anchorRight = entity.flipped ? lx < ax : lx >= ax
+  pdf.text(entity.value, anchorRight ? lx + height * 0.4 : lx - height * 0.4 - wordsWide, hy)
+}
+
+/**
+ * A tolerance frame plots as its compartments: boxes sized from the words, then the symbol, value
+ * and datums centred in them. The frame is drawn to the same proportions the canvas draws.
+ */
+const plotTolerance = (
+  pdf: jsPDF,
+  entity: ToleranceEntity,
+  toPage: (point: Vec2) => [number, number],
+  unitsPerMm: number,
+): void => {
+  const h = entity.height / unitsPerMm
+  const [px, py] = toPage(entity.position)
+  const valueWidth = Math.max(h * 1.6, h * 0.85 * Math.max(1, entity.value.length))
+  const datumWidth = entity.datums.reduce(
+    (width, datum) => width + Math.max(h * 1.2, h * 0.85 * Math.max(1, datum.length)),
+    0,
+  )
+  const symbolWidth = entity.symbol ? h * 1.4 : 0
+  const total = symbolWidth + valueWidth + datumWidth
+  let cursor = px - total / 2
+  const boxes: Array<{ x: number; w: number; text: string }> = []
+  if (entity.symbol) boxes.push({ x: cursor, w: symbolWidth, text: entity.symbol })
+  cursor += symbolWidth
+  boxes.push({ x: cursor, w: valueWidth, text: entity.value })
+  cursor += valueWidth
+  for (const datum of entity.datums) {
+    boxes.push({ x: cursor, w: Math.max(h * 1.2, h * 0.85 * Math.max(1, datum.length)), text: datum })
+    cursor += Math.max(h * 1.2, h * 0.85 * Math.max(1, datum.length))
+  }
+  pdf.setLineWidth(0)
+  for (const box of boxes) {
+    pdf.rect(box.x, py - h / 2, box.w, h)
+    pdf.setFontSize(h * 0.85)
+    pdf.text(box.text, box.x + box.w / 2, py + h * 0.35, { align: 'center' })
+  }
+}
+
 const plotText = (
   pdf: jsPDF,
   document: DrawingDocument,
@@ -487,6 +557,14 @@ const plotEntities = (
 
     if (entity.type === 'text' || entity.type === 'mtext') {
       plotText(pdf, document, entity, toPage, unitsPerMm, fonts)
+      continue
+    }
+    if (entity.type === 'leader') {
+      plotLeader(pdf, entity, toPage, unitsPerMm)
+      continue
+    }
+    if (entity.type === 'tolerance') {
+      plotTolerance(pdf, entity, toPage, unitsPerMm)
       continue
     }
 

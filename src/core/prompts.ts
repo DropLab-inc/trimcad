@@ -206,6 +206,26 @@ const DIM_PROMPTS: Record<DimensionType, Prompt[]> = {
     point('Specify second side'),
     point('Specify dimension arc location'),
   ],
+  // AutoCAD's DIMORDINATE: pick the feature, then lead out; the axis follows the leader's direction.
+  ordinate: [
+    point('Specify feature location', [
+      { key: 'X', label: 'Xdatum' },
+      { key: 'Y', label: 'Ydatum' },
+    ]),
+    point('Specify leader endpoint or [Xdatum/Ydatum]'),
+  ],
+  // AutoCAD's DIMARC, on an arc or polyline arc segment: endpoints then where the arc sits.
+  arclength: [
+    entity('Select an arc or polyline arc segment'),
+    point('Specify dimension line location', [{ key: 'M', label: 'Mtext' }]),
+  ],
+  // AutoCAD's DIMJOGGED: a radius measured through a jog, so the centre and the bend come separately.
+  jogged: [
+    entity('Select a circle or arc'),
+    point('Specify center location override'),
+    point('Specify dimension line location'),
+    point('Specify jog location'),
+  ],
 }
 
 /**
@@ -466,6 +486,11 @@ const promptsForTool = (ctx: PromptContext): Prompt[] => {
       return [point('Specify base point')]
     case 'dimension':
       return DIM_PROMPTS[ctx.dimensionType] ?? DIM_PROMPTS.linear
+    case 'leader':
+      // AutoCAD's MLEADER: the arrow lands first, then the landing ends where the text will sit.
+      return [point('Specify arrow location'), point('Specify landing location')]
+    case 'tolerance':
+      return [point('Specify tolerance frame location')]
     case 'offset':
       // AutoCAD asks for the distance first, then loops between picking an object and a side.
       if (ctx.offsetPending) {

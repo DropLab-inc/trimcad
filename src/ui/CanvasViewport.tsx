@@ -199,6 +199,7 @@ export function CanvasViewport() {
   const arrayRotateItems = useCadStore((state) => state.arrayRotateItems)
   const dimensionType = useCadStore((state) => state.dimensionType)
   const dimScale = useCadStore((state) => state.dimScale)
+  const textHeightState = useCadStore((state) => state.textHeight)
   const modifyTargetId = useCadStore((state) => state.modifyTargetId)
   const offsetDistance = useCadStore((state) => state.offsetDistance)
   const filletRadius = useCadStore((state) => state.filletRadius)
@@ -1578,6 +1579,26 @@ export function CanvasViewport() {
         }
         return renderDimension(dimension, doc.dimStyle, palette.preview, 'preview', true)
       }
+      case 'leader': {
+        // Arrow to the cursor, then a horizontal landing: the shape MLEADER settles into, ghosted.
+        const arrow = draftPoints[0] ?? cursorWorld
+        const landing = { x: cursorWorld.x, y: draftPoints.length > 0 ? cursorWorld.y : cursorWorld.y }
+        return (
+          <g>
+            <polyline points={[arrow, landing, cursorWorld].map((p) => `${p.x},${p.y}`).join(' ')} {...style} />
+          </g>
+        )
+      }
+      case 'tolerance': {
+        // A ghost frame sized like the real one, so its footprint is visible before the words exist.
+        const h = textHeightState || 2.5
+        const half = h * 2.5
+        return (
+          <g>
+            <rect x={cursorWorld.x - half} y={cursorWorld.y - h / 2} width={half * 2} height={h} {...style} fill="none" />
+          </g>
+        )
+      }
       default:
         return null
     }
@@ -1594,6 +1615,7 @@ export function CanvasViewport() {
     polygonSides,
     rectMode,
     rectRotation,
+    textHeightState,
   ])
 
   const grips = useMemo(() => {

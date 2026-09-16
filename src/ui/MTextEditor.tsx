@@ -43,6 +43,9 @@ export function MTextEditor() {
   const [attachment, setAttachment] = useState<MTextAttachment>('TL')
   const [width, setWidth] = useState(0)
   const [lineSpacing, setLineSpacing] = useState(1)
+  // The tolerance frame's compartments: one symbol code and up to three datum references.
+  const [symbol, setSymbol] = useState('')
+  const [datums, setDatums] = useState('')
   const wordsRef = useRef<HTMLTextAreaElement | null>(null)
   const titleId = useId()
 
@@ -59,15 +62,19 @@ export function MTextEditor() {
         )
       : undefined
     const mtext = entity && entity.type === 'mtext' ? entity : null
+    const tolerance = entity && entity.type === 'tolerance' ? entity : null
+    const leader = entity && entity.type === 'leader' ? entity : null
     const drawn = useCadStore.getState().mtextDraft
 
     setValue(editor.value)
-    setHeight(mtext?.height ?? storeHeight)
+    setHeight(mtext?.height ?? tolerance?.height ?? leader?.height ?? storeHeight)
     setRotation(mtext?.rotation ?? storeRotation)
-    setStyleId(mtext?.styleId ?? storeStyleId)
+    setStyleId(mtext?.styleId ?? leader?.styleId ?? storeStyleId)
     setAttachment(mtext?.attachment ?? useCadStore.getState().mtextAttachment)
     setWidth(mtext?.width ?? drawn?.width ?? 0)
     setLineSpacing(mtext?.lineSpacing ?? 1)
+    setSymbol(tolerance?.symbol ?? '')
+    setDatums(tolerance?.datums.join(' ') ?? '')
     // The caret belongs in the words: this dialog exists to type them.
     window.setTimeout(() => wordsRef.current?.select(), 0)
   }, [editor, entityId, doc, storeHeight, storeRotation, storeStyleId])
@@ -83,9 +90,11 @@ export function MTextEditor() {
 
   const done = () =>
     commit(
-      kind === 'mtext'
-        ? { value, height, rotation, styleId, attachment, width, lineSpacing }
-        : { value, height, rotation, styleId },
+      kind === 'tolerance'
+        ? { value, symbol, datums: datums.split(/\s+/).filter(Boolean) }
+        : kind === 'mtext'
+          ? { value, height, rotation, styleId, attachment, width, lineSpacing }
+          : { value, height, rotation, styleId },
     )
 
   return (

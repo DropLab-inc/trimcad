@@ -24,7 +24,7 @@ import {
   makeLayer,
   nextLayerName,
 } from './layers'
-import { findHatchBoundary, getEntityAnchorPoints, isPointNearEntity, mirrorEntity, uid } from './geometry'
+import { findHatchBoundary, getEntityAnchorPoints, isPointNearEntity, mirrorEntity, polar, uid } from './geometry'
 import {
   arcFromCenterStartEnd,
   arcFromStartCenterAngle,
@@ -80,7 +80,7 @@ import {
 import { applySelectionModifier, expandSelectionToGroups, type SelectionModifier } from './selection'
 import { SINGLE_LINE_SPACING, STANDARD_STYLE, isTextEntity, styleFor, textStylesOf } from './text'
 import { polarArrayCopies, rectangularArrayCopies } from './array'
-import { distance as distanceBetween, sub, type Vec2 } from './math/vec2'
+import { add as addVec, distance as distanceBetween, sub, type Vec2 } from './math/vec2'
 import type {
   ArcMode,
   ArrayType,
@@ -331,6 +331,20 @@ type CadState = {
   mtextWidthGiven: boolean
   /** The box a new MTEXT is being written into, once its corners are down. */
   mtextDraft: { position: Vec2; width: number } | null
+  /** The leader picked but not yet worded; committed when its editor closes. */
+  leaderDraft: {
+    arrow: Vec2
+    landingEnd: Vec2
+    height: number
+    layerId: string
+    flipped: boolean
+  } | null
+  /** The tolerance frame placed but not yet worded; committed when its editor closes. */
+  toleranceDraft: { position: Vec2; height: number } | null
+  /** The ordinate's forced axis from its Xdatum/Ydatum options; null lets the leader decide. */
+  ordinateAxis: 'x' | 'y' | null
+  /** The arc an arc-length dimension is measuring, captured when the arc was picked. */
+  arclengthArc: { center: Vec2; start: Vec2; end: Vec2 } | null
   /**
    * The size and rotation the next text is drawn at, and the style it takes. These outlive the
    * command they were set in, the way AutoCAD's current text height does.
@@ -533,6 +547,16 @@ const perCommandOptions = {
   mtextPending: null as MTextPending,
   mtextWidthGiven: false,
   mtextDraft: null as { position: Vec2; width: number } | null,
+  leaderDraft: null as {
+    arrow: Vec2
+    landingEnd: Vec2
+    height: number
+    layerId: string
+    flipped: boolean
+  } | null,
+  toleranceDraft: null as { position: Vec2; height: number } | null,
+  ordinateAxis: null as 'x' | 'y' | null,
+  arclengthArc: null as { center: Vec2; start: Vec2; end: Vec2 } | null,
 }
 
 const autosaveDoc = (doc: DrawingDocument) => {
@@ -605,6 +629,10 @@ export const useCadStore = create<CadState>((set, get) => ({
   mtextWidth: 0,
   mtextWidthGiven: false,
   mtextDraft: null,
+  leaderDraft: null,
+  toleranceDraft: null,
+  ordinateAxis: null,
+  arclengthArc: null,
   hatchScale: 1,
   hatchAngle: 0,
   hatchPending: null,
@@ -1342,17 +1370,31 @@ export const useCadStore = create<CadState>((set, get) => ({
   beginTextEditor: (textEditor) => set({ textEditor }),
   editTextAt: (point) => {
     const target = pickEntity(get(), point)
-    if (!target || !isTextEntity(target)) return false
-    get().beginTextEditor({
-      entityId: target.id,
-      kind: target.type === 'mtext' ? 'mtext' : 'text',
-      value: target.value,
-      title: target.type === 'mtext' ? 'MTEXT' : 'TEXT',
-    })
-    return true
+    if (!target) return false
+    if (isTextEntity(target)) {
+      get().beginTextEditor({
+        entityId: target.id,
+        kind: target.type === 'mtext' ? 'mtext' : 'text',
+        value: target.value,
+        title: target.type === 'mtext' ? 'MTEXT' : 'TEXT',
+      })
+      return true
+    }
+    // A leader or tolerance frame opens the same editor, with its own words and compartments.
+    if (target.type === 'leader' || target.type === 'tolerance') {
+      const kind = target.type
+      get().beginTextEditor({
+        entityId: target.id,
+        kind,
+        value: target.value,
+        title: kind === 'leader' ? 'MLEADER' : 'TOLERANCE',
+      })
+      return true
+    }
+    return false
   },
   cancelTextEditor: () => {
-    set({ textEditor: null, mtextDraft: null, draftPoints: [] })
+    set({ textEditor: null, mtextDraft: null, leaderDraft: null, toleranceDraft: null, draftPoints: [] })
     get().endCommand()
   },
   commitTextEditor: (edit) => {
@@ -1365,6 +1407,31 @@ export const useCadStore = create<CadState>((set, get) => ({
     if (edit.height !== undefined) set({ textHeight: Math.abs(edit.height) || 1 })
     if (edit.rotation !== undefined) set({ textRotation: edit.rotation })
     if (edit.styleId !== undefined) set({ textStyleId: edit.styleId })
+
+    if (editor.entityId && editor.kind === 'leader') {
+      // The words of a placed callout change; its geometry stays where it was drawn.
+      get().updateSpaceEntities((entities) =>
+        entities.map((entity) =>
+          entity.id === editor.entityId && entity.type === 'leader' ? { ...entity, value: edit.value } : entity,
+        ),
+      )
+      get().log('result', 'Leader updated')
+      get().endCommand()
+      return
+    }
+
+    if (editor.entityId && editor.kind === 'tolerance') {
+      get().updateSpaceEntities((entities) =>
+        entities.map((entity) =>
+          entity.id === editor.entityId && entity.type === 'tolerance'
+            ? { ...entity, value: edit.value, symbol: edit.symbol ?? entity.symbol, datums: edit.datums ?? entity.datums }
+            : entity,
+        ),
+      )
+      get().log('result', 'Tolerance frame updated')
+      get().endCommand()
+      return
+    }
 
     if (editor.entityId) {
       // An object already exists: its words change, and so does whatever else the editor offered.
@@ -1390,6 +1457,45 @@ export const useCadStore = create<CadState>((set, get) => ({
         ),
       )
       get().log('result', `${editor.kind === 'mtext' ? 'MTEXT' : 'Text'} updated`)
+      get().endCommand()
+      return
+    }
+
+    if (editor.kind === 'leader') {
+      const draft = get().leaderDraft
+      if (!draft) return
+      get().addEntity({
+        id: uid(),
+        type: 'leader',
+        layerId: draft.layerId,
+        arrow: draft.arrow,
+        landingEnd: draft.landingEnd,
+        value: edit.value,
+        height: draft.height,
+        styleId: edit.styleId ?? get().textStyleId ?? undefined,
+        flipped: draft.flipped,
+      })
+      set({ leaderDraft: null })
+      get().log('result', 'Leader placed')
+      get().endCommand()
+      return
+    }
+
+    if (editor.kind === 'tolerance') {
+      const draft = get().toleranceDraft
+      if (!draft) return
+      get().addEntity({
+        id: uid(),
+        type: 'tolerance',
+        layerId: get().activeLayerId,
+        position: draft.position,
+        symbol: edit.symbol ?? '',
+        value: edit.value || '0',
+        datums: edit.datums ?? [],
+        height: draft.height,
+      })
+      set({ toleranceDraft: null })
+      get().log('result', 'Tolerance frame placed')
       get().endCommand()
       return
     }
@@ -2844,16 +2950,35 @@ const runCommandDef = (state: CadStoreState, command: CommandDef, argument = '')
     case 'DIMALIGNED':
     case 'DIMRADIUS':
     case 'DIMDIAMETER':
-    case 'DIMANGULAR': {
-      const dimType = command.name.replace('DIM', '').toLowerCase()
+    case 'DIMANGULAR':
+    case 'DIMORDINATE':
+    case 'DIMARC':
+    case 'DIMJOGGED': {
       const mapped: Record<string, DimensionType> = {
-        linear: 'linear',
-        aligned: 'aligned',
-        radius: 'radial',
-        diameter: 'diameter',
-        angular: 'angular',
+        DIMLINEAR: 'linear',
+        DIMALIGNED: 'aligned',
+        DIMRADIUS: 'radial',
+        DIMDIAMETER: 'diameter',
+        DIMANGULAR: 'angular',
+        DIMORDINATE: 'ordinate',
+        DIMARC: 'arclength',
+        DIMJOGGED: 'jogged',
       }
-      state.setDimensionType(mapped[dimType] ?? 'linear')
+      state.setDimensionType(mapped[command.name] ?? 'linear')
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    }
+    case 'LEADER':
+    case 'MLEADER': {
+      // One flow: arrow, landing, then the words in the text editor. MLEADER is the name AutoCAD
+      // steers you to; plain LEADER is the same annotation without its options.
+      useCadStore.setState({ activeTool: 'leader', draftPoints: [] })
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
+    }
+    case 'TOLERANCE': {
+      // The frame's position is picked, then the words come from the text editor like a note's.
+      useCadStore.setState({ activeTool: 'tolerance', draftPoints: [] })
       state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
       return
     }
@@ -3097,6 +3222,16 @@ const runKeyword = (state: CadStoreState, keyword: Keyword) => {
   }
 
   switch (keyword.label) {
+    case 'Xdatum':
+    case 'Ydatum':
+      // AutoCAD's ordinate axis is forced by the option, overriding what the leader's direction implies.
+      useCadStore.setState({ ordinateAxis: keyword.label === 'Ydatum' ? 'y' : 'x' })
+      state.log(
+        'result',
+        `Ordinate measures ${keyword.label === 'Ydatum' ? 'Y' : 'X'} of the feature`,
+      )
+      state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+      return
     case 'cuTting edges':
     case 'Boundary edges':
       state.beginEdgeSelection()
@@ -3690,7 +3825,53 @@ export const applyDrawTool = (point: Vec2, options: { swapped?: boolean } = {}) 
 
   if (activeTool === 'dimension') {
     applyDimensionTool(state, point, currentLayerId)
+    return
   }
+
+  if (activeTool === 'leader') {
+    applyLeaderTool(state, point, currentLayerId)
+    return
+  }
+
+  if (activeTool === 'tolerance') {
+    // One pick places the frame; the editor (already open) supplies the words when it is committed.
+    const height = openedTextHeight(state) || 2.5
+    useCadStore.setState({
+      toleranceDraft: { position: point, height },
+      draftPoints: [],
+    })
+    state.beginTextEditor({ entityId: null, kind: 'tolerance', value: '', title: 'TOLERANCE' })
+  }
+}
+
+/**
+ * The leader's two picks, then the words: AutoCAD's MLEADER asks for the arrow and the landing and
+ * opens the text editor in place, which is exactly the flow the editor already gives us.
+ */
+const applyLeaderTool = (
+  state: ReturnType<typeof useCadStore.getState>,
+  point: Vec2,
+  layerId: string,
+) => {
+  const draft = useCadStore.getState().draftPoints
+  if (draft.length === 0) {
+    useCadStore.setState({ draftPoints: [point] })
+    return
+  }
+  // The landing is the second pick: the arrow already collected, so THIS point is the landing.
+  const [arrow, landing] = [draft[0], point]
+  const height = openedTextHeight(state) || 2.5
+  useCadStore.setState({
+    leaderDraft: {
+      arrow,
+      landingEnd: { x: landing.x, y: landing.y },
+      height,
+      layerId,
+      flipped: landing.x < arrow.x,
+    },
+    draftPoints: [],
+  })
+  state.beginTextEditor({ entityId: null, kind: 'leader', value: '', title: 'MLEADER' })
 }
 
 const applyDimensionTool = (
@@ -3741,6 +3922,125 @@ const applyDimensionTool = (
       p2: draftPoints[1],
       p3: draftPoints[2],
       placement: point,
+      scale: dimScale,
+    })
+    clearDraft()
+    return
+  }
+
+  if (dimensionType === 'arclength' && !useCadStore.getState().arclengthArc) {
+    // The first pick names the arc: its centre and endpoints are remembered, and the label measures
+    // the span between them ALONG the arc.
+    const tolerance = getPreferences().pickBoxSize / state.camera.zoom
+    const target = [...state.doc.entities]
+      .reverse()
+      .find(
+        (entity) =>
+          (entity.type === 'arc' || (entity.type === 'polyline' && entity.points.length > 2)) &&
+          isPointNearEntity(point, entity, tolerance),
+      )
+    if (!target) {
+      state.setStatusMessage('Select an arc.')
+      return
+    }
+    if (target.type === 'arc') {
+      useCadStore.setState({
+        arclengthArc: {
+          center: target.center,
+          start: addVec(target.center, polar(target.center, target.radius, target.startAngle)),
+          end: addVec(target.center, polar(target.center, target.radius, target.endAngle)),
+        },
+        draftPoints: [],
+      })
+    } else {
+      // A polyline's arc segments are not tracked individually; measure the whole closed loop as the
+      // span its vertices describe, which keeps the command usable on traced outlines.
+      state.setStatusMessage('Select an arc entity — polyline spans are measured by DIMLINEAR.')
+      return
+    }
+    state.log('prompt', formatPrompt(currentPrompt(useCadStore.getState())))
+    return
+  }
+
+  if (dimensionType === 'jogged' && draftPoints.length === 0) {
+    const tolerance = getPreferences().pickBoxSize / state.camera.zoom
+    const target = [...state.doc.entities]
+      .reverse()
+      .find((entity) => (entity.type === 'circle' || entity.type === 'arc') && isPointNearEntity(point, entity, tolerance))
+    if (!target || (target.type !== 'circle' && target.type !== 'arc')) {
+      state.setStatusMessage('Select a circle or arc.')
+      return
+    }
+    addDraftPoint(target.center)
+    return
+  }
+
+  if (dimensionType === 'ordinate') {
+    if (draftPoints.length === 0) {
+      addDraftPoint(point)
+      return
+    }
+    addEntity({
+      id: uid(),
+      type: 'dimension',
+      layerId,
+      dimType: 'ordinate',
+      p1: draftPoints[0],
+      p2: point,
+      // The axis follows the leader's direction unless the datum options forced one.
+      ordinateAxis: useCadStore.getState().ordinateAxis ?? undefined,
+      scale: dimScale,
+    })
+    clearDraft()
+    useCadStore.setState({ ordinateAxis: null })
+    return
+  }
+
+  if (dimensionType === 'arclength') {
+    // p1 is the arc's centre; p2 and p3 are the two ends of the measured span, read off the arc
+    // entity that was picked — so the entity pick stores its centre and endpoints for the label.
+    if (draftPoints.length === 0) {
+      addDraftPoint(point)
+      return
+    }
+    const picked = useCadStore.getState().arclengthArc
+    if (!picked) {
+      addDraftPoint(point)
+      return
+    }
+    addEntity({
+      id: uid(),
+      type: 'dimension',
+      layerId,
+      dimType: 'arclength',
+      p1: picked.center,
+      p2: picked.start,
+      p3: picked.end,
+      placement: point,
+      scale: dimScale,
+    })
+    clearDraft()
+    useCadStore.setState({ arclengthArc: null })
+    return
+  }
+
+  if (dimensionType === 'jogged') {
+    // p1 the arc's centre, p2 a point on the arc (the true radius), placement the dimension line,
+    // and the jog bends where the user picked last — AutoCAD asks for each in that order.
+    if (draftPoints.length < 3) {
+      addDraftPoint(point)
+      return
+    }
+    const [centre, arcPoint, dimLine] = draftPoints
+    addEntity({
+      id: uid(),
+      type: 'dimension',
+      layerId,
+      dimType: 'jogged',
+      p1: centre,
+      p2: arcPoint,
+      placement: dimLine,
+      jogRadius: Math.max(1, distanceBetween(centre, arcPoint) * 0.25),
       scale: dimScale,
     })
     clearDraft()

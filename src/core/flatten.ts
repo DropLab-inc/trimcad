@@ -38,6 +38,22 @@ export const flattenEntity = (entity: CadEntity): Polyline[] => {
     case 'dimension':
       // The measured span; the witness lines and arrowheads are drawn by the dimension renderer.
       return [{ points: [entity.p1, entity.p2], closed: false }]
+    case 'leader':
+      // Arrow to the landing, then the hook: the shape the renderer draws.
+      return [
+        {
+          points: [
+            entity.arrow,
+            entity.landingEnd,
+            { x: entity.landingEnd.x, y: entity.landingEnd.y + 3.5 * (entity.height / 2.5) },
+          ],
+          closed: false,
+        },
+      ]
+    case 'tolerance':
+      // The frame is a box; its width follows the words, which the renderer owns. Flatten to a point
+      // so bounds and distance-to still answer, and picking goes through the bounds path below.
+      return [{ points: [entity.position], closed: false }]
     default:
       return []
   }

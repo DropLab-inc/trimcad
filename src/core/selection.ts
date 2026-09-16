@@ -34,6 +34,10 @@ const boundsOfPoints = (points: Vec2[]): Bounds | null => {
 }
 
 /** How deep an insert's bounds may recurse through nested blocks; a definition cycle cannot loop. */
+/** A leader's pick box widens by roughly the words: the ASCII width table, as the renderer draws them. */
+const leaderTextWidth = (entity: { value: string; height: number }): number =>
+  entity.value.length * entity.height * 0.6
+
 const MAX_BOUNDS_NESTING = 8
 
 /**
@@ -120,6 +124,23 @@ export const entityBounds = (
       return boundsOfPoints(
         [entity.p1, entity.p2, entity.p3, entity.placement].filter((point): point is Vec2 => Boolean(point)),
       )
+    case 'leader': {
+      // The words widen the pick box to the right of the hook, which is where a callout is clicked.
+      const textWidth = leaderTextWidth(entity)
+      const right = Math.max(entity.arrow.x, entity.landingEnd.x + (entity.flipped ? -textWidth : textWidth))
+      const left = Math.min(entity.arrow.x, entity.landingEnd.x - (entity.flipped ? 0 : 0))
+      return boundsOfPoints([
+        { x: left, y: Math.min(entity.arrow.y, entity.landingEnd.y) },
+        { x: right, y: Math.max(entity.arrow.y, entity.landingEnd.y) + entity.height },
+      ])
+    }
+    case 'tolerance': {
+      const half = Math.max(entity.height * 2.5, entity.height * 0.85 * (entity.value.length + 2))
+      return boundsOfPoints([
+        { x: entity.position.x - half, y: entity.position.y - entity.height },
+        { x: entity.position.x + half, y: entity.position.y + entity.height },
+      ])
+    }
     case 'insert': {
       const memberBounds = blocks ? insertMemberBounds(entity, blocks) : null
       if (memberBounds) return memberBounds
@@ -185,7 +206,7 @@ export const entityTouchesRect = (
     }
   }
 
-  if (entity.type === 'ellipse' || entity.type === 'text' || entity.type === 'mtext' || entity.type === 'insert' || entity.type === 'dimension') {
+  if (entity.type === 'ellipse' || entity.type === 'text' || entity.type === 'mtext' || entity.type === 'insert' || entity.type === 'dimension' || entity.type === 'leader' || entity.type === 'tolerance') {
     const bounds = entityBounds(entity, blocks, textStyles)
     if (!bounds) return false
     return (

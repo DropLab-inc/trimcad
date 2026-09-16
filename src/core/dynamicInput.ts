@@ -76,6 +76,9 @@ export const fieldsForTool = (tool: ToolMode, draftPoints: Vec2[], cursor: Vec2)
         return [{ key: 'angle', label: 'Angle', tracked: round((angle + 360) % 360), suffix: '\u00b0' }]
       }
       return null
+    case 'leader':
+      // The landing's length and angle from the arrow, so a callout can be typed on a phone.
+      return base ? lengthAngleFields(base, cursor) : null
     default:
       return null
   }

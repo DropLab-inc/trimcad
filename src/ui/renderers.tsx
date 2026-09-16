@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import { angularSweep, makeDimensionLabel, polar } from '../core/geometry'
+import { distance } from '../core/math/vec2'
 import { hatchBaseAngle, hatchTileSize, HATCH_PATTERNS as PATTERN_LIST } from '../core/hatch'
 import { add, mul, normalize, sub, type Vec2 } from '../core/math/vec2'
 import { effectiveStyleFor, faceOf, textLinesOf } from '../core/text'
@@ -10,7 +11,9 @@ import type {
   DimStyle,
   HatchEntity,
   HatchPattern,
+  LeaderEntity,
   MTextEntity,
+  ToleranceEntity,
   TextEntity,
   TextStyle,
 } from '../core/types'
@@ -186,6 +189,74 @@ export const dimensionGeometry = (dimension: DimensionEntity): DimensionGeometry
     }
   }
 
+  if (dimension.dimType === 'ordinate') {
+    // AutoCAD's ordinate has no dimension line: a leader runs from the feature along ONE axis and the
+    // value sits at its end. The axis follows the leader's own direction when it was not forced.
+    const along = dimension.ordinateAxis
+      ? dimension.ordinateAxis
+      : Math.abs(placement.x - dimension.p1.x) >= Math.abs(placement.y - dimension.p1.y)
+        ? 'x'
+        : 'y'
+    const end = along === 'x' ? { x: placement.x, y: dimension.p1.y } : { x: dimension.p1.x, y: placement.y }
+    return {
+      extensions: [],
+      line: { a: dimension.p1, b: end },
+      arc: null,
+      textPosition: end,
+      textAngleDeg: 0,
+      arrows: [],
+    }
+  }
+
+  if (dimension.dimType === 'jogged') {
+    // A radius whose line is broken by a jog: centre (possibly an override), bend, then the arc's
+    // edge. The value reads from the TRUE centre to the arc, so p1 stays the arc's centre.
+    const radius = Math.max(1, distance(dimension.p1, dimension.p2))
+    const toPlacement = sub(placement, dimension.p1)
+    const direction = Math.hypot(toPlacement.x, toPlacement.y) < 1e-9 ? { x: 1, y: 0 } : normalize(toPlacement)
+    const edge = add(dimension.p1, mul(direction, radius))
+    const angle = Math.atan2(direction.y, direction.x)
+    // The jog sits halfway out the leader, bent to the side; its radius is the one the user gave.
+    const jogCentre = add(dimension.p1, mul(direction, radius * 0.6))
+    const jogR = Math.min(dimension.jogRadius ?? radius * 0.25, radius * 0.45)
+    return {
+      extensions: [],
+      line: { a: dimension.p1, b: edge },
+      arc: { center: jogCentre, radius: jogR, start: angle + Math.PI * 0.75, end: angle + Math.PI * 1.35 },
+      textPosition: add(edge, mul(direction, 2 * scale)),
+      textAngleDeg: (angle * 180) / Math.PI,
+      arrows: [{ tip: edge, angle: angle + Math.PI }],
+    }
+  }
+
+  if (dimension.dimType === 'arclength' && dimension.p3) {
+    // An arc along the measured arc itself, offset out to where the user placed the dimension.
+    const centre = dimension.p1
+    const radius = Math.max(1, distance(centre, dimension.p2))
+    const startAngle = Math.atan2(dimension.p2.y - centre.y, dimension.p2.x - centre.x)
+    const endAngle = Math.atan2(dimension.p3.y - centre.y, dimension.p3.x - centre.x)
+    let sweep = endAngle - startAngle
+    while (sweep <= -Math.PI) sweep += Math.PI * 2
+    while (sweep > Math.PI) sweep -= Math.PI * 2
+    const midAngle = startAngle + sweep / 2
+    // How far out the dimension arc sits: the placement's distance from the centre, clamped inside.
+    const outRadius = Math.max(radius * 1.1, Math.min(distance(centre, placement), radius * 2.5))
+    return {
+      extensions: [
+        { a: polar(centre, radius, startAngle), b: polar(centre, outRadius, startAngle) },
+        { a: polar(centre, radius, endAngle), b: polar(centre, outRadius, endAngle) },
+      ],
+      line: null,
+      arc: { center: centre, radius: outRadius, start: sweep >= 0 ? startAngle : endAngle, end: sweep >= 0 ? endAngle : startAngle },
+      textPosition: polar(centre, (radius + outRadius) / 2, midAngle),
+      textAngleDeg: (midAngle * 180) / Math.PI,
+      arrows: [
+        { tip: polar(centre, outRadius, startAngle), angle: startAngle + (sweep >= 0 ? -Math.PI / 2 : Math.PI / 2) },
+        { tip: polar(centre, outRadius, endAngle), angle: endAngle + (sweep >= 0 ? Math.PI / 2 : -Math.PI / 2) },
+      ],
+    }
+  }
+
   if (dimension.dimType === 'angular' && dimension.p3) {
     const vertex = dimension.p1
     const radius = Math.max(1, Math.hypot(placement.x - vertex.x, placement.y - vertex.y))
@@ -295,6 +366,141 @@ export const renderDimension = (
   )
 }
 
+/**
+ * AutoCAD's leader: the arrow lands on the object, the landing runs to the hook, and the words sit
+ * beside the hook. The whole shape is two segments, so it draws the same in model space and on paper.
+ */
+export const renderLeader = (
+  leader: LeaderEntity,
+  color: string,
+  key?: string,
+  preview = false,
+): ReactElement => {
+  const stroke = color
+  const dash = preview ? '6 4' : undefined
+  const textHeight = leader.height
+  const hook = 3.5 * (leader.height / 2.5)
+  const direction = normalize(sub(leader.landingEnd, leader.arrow))
+  // The landing is horizontal in AutoCAD's default style; the hook is the short rise to the text.
+  const hooked = { x: leader.landingEnd.x, y: leader.landingEnd.y + hook }
+  const anchorRight = leader.flipped ? leader.landingEnd.x < leader.arrow.x : leader.landingEnd.x >= leader.arrow.x
+
+  return (
+    <g key={key}>
+      <line
+        x1={leader.arrow.x}
+        y1={leader.arrow.y}
+        x2={leader.landingEnd.x}
+        y2={leader.landingEnd.y}
+        stroke={stroke}
+        strokeWidth={1}
+        strokeDasharray={dash}
+        vectorEffect="non-scaling-stroke"
+      />
+      <line
+        x1={leader.landingEnd.x}
+        y1={leader.landingEnd.y}
+        x2={hooked.x}
+        y2={hooked.y}
+        stroke={stroke}
+        strokeWidth={1}
+        strokeDasharray={dash}
+        vectorEffect="non-scaling-stroke"
+      />
+      <polygon points={arrowPoints(leader.arrow, Math.atan2(direction.y, direction.x) + Math.PI, textHeight * 0.6)} fill={stroke} />
+      <text
+        transform={`translate(${leader.landingEnd.x + (anchorRight ? textHeight * 0.4 : -textHeight * 0.4)}, ${hooked.y})`}
+        dy={-textHeight * 0.35}
+        textAnchor={anchorRight ? 'start' : 'end'}
+        fill={stroke}
+        fontSize={textHeight}
+      >
+        {leader.value}
+      </text>
+    </g>
+  )
+}
+
+/**
+ * AutoCAD's tolerance frame: boxed compartments, the geometric symbol in the first, the value and
+ * then the datum references. The symbol set is the small round of shapes a drawing actually uses.
+ */
+export const renderTolerance = (
+  tolerance: ToleranceEntity,
+  color: string,
+  key?: string,
+  preview = false,
+): ReactElement => {
+  const stroke = color
+  const dash = preview ? '6 4' : undefined
+  const h = tolerance.height
+  const compartments = [
+    tolerance.symbol ? { text: gdtSymbol(tolerance.symbol), w: h * 1.4 } : null,
+    { text: tolerance.value, w: Math.max(h * 1.6, h * 0.85 * Math.max(1, tolerance.value.length)) },
+    ...tolerance.datums.map((datum) => ({ text: datum, w: Math.max(h * 1.2, h * 0.85 * Math.max(1, datum.length)) })),
+  ].filter((compartment): compartment is { text: string; w: number } => compartment !== null)
+  const totalWidth = compartments.reduce((width, compartment) => width + compartment.w, 0)
+
+  let cursor = tolerance.position.x - totalWidth / 2
+  const boxes = compartments.map((compartment) => {
+    const box = { x: cursor, w: compartment.w, text: compartment.text }
+    cursor += compartment.w
+    return box
+  })
+
+  return (
+    <g key={key}>
+      {boxes.map((box, index) => (
+        <g key={`box-${index}`}>
+          <rect
+            x={box.x}
+            y={tolerance.position.y - h / 2}
+            width={box.w}
+            height={h}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={1}
+            strokeDasharray={dash}
+            vectorEffect="non-scaling-stroke"
+          />
+          <text
+            x={box.x + box.w / 2}
+            y={tolerance.position.y}
+            dy={h * 0.35}
+            textAnchor="middle"
+            fill={stroke}
+            fontSize={h * 0.85}
+          >
+            {box.text}
+          </text>
+        </g>
+      ))}
+    </g>
+  )
+}
+
+/**
+ * The GD&T symbols, as unicode where a glyph exists. A missing shape degrades to its ABBR — legible,
+ * and honest about the limitation rather than drawing a box that means nothing.
+ */
+const gdtSymbol = (code: string): string => {
+  const symbols: Record<string, string> = {
+    pos: '\u25CE',      // position
+    flat: '\u2B1F',     // flatness
+    straight: '\u2014', // straightness
+    circ: '\u25CB',     // circularity
+    cyl: '\u232D',      // cylindricity
+    prof: '\u23DC',     // profile of a surface
+    perp: '\u27C2',     // perpendicularity
+    ang: '\u2220',      // angularity
+    par: '\u2225',      // parallelism
+    run: '\u2197',      // circular runout
+    totrun: '\u21DD',   // total runout
+    edge: '\u2300',     // concentricity stands for symmetry here; edge is the honest gap
+  }
+  return symbols[code] ?? code
+}
+
 /** How deep a block may nest before rendering gives up; a definition cycle cannot loop forever. */
 const MAX_BLOCK_NESTING = 8
 
@@ -384,6 +590,10 @@ export const renderEntity = (
       return renderText(entity, stroke, textStyles)
     case 'dimension':
       return renderDimension(entity, dimStyle, selected ? palette.selection : palette.dimension, entity.id)
+    case 'leader':
+      return renderLeader(entity, selected ? palette.selection : palette.dimension, entity.id)
+    case 'tolerance':
+      return renderTolerance(entity, selected ? palette.selection : palette.dimension, entity.id)
     case 'insert': {
       const block = blocks.find((candidate) => candidate.id === entity.blockId)
       if (!block) return null

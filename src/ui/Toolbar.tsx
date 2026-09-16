@@ -676,6 +676,32 @@ export function Toolbar() {
           </button>
           <button
             type="button"
+            className={`ribbon-btn ${activeTool === 'leader' ? 'active' : ''}`}
+            onClick={() => executeCommand('MLEADER')}
+            title={tooltip({
+              label: 'Leader',
+              command: 'MLEADER',
+              hint: 'An arrow on the object, a landing, and the words — AutoCAD\'s callout',
+            })}
+          >
+            <Icon name="leader" />
+            <span>Leader</span>
+          </button>
+          <button
+            type="button"
+            className="ribbon-btn"
+            onClick={() => executeCommand('TOLERANCE')}
+            title={tooltip({
+              label: 'Tolerance',
+              command: 'TOLERANCE',
+              hint: 'The GD&T frame: a symbol, a value and datum references in boxed compartments',
+            })}
+          >
+            <Icon name="tolerance" />
+            <span>Tolerance</span>
+          </button>
+          <button
+            type="button"
             className={`ribbon-btn ${activeTool === 'textedit' ? 'active' : ''}`}
             onClick={() => setTool('textedit')}
             title={tooltip({

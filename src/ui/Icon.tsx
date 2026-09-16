@@ -49,6 +49,8 @@ export type IconName =
   | 'dim-angular'
   | 'text'
   | 'mtext'
+  | 'leader'
+  | 'tolerance'
   | 'text-edit'
   | 'text-style'
   | 'hatch'
@@ -416,6 +418,23 @@ const GLYPHS: Record<IconName, ReactElement> = {
       <path d="M3 5 L21 5" />
       <path d="M3 10 L21 10 M3 15 L15 15 M3 20 L11 20" />
       <path className="accent" d="M18 14 L18 21 M15.5 18.5 L18 21 L20.5 18.5" />
+    </g>
+  ),
+  leader: (
+    <g>
+      {/* an arrow landing on a dot, then a landing with a hook and a line of words */}
+      <circle cx="5" cy="19" r="1.6" className="accent" />
+      <path d="M6.5 17.5 L13 11 L20 11" />
+      <path d="M20 11 L20 7" className="accent" />
+      <path d="M13 16 L20 16 M13 19 L18 19" />
+    </g>
+  ),
+  tolerance: (
+    <g>
+      {/* the boxed frame: two compartments and a datum stub */}
+      <rect x="3" y="9" width="7" height="6" />
+      <rect x="10" y="9" width="7" height="6" />
+      <path d="M17 12 L21 12" className="accent" />
     </g>
   ),
   'text-edit': (

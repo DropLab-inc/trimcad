@@ -97,6 +97,13 @@ export const entityGrips = (entity: CadEntity): Grip[] => {
         ...(entity.p3 ? [{ point: entity.p3, kind: 'vertex' as const, index: 2 }] : []),
         ...(entity.placement ? [{ point: entity.placement, kind: 'vertex' as const, index: 3 }] : []),
       ]
+    case 'leader':
+      return [
+        { point: entity.arrow, kind: 'vertex', index: 0 },
+        { point: entity.landingEnd, kind: 'vertex', index: 1 },
+      ]
+    case 'tolerance':
+      return [{ point: entity.position, kind: 'move', index: 0 }]
     case 'insert':
       return [{ point: entity.position, kind: 'move', index: 0 }]
   }

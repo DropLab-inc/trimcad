@@ -46,6 +46,12 @@ export const COMMANDS: CommandDef[] = [
   { name: 'DIMRADIUS', aliases: ['DRA'], category: 'Annotate', summary: 'Radius dimension' },
   { name: 'DIMDIAMETER', aliases: ['DDI'], category: 'Annotate', summary: 'Diameter dimension' },
   { name: 'DIMANGULAR', aliases: ['DAN'], category: 'Annotate', summary: 'Angular dimension' },
+  { name: 'DIMORDINATE', aliases: ['DOR'], category: 'Annotate', summary: 'X or Y ordinate from a datum' },
+  { name: 'DIMARC', aliases: ['DAR'], category: 'Annotate', summary: 'Length along an arc' },
+  { name: 'DIMJOGGED', aliases: ['DJO'], category: 'Annotate', summary: 'Radius through a jog' },
+  { name: 'MLEADER', aliases: ['MLD'], category: 'Annotate', summary: 'Multiline leader with text' },
+  { name: 'LEADER', aliases: ['LE'], category: 'Annotate', summary: 'Leader line with text' },
+  { name: 'TOLERANCE', aliases: ['TOL'], category: 'Annotate', summary: 'Geometric tolerance frame' },
   { name: 'DIMSCALE', aliases: ['DSC'], category: 'Annotate', summary: 'Size of dimension text and arrows' },
 
   // Modify

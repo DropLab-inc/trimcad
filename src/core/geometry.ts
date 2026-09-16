@@ -91,6 +91,28 @@ export const isPointNearEntity = (
     }
     case 'dimension':
       return pointSegmentDistance(point, entity.p1, entity.p2) <= tol
+    case 'leader': {
+      // Pickable along either segment, or on the words beside the hook — a callout is grabbed by
+      // its text more often than by its line.
+      const hook = { x: entity.landingEnd.x, y: entity.landingEnd.y + 3.5 * (entity.height / 2.5) }
+      const onLine =
+        pointSegmentDistance(point, entity.arrow, entity.landingEnd) <= tol ||
+        pointSegmentDistance(point, entity.landingEnd, hook) <= tol
+      if (onLine) return true
+      const wordsWide = entity.value.length * entity.height * 0.6
+      const textX = entity.landingEnd.x
+      return (
+        point.x >= Math.min(textX, textX + (entity.flipped ? -wordsWide : wordsWide)) - tol &&
+        point.x <= Math.max(textX, textX + (entity.flipped ? -wordsWide : wordsWide)) + tol &&
+        Math.abs(point.y - (hook.y - entity.height * 0.35)) <= entity.height
+      )
+    }
+    case 'tolerance': {
+      const half = Math.max(entity.height * 2.5, entity.height * 0.85 * (entity.value.length + 2))
+      return (
+        Math.abs(point.x - entity.position.x) <= half + tol && Math.abs(point.y - entity.position.y) <= entity.height / 2 + tol
+      )
+    }
     case 'insert': {
       const block = blocks?.find((candidate) => candidate.id === entity.blockId)
       if (!block || block.entities.length === 0) return distance(point, entity.position) <= tol * 2
@@ -202,6 +224,10 @@ export const moveEntity = (entity: CadEntity, delta: Vec2): CadEntity => {
         p3: entity.p3 ? shift(entity.p3) : undefined,
         placement: entity.placement ? shift(entity.placement) : undefined,
       }
+    case 'leader':
+      return { ...entity, arrow: shift(entity.arrow), landingEnd: shift(entity.landingEnd) }
+    case 'tolerance':
+      return { ...entity, position: shift(entity.position) }
     case 'insert':
       return { ...entity, position: shift(entity.position) }
   }
@@ -237,6 +263,10 @@ export const rotateEntity = (entity: CadEntity, origin: Vec2, angleRad: number):
       }
     case 'dimension':
       return { ...entity, p1: rot(entity.p1), p2: rot(entity.p2), p3: entity.p3 ? rot(entity.p3) : undefined }
+    case 'leader':
+      return { ...entity, arrow: rot(entity.arrow), landingEnd: rot(entity.landingEnd) }
+    case 'tolerance':
+      return { ...entity, position: rot(entity.position) }
     case 'insert':
       return { ...entity, position: rot(entity.position), rotation: entity.rotation + angleRad }
   }
@@ -270,6 +300,11 @@ export const scaleEntity = (entity: CadEntity, origin: Vec2, factor: number): Ca
       }
     case 'dimension':
       return { ...entity, p1: scl(entity.p1), p2: scl(entity.p2), p3: entity.p3 ? scl(entity.p3) : undefined }
+    case 'leader':
+      // The words keep their height: like text, scaling the drawing does not resize a note.
+      return { ...entity, arrow: scl(entity.arrow), landingEnd: scl(entity.landingEnd) }
+    case 'tolerance':
+      return { ...entity, position: scl(entity.position) }
     case 'insert':
       return { ...entity, position: scl(entity.position), scale: entity.scale * factor }
   }
@@ -299,6 +334,16 @@ export const mirrorEntity = (entity: CadEntity, a: Vec2, b: Vec2): CadEntity => 
       return { ...entity, position: m(entity.position), rotation: -(entity.rotation ?? 0) }
     case 'dimension':
       return { ...entity, p1: m(entity.p1), p2: m(entity.p2), p3: entity.p3 ? m(entity.p3) : undefined }
+    case 'leader':
+      // The leader mirrors wholesale — arrow and hook swap sides — and its words stay readable.
+      return {
+        ...entity,
+        arrow: m(entity.arrow),
+        landingEnd: m(entity.landingEnd),
+        flipped: !entity.flipped,
+      }
+    case 'tolerance':
+      return { ...entity, position: m(entity.position) }
     case 'insert':
       return { ...entity, position: m(entity.position), rotation: -entity.rotation }
   }
@@ -350,6 +395,25 @@ export const makeDimensionLabel = (dimension: DimensionEntity, precision: number
       const dy = Math.abs(dimension.p2.y - dimension.p1.y)
       return `${(dx >= dy ? dx : dy).toFixed(precision)}${suffix}`
     }
+    case 'ordinate': {
+      // An ordinate reads the feature's position along ONE axis, with no measurement line at all.
+      const value = dimension.ordinateAxis === 'y' ? dimension.p1.y : dimension.p1.x
+      return value.toFixed(precision)
+    }
+    case 'arclength': {
+      // The length ALONG the arc, not the chord: an arc length dimension exists for the difference.
+      const radius = distance(dimension.p1, dimension.p2)
+      const startAngle = Math.atan2(dimension.p2.y - dimension.p1.y, dimension.p2.x - dimension.p1.x)
+      const endAngle = dimension.p3
+        ? Math.atan2(dimension.p3.y - dimension.p1.y, dimension.p3.x - dimension.p1.x)
+        : startAngle
+      let sweep = endAngle - startAngle
+      while (sweep <= -Math.PI) sweep += Math.PI * 2
+      while (sweep > Math.PI) sweep -= Math.PI * 2
+      return `${(Math.abs(sweep) * radius).toFixed(precision)}${suffix}`
+    }
+    case 'jogged':
+      return `R${distance(dimension.p1, dimension.p2).toFixed(precision)}${suffix}`
     default:
       return `${distance(dimension.p1, dimension.p2).toFixed(precision)}${suffix}`
   }
@@ -435,6 +499,10 @@ export const getEntityAnchorPoints = (entity: CadEntity): Vec2[] => {
       return [entity.position]
     case 'dimension':
       return [entity.p1, entity.p2, ...(entity.p3 ? [entity.p3] : [])]
+    case 'leader':
+      return [entity.arrow, entity.landingEnd]
+    case 'tolerance':
+      return [entity.position]
     case 'insert':
       return insertBoundingPoints(entity)
   }

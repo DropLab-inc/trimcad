@@ -22,8 +22,10 @@ import type {
   HatchEntity,
   HatchPattern,
   Layout,
+  LeaderEntity,
   MTextAttachment,
   MTextEntity,
+  ToleranceEntity,
   TextEntity,
   TextJustify,
 } from '../core/types'
@@ -45,6 +47,8 @@ export function PropertiesPanel() {
   const updateViewport = useCadStore((state) => state.updateViewport)
   const selected = doc.entities.filter((entity) => selectedIds.includes(entity.id))
   const dimensions = selected.filter((entity): entity is DimensionEntity => entity.type === 'dimension')
+  const leaders = selected.filter((entity): entity is LeaderEntity => entity.type === 'leader')
+  const tolerances = selected.filter((entity): entity is ToleranceEntity => entity.type === 'tolerance')
   const hatches = selected.filter((entity): entity is HatchEntity => entity.type === 'hatch')
   /** Text and MTEXT share most of their rows, so they share one block; the rest are per-kind. */
   const notes = selected.filter(
@@ -292,6 +296,76 @@ export function PropertiesPanel() {
           }}
         />
       </label>
+      {leaders.length > 0 && (
+        <label title="The words the callout says">
+          Leader text
+          <input
+            type="text"
+            value={leaders[0].value}
+            aria-label="Leader text"
+            onChange={(event) => {
+              const value = event.target.value
+              updateSpaceEntities((entities) =>
+                entities.map((entity) =>
+                  selectedIds.includes(entity.id) && entity.type === 'leader' ? { ...entity, value } : entity,
+                ),
+              )
+            }}
+          />
+        </label>
+      )}
+      {tolerances.length > 0 && (
+        <>
+          <label title="The GD&T symbol code (pos, flat, perp, ang, par, circ, cyl, run…)">
+            Tolerance symbol
+            <input
+              type="text"
+              value={tolerances[0].symbol}
+              aria-label="Tolerance symbol"
+              onChange={(event) => {
+                const symbol = event.target.value
+                updateSpaceEntities((entities) =>
+                  entities.map((entity) =>
+                    selectedIds.includes(entity.id) && entity.type === 'tolerance' ? { ...entity, symbol } : entity,
+                  ),
+                )
+              }}
+            />
+          </label>
+          <label title="The tolerance value">
+            Tolerance value
+            <input
+              type="text"
+              value={tolerances[0].value}
+              aria-label="Tolerance value"
+              onChange={(event) => {
+                const value = event.target.value
+                updateSpaceEntities((entities) =>
+                  entities.map((entity) =>
+                    selectedIds.includes(entity.id) && entity.type === 'tolerance' ? { ...entity, value } : entity,
+                  ),
+                )
+              }}
+            />
+          </label>
+          <label title="Datum references, separated by spaces">
+            Datums
+            <input
+              type="text"
+              value={tolerances[0].datums.join(' ')}
+              aria-label="Tolerance datums"
+              onChange={(event) => {
+                const datums = event.target.value.split(/\s+/).filter(Boolean)
+                updateSpaceEntities((entities) =>
+                  entities.map((entity) =>
+                    selectedIds.includes(entity.id) && entity.type === 'tolerance' ? { ...entity, datums } : entity,
+                  ),
+                )
+              }}
+            />
+          </label>
+        </>
+      )}
       {dimensions.length > 0 && (
         <label title="Size of the text and arrows, as a multiple of the drawing's dimension style">
           Dimension size

@@ -67,7 +67,7 @@ export type MTextAttachment = 'TL' | 'TC' | 'TR' | 'ML' | 'MC' | 'MR' | 'BL' | '
 /** What the text editor is open on: an object being changed, or a new MTEXT waiting for its words. */
 export type TextEditorState = {
   entityId: string | null
-  kind: 'text' | 'mtext'
+  kind: 'text' | 'mtext' | 'leader' | 'tolerance'
   value: string
   /** The words are the whole object, so a single line opens the same editor as a paragraph. */
   title: string
@@ -83,6 +83,9 @@ export type TextEditResult = {
   lineSpacing?: number
   /** null means the drawing's Standard, which is what an unset styleId means on an object. */
   styleId?: string | null
+  /** A tolerance frame's GD&T symbol code, and its datum compartments. */
+  symbol?: string
+  datums?: string[]
 }
 
 /** The text properties a palette row or a dialog can set on the selection. */
@@ -202,7 +205,15 @@ export type MTextEntity = BaseEntity & {
   obliqueAngle?: number
 }
 
-export type DimensionType = 'linear' | 'aligned' | 'radial' | 'diameter' | 'angular'
+export type DimensionType =
+  | 'linear'
+  | 'aligned'
+  | 'radial'
+  | 'diameter'
+  | 'angular'
+  | 'ordinate'
+  | 'arclength'
+  | 'jogged'
 
 export type DimensionEntity = BaseEntity & {
   type: 'dimension'
@@ -219,6 +230,48 @@ export type DimensionEntity = BaseEntity & {
    * which is what dimensions saved before this existed should measure.
    */
   scale?: number
+  /**
+   * AUTO -- AutoCAD's ordinate measures one axis only. Absent means X, the datum's X read along the
+   * leader. A Y ordinate measures the datum's Y instead.
+   */
+  ordinateAxis?: 'x' | 'y'
+  /** The bend radius AutoCAD's JOGGED dimension asks for, in drawing units. */
+  jogRadius?: number
+}
+
+/**
+ * AutoCAD's tolerance frame (TOLERANCE): the symbol row of GD&T, a datum, and the tolerance itself.
+ * Rendered as the boxed frame AutoCAD draws — symbol in the first compartment, the value beside it.
+ */
+export type ToleranceEntity = BaseEntity & {
+  type: 'tolerance'
+  position: Vec2
+  /** The GD&T symbol code: one of the geometric characteristic symbols, or '' for none. */
+  symbol: string
+  /** The tolerance value as typed, e.g. '0.05' or '⌀0.1'. */
+  value: string
+  /** The datum references, up to three compartments. */
+  datums: string[]
+  height: number
+}
+
+/**
+ * AutoCAD's MLEADER: an arrow lands on the object, a landing runs to a hook, and multiline text sits
+ * at the hook. The arrow side and landing length are what the click sequence implies, as AutoCAD's
+ * MLEADER with its default style draws them.
+ */
+export type LeaderEntity = BaseEntity & {
+  type: 'leader'
+  /** Where the arrow lands, on the object being called out. */
+  arrow: Vec2
+  /** Where the landing ends and the text begins. */
+  landingEnd: Vec2
+  /** The words, drawn as one line of text (multiline arrives with the text editor). */
+  value: string
+  height: number
+  styleId?: string
+  /** True when the leader points right-to-left, so the text sits left of the hook. */
+  flipped?: boolean
 }
 
 export type InsertEntity = BaseEntity & {
@@ -240,6 +293,8 @@ export type CadEntity =
   | TextEntity
   | MTextEntity
   | DimensionEntity
+  | ToleranceEntity
+  | LeaderEntity
   | InsertEntity
 
 /**
@@ -358,6 +413,8 @@ export type ToolMode =
   | 'text'
   | 'mtext'
   | 'textedit'
+  | 'leader'
+  | 'tolerance'
   | 'hatch'
   | 'boundary'
   | 'dimension'
