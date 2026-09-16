@@ -398,14 +398,20 @@ export type ImportCounts = { impossible: number }
  * Each value is a TEXT record in its own right, written where it appears on the drawing, so it is read
  * here as one: the alignment point when a justification is set, otherwise the insertion point.
  */
-const attributesFromDxf = (content: string, layerIdFor: (name: unknown) => string): CadEntity[] => {
+const attributesFromDxf = (
+  content: string,
+  layerIdFor: (name: unknown) => string,
+): { entities: CadEntity[]; suppliedTags: Set<string> } => {
   const lines = content.split(/\r\n|\r|\n/)
   const entities: CadEntity[] = []
+  const suppliedTags = new Set<string>()
   let record: Array<[string, string]> = []
   const flush = () => {
     if (record.length > 0 && record[0][1] === 'ATTRIB') {
       const first = (code: string) => record.find(([c]) => c === code)?.[1]
       const value = first('1')
+      const tag = first('2')
+      if (tag) suppliedTags.add(tag)
       if (value !== undefined && value !== '') {
         const halign = Number(first('72') ?? 0)
         const valign = Number(first('73') ?? 0)
@@ -423,6 +429,7 @@ const attributesFromDxf = (content: string, layerIdFor: (name: unknown) => strin
             height: Number(first('40') ?? 12),
             rotation: rotation ? (rotation * Math.PI) / 180 : undefined,
             ...(justify ? { justify } : {}),
+            ...(first('2') ? { attributeTag: String(first('2')) } : {}),
           })
         }
       }
@@ -442,7 +449,7 @@ const attributesFromDxf = (content: string, layerIdFor: (name: unknown) => strin
     if (record.length > 0) record.push([code, value])
   }
   flush()
-  return entities
+  return { entities, suppliedTags }
 }
 
 export const importDocumentFromDxf = (
@@ -471,7 +478,8 @@ export const importDocumentFromDxf = (
     if (extra && extra.length > 0) definition.entities = [...definition.entities, ...extra]
   }
   const parsedEntities = entitiesFromDxf(content, layerIdFor, blocks, blocks.parsed, counted)
-  const entities = [...parsedEntities, ...hatches.top, ...attributesFromDxf(content, layerIdFor)]
+  const attributes = attributesFromDxf(content, layerIdFor)
+  const entities = [...parsedEntities, ...hatches.top, ...attributes.entities]
   report?.(counted)
 
   // A file this app wrote carries the whole drawing, including everything DXF has no room for.
@@ -489,7 +497,20 @@ export const importDocumentFromDxf = (
    * collision would silently repoint existing inserts at imported geometry.
    */
   const taken = new Set((base.blocks ?? []).map((block) => block.name.toUpperCase()))
-  const imported = blocks.definitions.filter((block) => !taken.has(block.name.toUpperCase()))
+  /*
+   * A block's field is a PLACEHOLDER. Where the drawing supplies a value for that tag, the value
+   * REPLACES it, which is what AutoCAD draws; drawing both made a cell read "NAME NAME".
+   */
+  const filledIn = (block: BlockDefinition): BlockDefinition => ({
+    ...block,
+    entities: block.entities.filter(
+      (member) =>
+        !(member.type === 'text' && member.attributeTag && attributes.suppliedTags.has(member.attributeTag)),
+    ),
+  })
+  const imported = blocks.definitions
+    .filter((block) => !taken.has(block.name.toUpperCase()))
+    .map(filledIn)
   /*
    * The file's coordinates are AutoCAD's — y up — and this app's model space is y down, so everything the
    * file brought is reflected once, here. The drawing's own blocks are NOT: those are this app's already.
@@ -707,6 +728,7 @@ const readEntity = (
         height: raw.textHeight ?? raw.height ?? 12,
         rotation: raw.rotation || undefined,
         ...(justify ? { justify } : {}),
+        ...(raw.tag ? { attributeTag: String(raw.tag) } : {}),
       }
     }
     case 'MTEXT':

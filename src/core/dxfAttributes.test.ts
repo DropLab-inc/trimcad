@@ -20,11 +20,13 @@ const blockWithFields = [
 ].join('\n')
 
 describe('the fields of a title block', () => {
-  it('reads a block’s ATTDEF as the text it draws', () => {
+  it('draws a block’s field, except where the drawing fills it in', () => {
     const doc = importDocumentFromDxf(blockWithFields, makeDefaultDocument())
     const values = doc.blocks[0].entities.filter((entity) => entity.type === 'text').map((e: any) => e.value)
+    // The field the insert supplies a value for is REPLACED by that value, as AutoCAD draws it; the
+    // one nothing fills in is still drawn, because a title block shows its fields until they are filled.
     expect(values).toContain('DRAWN BY:')
-    expect(values).toContain('CLIENT NO:')
+    expect(values).not.toContain('CLIENT NO:')
   })
 
   it('reads an insert’s ATTRIB value as text, not as a field that was never filled in', () => {

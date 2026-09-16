@@ -191,6 +191,14 @@ export type TextEntity = BaseEntity & {
   widthFactor?: number
   /** The object's own oblique angle in degrees, DXF group 51; absent means the style's. */
   obliqueAngle?: number
+  /**
+   * The attribute TAG this text came from: a block's field, or an insert's value for one.
+   *
+   * Nothing draws it. It is what lets the import drop a block's field where the drawing supplies a
+   * value for that tag, which is what AutoCAD does - the value REPLACES the field. Drawing both made
+   * a cell of the customer's title block read "NAME NAME".
+   */
+  attributeTag?: string
 }
 
 /**
