@@ -544,7 +544,7 @@ const readEntity = (
     case 'INSERT': {
       const blockId = blockIdFor(raw.name)
       if (!blockId || !raw.position) return null
-      // DXF carries one scale per axis; the app's insert has one, so the X scale is the scale.
+      // Uniform insert scaling is unchanged here; independent axis scales are a separate feature.
       const scale = raw.xScale ?? 1
       if (!Number.isFinite(scale) || scale === 0) return null
       return {
@@ -583,11 +583,20 @@ const readEntity = (
       // Group 41 is the object's own width factor and 72/73 its justification: both belong to the
       // object in DXF, so both are read here rather than pushed onto a style.
       const justify = singleLineJustify(raw.halign, raw.valign)
+      /*
+       * When a justification is set, group 11 — the second alignment point — is the one the text is
+       * anchored on, and group 10 is left over from where it was typed. Anchoring on group 10 anyway
+       * and then applying middle/middle puts the words half a text height below the cell they belong
+       * in, which is what makes a table's text sit on its own row lines instead of inside them. On the
+       * customer's sheet 41 of 45 texts are justified this way, each a half height out.
+       */
+      const aligned = (raw.halign ?? 0) !== 0 || (raw.valign ?? 0) !== 0
+      const point = aligned && raw.endPoint ? raw.endPoint : raw.startPoint
       return {
         id: uid(),
         type: 'text',
         layerId,
-        position: { x: raw.startPoint?.x ?? 0, y: raw.startPoint?.y ?? 0 },
+        position: { x: point?.x ?? 0, y: point?.y ?? 0 },
         value: decodeControlCodes(String(raw.text ?? '')),
         height: raw.textHeight ?? 12,
         rotation: raw.rotation || undefined,
@@ -653,7 +662,10 @@ const singleLineJustify = (halign: unknown, valign: unknown): TextJustify | unde
   if (across === 'Left' && down === 'baseline') return 'Left'
   if (down === 'baseline') return across as TextJustify
   const prefix = down === 'top' ? 'T' : down === 'middle' ? 'M' : 'B'
-  return `${prefix}${across === 'center' ? 'C' : across === 'right' ? 'R' : 'L'}` as TextJustify
+  // 'across' is capitalised here, and comparing it against a lower-case name silently made every
+  // centred and right-justified text left-anchored — half the reason a table's text sat off its cells.
+  const letter = across === 'Center' ? 'C' : across === 'Right' ? 'R' : 'L'
+  return `${prefix}${letter}` as TextJustify
 }
 
 /** AutoCAD's first nine index colours, which is what the layer palette offers. */
