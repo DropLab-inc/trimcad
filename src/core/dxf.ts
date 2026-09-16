@@ -244,6 +244,7 @@ export const unreadableInDxf = (content: string): Map<string, number> => {
 const READABLE_TYPES = new Set([
   'LINE',
   'CIRCLE',
+  // A block's fields and an insert's values, which are text on the drawing.
   'ARC',
   'ELLIPSE',
   'LWPOLYLINE',
@@ -254,6 +255,8 @@ const READABLE_TYPES = new Set([
   'INSERT',
   'DIMENSION',
   'HATCH',
+  'ATTRIB',
+  'ATTDEF',
   'SEQEND',
   'VERTEX',
 ])
@@ -383,6 +386,65 @@ export const impossibleCoordinates = (content: string): number => {
 /** What an import left out, so the command line can say so rather than the drawing going quiet. */
 export type ImportCounts = { impossible: number }
 
+/**
+ * An insert's attribute VALUES, read from the raw records.
+ *
+ * `ATTDEF` is a member of the block — the field, with the text it shows until something fills it in —
+ * and the parser hands those over like any other member. `ATTRIB` is not: it belongs to the INSERT, and
+ * the parser consumes it with the insert, so it never reaches `readEntity`. Without this the customer's
+ * title block drew as a grid of empty cells, because every field label and every value on that sheet is
+ * an attribute.
+ *
+ * Each value is a TEXT record in its own right, written where it appears on the drawing, so it is read
+ * here as one: the alignment point when a justification is set, otherwise the insertion point.
+ */
+const attributesFromDxf = (content: string, layerIdFor: (name: unknown) => string): CadEntity[] => {
+  const lines = content.split(/\r\n|\r|\n/)
+  const entities: CadEntity[] = []
+  let record: Array<[string, string]> = []
+  const flush = () => {
+    if (record.length > 0 && record[0][1] === 'ATTRIB') {
+      const first = (code: string) => record.find(([c]) => c === code)?.[1]
+      const value = first('1')
+      if (value !== undefined && value !== '') {
+        const halign = Number(first('72') ?? 0)
+        const valign = Number(first('73') ?? 0)
+        const x = Number((halign !== 0 || valign !== 0 ? first('11') ?? first('10') : first('10')) ?? 0)
+        const y = Number((halign !== 0 || valign !== 0 ? first('21') ?? first('20') : first('20')) ?? 0)
+        const rotation = Number(first('50') ?? 0)
+        const justify = singleLineJustify(halign, valign)
+        if (Number.isFinite(x) && Number.isFinite(y) && Math.abs(x) <= MAX_DRAWING_COORDINATE && Math.abs(y) <= MAX_DRAWING_COORDINATE) {
+          entities.push({
+            id: uid(),
+            type: 'text',
+            layerId: layerIdFor(first('8')),
+            position: { x, y },
+            value: decodeControlCodes(value),
+            height: Number(first('40') ?? 12),
+            rotation: rotation ? (rotation * Math.PI) / 180 : undefined,
+            ...(justify ? { justify } : {}),
+          })
+        }
+      }
+    }
+    record = []
+  }
+  // A DXF is (code, value) PAIRS: stepping two lines at a time is what keeps a value of "0" from
+  // reading as the start of a new record.
+  for (let index = 0; index + 1 < lines.length; index += 2) {
+    const code = lines[index].trim()
+    const value = lines[index + 1].trim()
+    if (code === '0') {
+      flush()
+      record.push([code, value])
+      continue
+    }
+    if (record.length > 0) record.push([code, value])
+  }
+  flush()
+  return entities
+}
+
 export const importDocumentFromDxf = (
   content: string,
   base: DrawingDocument,
@@ -409,7 +471,7 @@ export const importDocumentFromDxf = (
     if (extra && extra.length > 0) definition.entities = [...definition.entities, ...extra]
   }
   const parsedEntities = entitiesFromDxf(content, layerIdFor, blocks, blocks.parsed, counted)
-  const entities = [...parsedEntities, ...hatches.top]
+  const entities = [...parsedEntities, ...hatches.top, ...attributesFromDxf(content, layerIdFor)]
   report?.(counted)
 
   // A file this app wrote carries the whole drawing, including everything DXF has no room for.
@@ -617,6 +679,33 @@ const readEntity = (
         height: raw.textHeight ?? 12,
         rotation: raw.rotation || undefined,
         ...(raw.xScale && raw.xScale !== 1 ? { widthFactor: raw.xScale } : {}),
+        ...(justify ? { justify } : {}),
+      }
+    }
+    /*
+     * A block attribute. ATTDEF is the field a block DEFINES, with the text it shows until something
+     * fills it in; ATTRIB is the value one INSERT carries. AutoCAD draws both as ordinary text, and on
+     * the customer's sheet they ARE the title block — every field label and every value, plus the zone
+     * letters and numbers around the border — so dropping them emptied the title block and left the
+     * sheet missing text it plainly has in its own plot. Read as text: they draw, they plot, and they
+     * can be edited like any other words.
+     */
+    case 'ATTDEF':
+    case 'ATTRIB': {
+      const value = raw.text ?? raw.tag
+      if (value === undefined || value === null || String(value) === '') return null
+      const justify = singleLineJustify(raw.halign, raw.valign)
+      const aligned = (raw.halign ?? 0) !== 0 || (raw.valign ?? 0) !== 0
+      // Group 11 governs when a justification is set, exactly as it does for TEXT.
+      const point = (aligned ? raw.endPoint : raw.startPoint) ?? raw.startPoint ?? raw.position
+      return {
+        id: uid(),
+        type: 'text',
+        layerId,
+        position: { x: point?.x ?? 0, y: point?.y ?? 0 },
+        value: decodeControlCodes(String(value)),
+        height: raw.textHeight ?? raw.height ?? 12,
+        rotation: raw.rotation || undefined,
         ...(justify ? { justify } : {}),
       }
     }
