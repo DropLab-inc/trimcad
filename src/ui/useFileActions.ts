@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { isDwgFile, dwgToDxfText } from '../core/dwg'
 import { exportDocumentToDxf, importDocumentFromDxf, unsupportedForDxf } from '../core/dxf'
 import {
   DRAWING_EXTENSION,
@@ -61,17 +62,26 @@ export const useFileActions = (): FileActions =>
       },
 
       openDrawing: async () => {
-        const file = await pickFile('.dxf,.dlc,application/dxf,application/json')
+        const file = await pickFile('.dxf,.dwg,.dlc,application/dxf,application/acad,application/json')
         if (!file) return
         const { doc, loadDrawing, log } = useCadStore.getState()
         try {
-          const text = await file.text()
+          let text: string
+          let name = file.name
+          if (isDwgFile(file.name)) {
+            // DWG is converted to DXF in the browser (WASM, no upload); what loads afterwards is
+            // the DXF this app already reads. The file keeps its DWG name.
+            log('prompt', `Converting ${file.name} (DWG → DXF)…`)
+            text = await dwgToDxfText(new Uint8Array(await file.arrayBuffer()))
+          } else {
+            text = await file.text()
+          }
           // Drawings saved before DXF became the working format are still JSON.
-          const opened = file.name.toLowerCase().endsWith('.dlc')
+          const opened = name.toLowerCase().endsWith('.dlc')
             ? parseDrawing(text)
             : importDocumentFromDxf(text, doc)
-          loadDrawing(opened, withExtension(file.name, DRAWING_EXTENSION))
-          log('result', `Opened ${file.name} — ${opened.entities.length} object(s)`)
+          loadDrawing(opened, withExtension(name, DRAWING_EXTENSION))
+          log('result', `Opened ${name} — ${opened.entities.length} object(s)`)
         } catch (error) {
           log('error', error instanceof Error ? error.message : 'Could not open that file.')
         }

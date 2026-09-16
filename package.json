@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "dompurify": "^3.4.15",
+    "dwgdxf": "^2.0.1",
     "dxf-parser": "^1.1.2",
     "dxf-writer": "^1.18.4",
     "jspdf": "^4.2.1",
